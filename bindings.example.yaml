@@ -1,0 +1,209 @@
+version: 1
+
+secrets:
+  # ─── Hardening note ───────────────────────────────────────────────────
+  # The examples below default to the tightest scope that's still useful for
+  # the common case of each API. If your usage is narrower, tighten further;
+  # if it's broader, widen, but be deliberate — every method/path you add
+  # widens what prompt injection can do as you on a permitted destination.
+  # See README §Why "What AVP doesn't do — and what to layer on."
+
+  ANTHROPIC_API_KEY:
+    placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      # Anthropic Messages API — scoped to the message-completion paths a
+      # client agent actually uses. Widen if you also call /v1/files or
+      # /v1/models from the agent.
+      - host: "api.anthropic.com"
+        methods: [POST]
+        paths: ["/v1/messages", "/v1/messages/batches/**"]
+      # Anthropic-hosted MCP gateway — Claude Code uses this for cloud MCPs
+      # (Gmail, Calendar, Drive, etc.). Same Bearer token; path scope omitted
+      # because MCP paths are upstream-defined and may expand.
+      - host: "mcp-proxy.anthropic.com"
+      # Claude Code CLI also routes traffic via *.claude.com (api.claude.com,
+      # console.claude.com, etc.). Without this binding the CLI fails to
+      # start. Anthropic owns both domains; same Bearer token works.
+      - host: "*.claude.com"
+
+  # Two GitHub PATs — work and personal — each with its own placeholder so
+  # the agent can pick the right identity per request. Both read-only on
+  # api.github.com (closes laundering via gist POST). Distinct placeholder
+  # strings ensure the proxy's substring match cannot ambiguate.
+  GITHUB_PAT_WORK:
+    placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
+    inject:
+      header: "Authorization"
+      format: "token {secret}"
+    bindings:
+      - host: "api.github.com"
+        methods: [GET]
+      - host: "uploads.github.com"
+
+  GITHUB_PAT_PERSONAL:
+    placeholder: "ghp_PLACEHOLDER_PERSONAL_01HXY1234"
+    inject:
+      header: "Authorization"
+      format: "token {secret}"
+    bindings:
+      - host: "api.github.com"
+        methods: [GET]
+      - host: "uploads.github.com"
+
+# ─── Binding scope semantics ───────────────────────────────────────────────
+# Each binding may optionally constrain the HTTP method and/or URL path:
+#
+#   methods: [GET, HEAD]        # only these methods inject; others forward
+#                               # the placeholder verbatim and audit a
+#                               # binding_scope_violation event
+#   paths:   ["/repos/*"]       # `*` matches one segment (no `/`)
+#                               # `**` matches any number of segments
+#
+# Both fields are optional. Omitted = any method / any path (legacy).
+# Empty list `[]` is rejected — if you mean deny-all, remove the binding.
+# `methods: [*]` is rejected — omit the field instead.
+
+  OPENAI_API_KEY:
+    placeholder: "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      # Chat + embeddings — the two paths most agents actually need.
+      # Widen with /v1/files, /v1/fine_tuning/**, /v1/assistants/** etc.
+      # only if the agent legitimately uses them.
+      - host: "api.openai.com"
+        methods: [POST]
+        paths: ["/v1/chat/completions", "/v1/embeddings", "/v1/responses"]
+
+  GROQ_API_KEY:
+    placeholder: "gsk_PLACEHOLDER_01HXY1234567890ABCDEF"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      - host: "api.groq.com"
+        methods: [POST]
+        paths: ["/openai/v1/chat/completions", "/openai/v1/embeddings"]
+
+  MISTRAL_API_KEY:
+    placeholder: "mst_PLACEHOLDER_01HXY1234567890ABCDEF"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      - host: "api.mistral.ai"
+        methods: [POST]
+        paths: ["/v1/chat/completions", "/v1/embeddings"]
+
+  # DigitalOcean admin tokens are broad by design — every account/billing/
+  # droplet operation lives under a single token. Don't pretend method/path
+  # scope here meaningfully limits authority; if the agent legitimately needs
+  # only one resource family (e.g., droplets), scope it explicitly. Pair
+  # with an egress firewall on the agent's UID if you want hard isolation.
+  DO-API-TOKEN:
+    placeholder: "dop_v1_PLACEHOLDER_01HXY1234567890ABC"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      - host: "api.digitalocean.com"
+        methods: [GET]
+        paths: ["/v2/droplets/**", "/v2/account", "/v2/sizes", "/v2/regions"]
+
+# ─── Composite bindings (inject.template + compose) ────────────────────────
+# Some auth schemes assemble multiple atomic secrets on the wire — e.g.,
+# Jira / Atlassian Cloud Basic auth wants `base64(email:token)`. Rather
+# than pre-concatenating in BWS (which makes single-key rotation silently
+# stale), the proxy can compose the credential at fetch time using a
+# sandboxed Jinja2-syntax template. Whitelisted filters: b64encode,
+# b64decode, sha256, urlencode. Whitelisted functions: hmac_sha256,
+# hmac_sha512. Hard cap of 4 compose entries per binding.
+#
+# See docs/architecture.md §4.2 for the full reference table and the
+# AST-level deny-by-default validator behavior.
+
+  # Jira / Atlassian Cloud — Basic auth from email + API token, base64-encoded.
+  # JIRA_EMAIL and JIRA_API_TOKEN are stored as separate BWS secrets and
+  # composed at fetch time, so either can be rotated independently without
+  # the other going silently stale. Replace `your-tenant.atlassian.net`
+  # with your actual Atlassian Cloud hostname.
+  JIRA_API_BASIC:
+    placeholder: "jira_PLACEHOLDER_01HXY1234567890AB"
+    inject:
+      header: "Authorization"
+      template: "Basic {{ (JIRA_EMAIL + ':' + JIRA_API_TOKEN) | b64encode }}"
+    compose:
+      - JIRA_EMAIL
+      - JIRA_API_TOKEN
+    bindings:
+      - host: "your-tenant.atlassian.net"
+
+# The proxy is a credential broker, not an egress firewall — destinations
+# without a binding pass through unmodified. Set this to "deny" if you want
+# the proxy to also enforce a destination allow-list (firewall-like).
+unmatched_destination_policy: forward_unmodified
+
+cache:
+  ttl_seconds: 300
+  max_entries: 100
+  jitter_seconds: 30
+
+audit:
+  path: /var/log/agent-vault-proxy/audit.jsonl
+  fail_on_unwritable: true
+
+# ---- Startup security preflight ----
+# The proxy runs a set of checks at startup and warns to stderr + logger
+# on known insecure deployment patterns (BWS_ACCESS_TOKEN env in container,
+# audit log missing chattr +a, root UID in container, unscoped binding on
+# known-laundering hosts like api.github.com). Default is advisory.
+#
+# Uncomment to convert any preflight warning into a hard startup-abort —
+# useful for hardened environments that want fail-closed rather than
+# fail-loud:
+#
+# preflight:
+#   fail_on_warning: true
+
+# ---- backend block ----
+# `type` is the discriminator; `config` is the per-backend pydantic model.
+# `type: bws` selects the Bitwarden Secrets Manager adapter. Other backends
+# (1Password Service Accounts, HashiCorp Vault, etc.) are planned — see
+# docs/adapter-architecture.md for the protocol.
+backend:
+  type: bws
+  config:
+    type: bws
+    organization_id: "REPLACE-WITH-YOUR-BWS-ORGANIZATION-UUID"
+    access_token_path: /etc/agent-vault-proxy/bws-token
+    state_path: /var/lib/agent-vault-proxy/bws-state.json
+
+    # ---- Access token precedence ----
+    # If BWS_ACCESS_TOKEN is set in the proxy's process environment, it
+    # ALWAYS wins over access_token_path. When both are set, the proxy
+    # emits a DeprecationWarning on first fetch so the divergence is
+    # visible in logs. If you want the path to be authoritative, do not
+    # also set BWS_ACCESS_TOKEN in the systemd unit / Docker environment.
+
+    # ---- Region / self-hosted ----
+    # Defaults: Bitwarden cloud, US region (.com).
+    #
+    # Bitwarden cloud, EU region (.eu):
+    #   api_url: https://api.bitwarden.eu
+    #   identity_url: https://identity.bitwarden.eu
+    #
+    # Official self-hosted Bitwarden (your own instance at vault.example.com):
+    #   api_url: https://vault.example.com/api
+    #   identity_url: https://vault.example.com/identity
+    #
+    # If your self-hosted instance uses a private CA, you'll also need to trust
+    # that CA from inside the proxy — see docs/prerequisites.md "Self-hosted
+    # Bitwarden" for the trust-store setup (different recipe for bare-metal vs Docker).
+    #
+    # Vaultwarden (community Rust fork) does NOT implement the BWS Secrets
+    # Manager API — only the password-manager portion of Bitwarden. Use the
+    # official self-hosted Bitwarden distribution if you want this proxy.

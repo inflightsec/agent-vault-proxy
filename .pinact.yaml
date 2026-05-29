@@ -1,0 +1,13 @@
+version: 3
+
+# pinact normally resolves `pypa/gh-action-pypi-publish@vX.Y.Z` to the
+# release-tag commit SHA. For this action that SHA has no published
+# ghcr.io image (the action is composite and references the image as
+# `:${{ github.action_ref }}`, which only matches build SHAs from the
+# unstable/v1 branch and version-tag aliases). Letting pinact rewrite
+# our pin would break the release workflow with `manifest unknown`.
+# See .github/workflows/release.yml `publish-pypi` job for the long
+# explanation. Ignoring this single action is safer than disabling
+# pinact entirely or removing it from pre-commit.
+ignore_actions:
+  - name: pypa/gh-action-pypi-publish

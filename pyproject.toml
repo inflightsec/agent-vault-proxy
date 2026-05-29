@@ -1,0 +1,136 @@
+[project]
+name = "agent-vault-proxy"
+version = "0.4.0"
+description = "Loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Radek Maciaszek" }]
+keywords = [
+    "security",
+    "secrets",
+    "credentials",
+    "bitwarden",
+    "bws",
+    "proxy",
+    "agent",
+    "mitmproxy",
+    "prompt-injection",
+    "credential-broker",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "Topic :: Internet :: Proxy Servers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "mitmproxy>=11.0",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "bitwarden-sdk>=2.0",
+    # Composite bindings (inject.template + compose) use Jinja2's
+    # ImmutableSandboxedEnvironment for parsing and evaluating templated
+    # credential assembly. We further constrain it via an AST-level
+    # deny-by-default validator at config-load and a strict filter/function
+    # whitelist. Already transitively required by mitmproxy; declared
+    # explicitly because we depend on its public API.
+    "jinja2>=3.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/inflightsec/agent-vault-proxy"
+Documentation = "https://github.com/inflightsec/agent-vault-proxy/blob/main/docs/architecture.md"
+Repository = "https://github.com/inflightsec/agent-vault-proxy"
+Issues = "https://github.com/inflightsec/agent-vault-proxy/issues"
+Changelog = "https://github.com/inflightsec/agent-vault-proxy/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.13",
+    "types-PyYAML",
+]
+
+[project.scripts]
+agent-vault-proxy = "agent_vault_proxy.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_vault_proxy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "B", "UP", "S", "C4", "C90", "RET", "SIM"]
+ignore = ["S101"]
+
+[tool.ruff.lint.mccabe]
+# Cyclomatic complexity threshold. Functions over this trigger C901
+# and must either be refactored or carry an explicit # noqa: C901 with
+# a one-line justification. Default in ruff is 10; pinning explicitly.
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = false
+# Strict-ish: catch real bugs without forcing every third-party import to be
+# typed. mitmproxy and bitwarden-sdk don't ship full type stubs; the alternative
+# is fighting `untyped import` errors that aren't actually bugs in our code.
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_return_any = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+# Third-party libs without typing — silence the "missing imports" noise so
+# real errors are visible. yaml is covered by types-PyYAML (declared in
+# dev deps) but is listed here as belt-and-suspenders for environments
+# where the types- stub isn't installed yet.
+[[tool.mypy.overrides]]
+module = [
+    "mitmproxy.*",
+    "bitwarden_sdk.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
+[tool.bandit]
+# B101 (assert_used) — asserts in pydantic validators and addon hooks are
+#   deliberate invariant checks, not security-relevant.
+# B404 (import subprocess) — meta-warning, not a finding. Subprocess is
+#   used exactly once, in _preflight.py, to invoke `lsattr -d <path>` on
+#   the audit log during startup. `lsattr_path` comes from `shutil.which`
+#   (PATH-validated), `path` is the realpath of the operator-configured
+#   audit_path. No untrusted input, no shell, list-argv invocation.
+# B603 (subprocess_without_shell_equals_true) — same call as above. The
+#   B603 check is for argv-injection risk; this site uses an allow-listed
+#   binary path + a config-validated file path. Already marked `# noqa: S603`
+#   for Ruff. Skipping at the bandit config level keeps both linters
+#   consistent on this specific intentional pattern.
+skips = ["B101", "B404", "B603"]
+exclude_dirs = ["tests", ".venv"]

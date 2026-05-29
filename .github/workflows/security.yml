@@ -1,0 +1,265 @@
+name: security
+
+# Security gates. Runs on:
+#   - every PR (catch issues before merge)
+#   - every push to main (continuous baseline)
+#   - weekly schedule (catch newly-disclosed CVEs in already-pinned deps)
+#
+# Each job is independent and runs in parallel.
+#
+# Design note: this workflow deliberately does NOT depend on GitHub Code
+# Scanning / Advanced Security (the SARIF-upload to the Security tab).
+# Reasons:
+#   1. GHAS pricing applies to private repos and to some org configurations
+#      even when the repo itself is public — the workflow shouldn't break
+#      because of a Settings-page state change.
+#   2. The workflows port to other git hosts (GitLab, Forgejo, Codeberg)
+#      without modification.
+#   3. One less moving part for a solo maintainer to babysit.
+# Findings surface in workflow logs + GitHub step summaries instead of the
+# Security tab. Trade-off explicitly accepted.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 03:00 UTC — early enough to surface before the work week.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+# Top-level: read-only. Jobs that need more (e.g. pull-requests: write for
+# Dependency Review) declare it explicitly at the job level.
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── OSV-Scanner — cross-ecosystem CVE check against the lockfile ──────
+  # We install the OSV-Scanner binary directly rather than using the action
+  # wrapper. The wrapper passes its `scan-args` input as a single positional
+  # arg to the docker container, which breaks for any multi-flag invocation
+  # ("could not determine extractor suitable to this file"). Direct binary
+  # install sidesteps that and gives us a stable, well-understood CLI surface.
+  osv-scan:
+    name: OSV-Scanner (SCA)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install OSV-Scanner
+        # Pinned to a specific release tag. GitHub release artifacts are
+        # produced by OSV-Scanner's own signed CI (sigstore/cosign); future
+        # hardening: verify the cosign attestation here. For now we accept
+        # GitHub release artifact trust + step-security/harden-runner's
+        # egress policy as the supply-chain controls.
+        run: |
+          OSV_VERSION="v2.0.3"
+          sudo curl -sSfL \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/osv-scanner_linux_amd64" \
+            -o /usr/local/bin/osv-scanner
+          sudo chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: Run OSV-Scanner
+        # Scan both lockfiles. requirements.lock is production-only;
+        # requirements-dev.lock is a superset (production + dev tools).
+        # Both are hash-pinned and cooldown-gated. Non-zero exit on findings
+        # fails the job — this is the merge gate. We use the flat CLI form
+        # (no subcommand) which is supported across v1.x and v2.x.
+        #
+        # `requirements.txt:` is the parse-as prefix — our files are named
+        # *.lock for clarity, but OSV-Scanner's filename heuristic only
+        # recognizes the literal name `requirements.txt`. The prefix tells
+        # it to use the pip extractor regardless of filename.
+        run: |
+          osv-scanner \
+            --lockfile=requirements.txt:requirements.lock \
+            --lockfile=requirements.txt:requirements-dev.lock
+
+  # ─── TruffleHog — secret scanning across the diff + full history ───────
+  # Replaces gitleaks-action — the latter requires a paid license for org-
+  # owned repos as of Aug 2022 (the gitleaks CLI binary is FOSS; only the
+  # Action wrapper is gated). TruffleHog is AGPL-3 and free for everyone.
+  trufflehog:
+    name: TruffleHog (secret scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # Fetch full history so TruffleHog can scan all commits — not
+          # just the surface PR diff. Catches accidental rebases that
+          # bring in historical credentials.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@cb6aeefd6e2498240d0418e63f69684d28337e7b # v3.91.0
+        with:
+          # `--only-verified` filters out unverified findings (high signal-
+          # to-noise) — TruffleHog confirms credentials by attempting a
+          # no-op authenticated call against the issuer.
+          extra_args: --only-verified
+
+  # ─── Bandit — Python-specific SAST ──────────────────────────────────────
+  # Catches a meaningful subset of what CodeQL Python would catch: hardcoded
+  # credentials, eval/exec, yaml.load instead of safe_load, subprocess with
+  # shell=True, weak crypto. Already runs in pre-commit; this job promotes
+  # it to CI so a forgotten `pre-commit install` doesn't let a regression
+  # land on main.
+  bandit:
+    name: Bandit (Python SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Bandit
+        # Bandit is a CI utility, not a runtime dep — install fresh each
+        # run rather than pinning into the project lockfile. --only-binary
+        # still applies to close install-time script execution surface.
+        run: "pip install --only-binary :all: 'bandit[toml]>=1.9'"
+
+      - name: Run Bandit
+        # Configuration in pyproject.toml [tool.bandit]. Runs on src/ only;
+        # tests have looser controls (per [tool.ruff.lint.per-file-ignores]).
+        run: bandit -c pyproject.toml -r src
+
+  # ─── Semgrep — pattern-based SAST with community rulesets ──────────────
+  # Complements Bandit: where Bandit knows Python-specific stdlib patterns,
+  # Semgrep covers broader vulnerability patterns via maintained rulesets
+  # (OWASP top-10 surface, common API misuse, secret patterns). Rulesets
+  # are pulled from semgrep.dev at run time — that's a network dep on
+  # semgrep.dev, accepted because the alternative is shipping rulesets in
+  # the repo and re-syncing them manually.
+  semgrep:
+    name: Semgrep (pattern SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        # Same install posture as Bandit — fresh CI install, --only-binary.
+        run: "pip install --only-binary :all: 'semgrep>=1.90'"
+
+      - name: Run Semgrep
+        # Three rulesets that together cover the same threat surface CodeQL
+        # security-and-quality would: OWASP-style web/API misuse, Python
+        # idiomatic mistakes, secret patterns. `--error` makes findings
+        # fail the job — this is the merge gate.
+        run: |
+          semgrep \
+            --config=p/security-audit \
+            --config=p/python \
+            --config=p/secrets \
+            --error \
+            --metrics=off \
+            src/
+
+  # ─── Zizmor — self-audit of GH Actions workflows ───────────────────────
+  # Catches unpinned actions, credential-persisting checkouts, dangerous
+  # pull_request_target usage, etc. We use zizmor on our own workflows
+  # (including this one). Findings fail the job; no SARIF needed.
+  zizmor:
+    name: Zizmor (workflow security)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor
+        run: pipx install zizmor
+
+      - name: Run zizmor
+        # Non-zero exit on findings fails the job — same merge gate.
+        run: zizmor .github/workflows/
+
+  # ─── Dependency review — PR-only: surface CVE delta + license issues ───
+  # This IS a native GitHub feature, but unlike Code Scanning it works
+  # without GHAS on public repos — keep it. Surfaces the CVE/license delta
+  # for what a PR is about to add to the dependency graph.
+  dependency-review:
+    name: Dependency review (PR)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write   # post the review comment
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b # v4.7.3
+        with:
+          # Fail the PR if it introduces a moderate-or-higher CVE.
+          fail-on-severity: moderate
+          # Block GPL/AGPL deps — MIT projects shouldn't be pulled into copyleft.
+          deny-licenses: AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later, GPL-3.0, GPL-3.0-only, GPL-3.0-or-later

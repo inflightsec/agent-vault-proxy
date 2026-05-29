@@ -1,0 +1,73 @@
+name: Bug report
+description: Something is broken or misbehaves
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before filing:
+
+        - **Security issues:** do not use this template. See [SECURITY.md](../blob/main/SECURITY.md).
+        - **Configuration questions:** consider a discussion instead.
+        - **Threat-model questions:** see [docs/architecture.md](../blob/main/docs/architecture.md) §3 first — you may be hitting an explicitly-out-of-scope behavior.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `pip show agent-vault-proxy | grep Version` or commit SHA
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+      placeholder: |
+        I configured a binding for OPENAI_API_KEY scoped to api.openai.com.
+        I made a request from the agent with the placeholder set.
+        I expected the proxy to substitute and forward; instead, the proxy returned 503.
+    validations:
+      required: true
+
+  - type: textarea
+    id: bindings-yaml
+    attributes:
+      label: Relevant bindings.yaml snippet
+      description: The binding entry that's misbehaving. Redact real placeholders if you must.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: audit-log
+    attributes:
+      label: Audit log lines
+      description: Recent entries from `/var/log/agent-vault-proxy/audit.jsonl`. Do NOT paste real secret values or full URLs.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: journal
+    attributes:
+      label: Service log lines
+      description: Output of `journalctl -u agent-vault-proxy -n 50 --no-pager`. Redact anything sensitive.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, BWS region, anything else that might be relevant
+      placeholder: |
+        - OS: Arch Linux, kernel 6.19
+        - Python: 3.13.1
+        - BWS region: EU
+        - systemd unit: from docs/systemd-unit.md verbatim
+    validations:
+      required: true

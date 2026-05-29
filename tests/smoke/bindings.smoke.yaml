@@ -1,0 +1,33 @@
+version: 1
+
+# Smoke-test config. Paths are under /tmp/avp-smoke/ to avoid touching any
+# system-wide location. Run setup.sh first to create directories and copy
+# the BWS access token. Tear down by deleting /tmp/avp-smoke/.
+
+secrets:
+  ANTHROPIC_API_KEY:
+    placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+    inject:
+      header: "x-api-key"
+      format: "{secret}"
+    bindings:
+      - host: "api.anthropic.com"
+
+unmatched_destination_policy: deny
+
+cache:
+  ttl_seconds: 300
+  max_entries: 10
+  jitter_seconds: 5
+
+audit:
+  path: /tmp/avp-smoke/audit.jsonl
+  fail_on_unwritable: true
+
+backend:
+  type: bws
+  config:
+    type: bws
+    organization_id: "REPLACE_BEFORE_RUN"
+    access_token_path: /tmp/avp-smoke/bws-token
+    state_path: /tmp/avp-smoke/bws-state.json

@@ -1,0 +1,150 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allow ad-hoc runs from the Actions tab without pushing.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      # Block unexpected outbound network from the runner. Start in `audit`
+      # to collect the actual egress profile, then flip to `block` with a
+      # concrete `allowed-endpoints` list once StepSecurity's insights show
+      # what each job legitimately reaches.
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install hash-pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Both prod + dev deps are hash-pinned + wheels-only.
+          # requirements-dev.lock is a superset of requirements.lock (it
+          # includes the runtime deps too), so this single install covers
+          # everything pytest + ruff need to run the test suite.
+          # --require-hashes — refuses anything not hash-pinned (closes the
+          #   transitive-dep substitution surface).
+          # --only-binary :all: — refuses source distributions (Python's
+          #   equivalent of npm --ignore-scripts).
+          pip install --require-hashes --only-binary :all: -r requirements-dev.lock
+          # Install the package itself in editable mode WITHOUT pulling deps
+          # again (--no-deps respects the hash-pinned set we just installed).
+          pip install --no-deps -e .
+
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Format check (ruff format --check)
+        run: ruff format --check src tests
+
+      - name: Type check (mypy)
+        # mypy is configured in pyproject.toml [tool.mypy]. Catches a class
+        # of bugs ruff doesn't see — None/Optional handling, type signature
+        # drift, return-from-Any leaks at third-party boundaries.
+        run: mypy --config-file pyproject.toml src
+
+      - name: Test (pytest)
+        env:
+          # Keep tests deterministic — no real BWS calls, no real mitmproxy
+          # CA generation. Anything that needs those should use a fixture.
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: pytest -q --strict-markers --strict-config
+
+  verify-lockfile:
+    # Detect when pyproject.toml dependencies drift from either lockfile
+    # without anyone re-running pip-compile. Cheap, runs in parallel.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: "Structural check — every pinned package must have --hash=sha256:"
+        # Cheap, no network. Runs first so a hand-edited or hash-stripped
+        # lockfile fails fast before we waste time on `uv pip compile`. Same
+        # script the pre-commit hook runs locally — single source of truth.
+        run: python3 scripts/check-lockfile-hashes.py
+
+      - name: Install uv (faster than pip-compile)
+        run: pip install uv
+
+      - name: Re-compile both lockfiles into tempfiles (with 7-day cooldown)
+        run: |
+          # Supply-chain cooldown: refuse any package version released in the
+          # last 7 days. Mirrors the npm/uv ecosystem-wide cooldown pattern.
+          # If a malicious release is published, the 7-day window gives the
+          # community time to detect + yank it before it lands in our lockfile.
+          #
+          # Same Python expression as scripts/check-lockfile-drift.sh — keeps
+          # the CI gate and local pre-commit gate in exact byte agreement.
+          CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          echo "Cooldown cutoff: $CUTOFF"
+          uv pip compile --generate-hashes \
+            --exclude-newer "$CUTOFF" \
+            pyproject.toml -o /tmp/requirements.lock.fresh
+          uv pip compile --generate-hashes \
+            --exclude-newer "$CUTOFF" \
+            --extra dev \
+            pyproject.toml -o /tmp/requirements-dev.lock.fresh
+
+      - name: Diff against committed lockfiles
+        run: |
+          # Strip pip-compile header (timestamp + command line vary per run);
+          # only the pinned deps + hashes should match.
+          fail=0
+          for lock in requirements.lock requirements-dev.lock; do
+            sed '/^#/d' "$lock" > "/tmp/${lock}.committed.stripped"
+            sed '/^#/d' "/tmp/${lock}.fresh" > "/tmp/${lock}.fresh.stripped"
+            if ! diff -u "/tmp/${lock}.committed.stripped" "/tmp/${lock}.fresh.stripped"; then
+              echo "::error::${lock} drift detected. Either"
+              echo "::error::(a) pyproject.toml changed without regenerating ${lock}, or"
+              echo "::error::(b) ${lock} pins a version younger than the 7-day cooldown window."
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Regenerate locally with:"
+            echo "::error::  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime(\"%Y-%m-%dT%H:%M:%SZ\"))')"
+            echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" pyproject.toml -o requirements.lock"
+            echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" --extra dev pyproject.toml -o requirements-dev.lock"
+            exit 1
+          fi

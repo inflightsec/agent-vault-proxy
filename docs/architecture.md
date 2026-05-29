@@ -1,0 +1,486 @@
+# Architecture: agent-vault-proxy
+
+> **What this is.** A small loopback HTTPS proxy that fetches API keys from Bitwarden Secrets Manager (BWS) on demand and injects them into outbound requests on behalf of an agent. The agent never holds real secrets in memory - only placeholder strings.
+>
+> **What this is *not*.** An egress firewall. Egress policy belongs to the operator's firewall of choice (OpenSnitch, nftables, firewalld, …). The proxy stays in its lane: **credential brokerage** for opted-in destinations.
+
+## 1. Executive summary
+
+`agent-vault-proxy` is a [mitmproxy](https://mitmproxy.org/)-based HTTP/HTTPS forward proxy running on loopback as a dedicated system user. The agent process ships with credential **placeholders** as if they were the real secrets. When the agent issues an outbound request, the proxy:
+
+1. Detects a known placeholder in the request header
+2. Verifies the destination is in the operator-declared binding for that secret
+3. Fetches the real secret from BWS (with TTL cache)
+4. Substitutes placeholder → real secret on the upstream socket
+5. Records the decision in an append-only audit log
+
+Requests whose destinations aren't bound to any secret are forwarded unmodified, the proxy is a transparent intermediary, not a gatekeeper. Destination filtering / network-egress lockdown is **out of scope** and is left to the host's existing firewall.
+
+Scope:
+
+- **In scope:** static API keys (Anthropic, OpenAI, GitHub PAT, etc.); BWS as backing store; per-secret destination bindings; sandbox-only CA; structured audit log.
+- **Out of scope:** OAuth refresh-token flows, AWS SigV4 signing, kernel-level egress enforcement, multi-tenant routing.
+
+The implementation is ≈ 600 lines of Python plus a systemd unit. Operational complexity is small.
+
+## 2. Threat model
+
+### In scope
+
+| ID | Threat | Defense |
+|---|---|---|
+| **T-1** | **Prompt injection.** Untrusted input flips the agent into hostile behavior; the agent attempts to leak credentials. | The proxy ensures real secrets never enter the agent's address space (G1) - the agent cannot exfiltrate what it doesn't have. |
+| **T-2** | **Agent process compromise.** RCE in the agent gives the attacker the agent's UID. | Same protection as T-1: secrets aren't in memory to be read. |
+| **T-1.5** | **Laundering through bound destinations.** Agent uses `GITHUB_PAT_*` legitimately against `api.github.com` (bound) to create a public gist containing exfil data. | Per-binding method/path scope. `methods: [GET]` blocks POSTs entirely; the placeholder is forwarded verbatim on a scope violation (G5), audited as `binding_scope_violation`. |
+| **T-3.5** | **Supply-chain compromise of proxy dependencies.** Poisoned Python package in `mitmproxy`, `bitwarden-sdk`, or a transitive dep gives an attacker code execution at proxy UID at next install. | Hash-pinned `requirements.lock` (`pip install --require-hashes`). Dep updates require operator review. |
+
+### Explicitly out of scope (no defense claim)
+
+- **T-3 - Agent UID interactive shell with network egress.** A persistent attacker on the agent's UID can attempt to talk to the network. **The proxy does not block this.** The host's egress firewall is the relevant control. The proxy's contract starts when a request arrives at `127.0.0.1:14322` and ends when the response is delivered.
+
+  > **Subset worth stating explicitly:** a malicious dep at the agent's UID *can* use the proxy as its own authenticated channel. The proxy injects the real secret on any request that matches a binding's placeholder, host, method, and path, it cannot tell legitimate-agent traffic from poisoned-dep traffic when both run at the same UID. The G1 in-memory isolation defends against memory-theft attacks; the per-binding `methods:` / `paths:` scope is what limits what an authenticated bad actor at the same UID can do once they have the proxy's cooperation. Lock those scopes down; pair with egress filtering for the agent UID.
+- **T-4 - Proxy process compromise.** UID-of-proxy compromise = total compromise of all bound secrets in flight. Not eliminated, mitigated by systemd sandboxing and supply-chain discipline. Documented as accepted residual risk **R1**.
+- **T-5: Host root.** No userspace mechanism survives this.
+- **T-6, BWS itself compromised.** Outside trust boundary.
+- **T-7, Kernel exploit.** Outside threat model.
+- **T-8: Side channels** (timing, response sizes, audit log inference). Not what this layer addresses.
+- **T-9, Application-layer leakage in upstream responses.** If an upstream API echoes secrets in response bodies and the agent logs them, that is a different problem.
+
+### Why egress is out of scope (the architectural decision)
+
+An earlier design treated the proxy as both a credential broker AND a kernel-level egress lock. During deploy this was discarded for three reasons:
+
+- **Reliability.** `nft meta skuid` matching did not reliably catch sudo-spawned processes on every host (root cause: socket-UID tagging behavior with `setuid()`; unconfirmed). Rules appeared installed but packets traversed regardless.
+- **Conflicts with legitimate local services.** "Everything denied except proxy" conflicted with loopback services (TTS, IPC) and required iterative carve-outs.
+- **Most importantly: users already have a preferred egress firewall.** Forcing our own kernel rules duplicates concerns and creates an "ours vs theirs" precedence problem.
+
+Decision: the proxy is a **credential broker**; egress filtering is the operator's stack. They're orthogonal, both useful, and neither should depend on the other.
+
+## 3. Atomic guarantees
+
+Each guarantee is binary and individually testable.
+
+| ID | Guarantee | Test |
+|---|---|---|
+| **G1** | Agent process address space never contains real secret bytes | `gcore <pid>; strings core \| grep <secret-prefix>` returns 0 |
+| **G2** | Real secret bytes appear on the wire only inside upstream TLS records sent from the proxy | `tcpdump -i lo` agent↔proxy: never. `tcpdump -i any` proxy→upstream: yes, only inside TLS. |
+| **G3** | Per-request destination check from CONNECT target + SNI + Host header consistency, before injection | Mismatched Host → 403 audit event, no injection |
+| **G4** | Fail-closed on any uncertainty, with the externally-visible behavior matched to the failure class. **Request-time** failures the proxy can recover from per-request (BWS unreachable, named secret missing) → placeholder forwarded verbatim; upstream returns its own auth failure (401/403); proxy audits `inject_decision: denied`. **Startup or persistent** failures the proxy cannot serve under (config invalid, audit log unwritable, preflight `fail_on_warning` tripped) → the daemon refuses to start (or, if mid-life on a config reload, refuses to serve and surfaces a 503 to the next request until restored). Either way, no request is ever modified with a degraded or guessed credential. | Stop BWS → next request fails closed with upstream auth fail; corrupt bindings.yaml → daemon refuses to start |
+| **G5** | Enforcement by omission, non-permitted destination receives the placeholder verbatim, not an error | Upstream returns its standard auth-failure; proxy did not 5xx |
+| **G6** | The `inject_decision` audit event is fsynced before the proxy writes the modified request bytes to any upstream socket. Enforced by mitmproxy's request lifecycle (the modified request is not written to the upstream socket until the `requestheaders` hook returns) combined with `audit.emit()` performing a synchronous `os.fsync()` inside that hook. An explicit "do not reorder" comment in `addon.py` marks the ordering as non-refactorable. | Instrument upstream-write call site; fault-inject fsync hang and verify the upstream write blocks until fsync completes |
+| **G7** | The proxy CA is per-host and is only trusted by callers that explicitly load it via `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`. Operators must NOT add it to system-wide trust stores. | From a non-proxy-configured shell: `curl --proxy 127.0.0.1:14322 https://upstream` → TLS verification fails |
+| **G8** | Rotated BWS secret picked up within configured TTL (default 300 s) | Rotate, observe stale until TTL, fresh after |
+| **G9** | Proxy restart does not lose audit history; restart itself is audited | Kill mid-session → restart → log intact + `proxy_restart` event |
+
+The most important counter-intuitive choice is **G5 enforcement by omission**: returning 5xx on a binding violation would tell an attacker probing the agent that the exfil destination is blocked, turning the proxy into a side channel. Forwarding the placeholder lets the upstream's normal auth rejection surface - monitored as an auth failure with no leak about proxy mechanics.
+
+## 4. Reference architecture
+
+### 4.1 Process layout
+
+```
+┌────────────────────────────┐
+│   systemd (system slice)   │
+└─────────────┬──────────────┘
+              │ owns
+              ▼
+┌──────────────────────────────────────────┐
+│   agent-vault-proxy.service              │
+│   ─────────────────────────────────      │
+│   User=avp (fixed system user)           │
+│   Group=avp                              │
+│   HOME=/var/lib/agent-vault-proxy        │
+│   python -m agent_vault_proxy            │
+│     → mitmproxy in-process addon         │
+│     → BWS Python SDK + cache             │
+│   Listens: 127.0.0.1:14322               │
+│   Audit:   /var/log/agent-vault-proxy/   │
+│            audit.jsonl (chattr +a)       │
+└──────────────────────────────────────────┘
+              ▲
+              │ HTTPS_PROXY=http://127.0.0.1:14322
+              │ NODE_EXTRA_CA_CERTS=/etc/agent-vault-proxy/ca.pem
+              │ NO_PROXY=localhost,127.0.0.1,::1,…
+              │
+┌──────────────────────────────────────────┐
+│   Agent process (any UID)                │
+│   Sees only placeholders in env          │
+└──────────────────────────────────────────┘
+```
+
+### 4.2 Bindings configuration
+
+YAML at `/etc/agent-vault-proxy/bindings.yaml`. Re-read on service restart; file-mtime auto-reload is not implemented (planned for a later release). See [`bindings.example.yaml`](../bindings.example.yaml) for the full grammar; abbreviated:
+
+```yaml
+version: 1
+
+secrets:
+  ANTHROPIC_API_KEY:
+    placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      - host: "api.anthropic.com"
+      - host: "*.claude.com"
+
+  GITHUB_PAT_WORK:
+    placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
+    inject:
+      header: "Authorization"
+      format: "token {secret}"
+    bindings:
+      - host: "api.github.com"
+        methods: [GET]      # closes T-1.5 laundering via gist POST
+      - host: "uploads.github.com"
+
+unmatched_destination_policy: forward_unmodified
+
+cache:
+  ttl_seconds: 300
+  max_entries: 100
+  jitter_seconds: 30
+
+audit:
+  path: /var/log/agent-vault-proxy/audit.jsonl
+  fail_on_unwritable: true
+
+backend:
+  type: bws
+  config:
+    type: bws
+    organization_id: "<bws-org-uuid>"
+    access_token_path: /etc/agent-vault-proxy/bws-token
+    state_path: /var/lib/agent-vault-proxy/bws-state.json
+    # EU region: explicit URLs
+    # api_url: https://api.bitwarden.eu
+    # identity_url: https://identity.bitwarden.eu
+```
+
+Additional backends plug in by registering a new `type` discriminator; see [`docs/adapter-architecture.md`](adapter-architecture.md) for the protocol and the registry.
+
+**Composite bindings (v0.4+):** auth schemes that assemble multiple atomic BWS values on the wire (e.g., Jira / Atlassian Cloud Basic auth `base64(email:token)`) use `inject.template` instead of `inject.format`, plus a `compose:` list of 1-4 BWS secret names. The template is Jinja2 syntax (operators already know it) evaluated through `jinja2.sandbox.ImmutableSandboxedEnvironment` with an AST-level deny-by-default validator at config-load, class-walk escapes, control flow, attribute traversal, subscript, and arithmetic are all structurally impossible. The composite never gets its own cache entry: raw BWS values are cached, the template renders per request.
+
+Example (Jira Basic auth):
+
+```yaml
+JIRA_API_BASIC:
+  placeholder: "jira_PLACEHOLDER_01HXY1234567890AB"
+  inject:
+    header: "Authorization"
+    template: "Basic {{ (JIRA_EMAIL + ':' + JIRA_API_TOKEN) | b64encode }}"
+  compose:
+    - JIRA_EMAIL
+    - JIRA_API_TOKEN
+  bindings:
+    - host: "your-tenant.atlassian.net"
+```
+
+Whitelisted callables (anything else is rejected at config-load):
+
+| Name | Kind | Signature | Notes |
+|---|---|---|---|
+| `b64encode` | filter | `str → str` | Standard RFC 4648 §4 base64 of UTF-8 bytes. ASCII output. |
+| `b64decode` | filter | `str → str` | Strict; raises on invalid padding/characters. |
+| `sha256` | filter | `str → str` | Lowercase hex digest of UTF-8 bytes. |
+| `urlencode` | filter | `str → str` | Percent-encode per RFC 3986, no safe characters. |
+| `hmac_sha256` | function | `(key: str, msg: str) → str` | Lowercase hex HMAC-SHA256. |
+| `hmac_sha512` | function | `(key: str, msg: str) → str` | Lowercase hex HMAC-SHA512. |
+
+**Operator language:** variable references (compose names), string literals, the `+` operator (string concat only), filter pipes `|`, and function calls. Nothing else - no `if`/`for`/`set`/comparison/subscript/attribute access/arithmetic/`__class__` walking, no `format`/`xmlattr`/`attr` filters. Templates and compose lists are validated at config-load: bad syntax, unknown name, wrong filter arity → AVP refuses to start. See [`bindings.example.yaml`](../bindings.example.yaml) for more examples.
+
+**Config-load invariants:**
+
+- Wildcard depth ≤ 1 DNS label (reject `*.com`)
+- Empty `bindings: []` rejected explicitly (deny-all must be intentional, not via omission)
+- `methods: []` and `methods: [*]` rejected: omit the field instead
+- Bad config on hot-reload: keep old config, log error, never crash
+- Placeholder length checked against operator-declared `expected_real_length` when supplied
+
+**Host-matching semantics (read before you write a binding):**
+
+- **Exact match is byte-for-byte string equality.** `api.openai.com` matches `api.openai.com` and nothing else. Case-sensitive in principle, though real DNS is case-insensitive: write hostnames lowercase.
+- **Wildcards use a `*.` prefix and match exactly one DNS label.** `*.openai.com` matches `api.openai.com` but NOT `evil.api.openai.com` (two labels). The wildcard prefix cannot itself contain `.`. This is enforced both at config load (wildcard depth ≥ 2 DNS labels) and at match time (the matched prefix has no dot).
+- **No IDNA / punycode normalization.** A host like `xn--bcher-kva.example` matches only that exact ASCII form. If the agent's HTTPS client sends the Unicode form (`bücher.example`), it won't match the punycode binding, and vice versa. Pick one form and use it consistently in both BWS-side state and your bindings.
+- **No trailing-dot normalization.** `api.example.com` and `api.example.com.` are different hosts to the matcher. mitmproxy typically strips the trailing dot, but don't rely on it - match what your client actually sends.
+- **No port handling.** The host string is the hostname only. There is no `host: "api.example.com:443"` form. If you need port-scoped routing, use the host alone: the proxy listens on a single inbound port (14322) and forwards to upstream's chosen port.
+- **CONNECT host vs. Request host must agree.** The proxy enforces SNI/Host-header consistency at injection time, a CONNECT to `api.openai.com:443` whose subsequent request line says `Host: evil.com` is denied (`sni_host_mismatch`). This closes a class of TLS proxy laundering.
+- **Redirects are NOT followed by the proxy.** The proxy forwards the upstream's 3xx response to the agent and stops. If the agent follows the redirect to a host not in any binding, the real secret is not injected: the placeholder forwards verbatim and the upstream rejects it. Defenders treat redirects as the calling code's problem.
+- **Binding order matters.** Within a single `secrets:` entry, bindings are evaluated top-to-bottom; the first matching binding wins. If two `host:` patterns could both match, the more specific one should come first.
+
+### 4.3 Request lifecycle
+
+```
+1. Agent: CONNECT api.anthropic.com:443 HTTP/1.1
+              │
+2. Proxy (http_connect hook):
+     - Parse target
+     - If destination is in any binding: continue
+     - Else if unmatched_destination_policy = forward_unmodified: continue
+     - Else (deny): emit deny audit + return 403
+              │
+3. Agent (inside MITM-tunneled TLS):
+     GET /v1/messages
+     Authorization: Bearer sk-ant-PLACEHOLDER-…
+              │
+4. Proxy (requestheaders hook):
+     a. tag flow.metadata with request_id
+     b. SNI/Host consistency check (G3)
+     c. Destination allow-list check (applies for plain HTTP too)
+     d. Scan headers for a known placeholder
+        → no placeholder: forward unmodified
+        → placeholder found: continue
+     e. Verify the matched secret's bindings include this destination
+        → no: emit `destination_not_in_binding` audit, forward verbatim (G5)
+     f. Verify the matched binding's method/path scope permits this request
+        → no: emit `binding_scope_violation` audit, forward verbatim (G5)
+     g. BWS fetch via cache (G4 fail-closed on unreachable)
+     h. Substitute placeholder → real secret on the request header
+     i. Emit `inject_decision: allowed` audit, synchronous fsync (G6)
+              │
+5. Proxy → upstream (TLS): forward modified request
+              │
+6. Upstream → proxy: response
+              │
+7. Proxy → agent: forward response unchanged
+              │
+8. Proxy: emit `upstream_response` audit with status code only
+```
+
+### 4.4 Audit log
+
+JSONL, append-only via `chattr +a`. One event per line.
+
+```json
+{"ts":"2026-05-17T14:32:11.123456+00:00","type":"inject_decision","request_id":"01HXY...","decision":"allowed","secret_name":"ANTHROPIC_API_KEY","destination":{"host":"api.anthropic.com","port":443}}
+{"ts":"2026-05-17T14:32:11.234567+00:00","type":"upstream_response","request_id":"01HXY...","status":200}
+```
+
+Rules:
+
+- `fail_on_unwritable: true` - disk full / attribute removed / permission flip = proxy returns 503 (G4 + G6)
+- Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
+- **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
+- Future direction: off-host shipping (rsyslog TLS or similar)
+
+### 4.5 BWS integration
+
+- Dedicated BWS machine account, scoped to one Project containing only the secrets in `bindings.yaml`.
+- Token at `/etc/agent-vault-proxy/bws-token`, mode `0440 root:avp` - root owns, `avp` group reads.
+- `bitwarden-sdk` Python bindings (in-process), not a shell-out.
+- EU and US regions supported via explicit `api_url` / `identity_url`.
+- Cache: in-memory `OrderedDict` with LRU eviction, TTL 300 s ± 30 s jitter per entry (jitter clamped to `ttl/2`). Capacity bounded by `cache.max_entries` (default 100). On 429: serve stale within `2 * ttl` grace, audit-flag `cache_status=stale`; else fail closed.
+
+### 4.6 Calling-shell environment
+
+The calling shell needs four things:
+
+```bash
+# Route HTTPS through the proxy
+export HTTPS_PROXY="http://127.0.0.1:14322"
+export HTTP_PROXY="http://127.0.0.1:14322"
+
+# Trust the proxy CA — multiple env vars cover different client libraries
+export NODE_EXTRA_CA_CERTS="/etc/agent-vault-proxy/ca.pem"
+export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
+export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
+export CURL_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
+
+# Bypass for loopback and any internal mesh (Tailscale, VPN, LAN peers).
+# Without this, every local-service call gets sent to the proxy, denied
+# or forwarded pointlessly, and breaks the legitimate caller.
+export NO_PROXY="localhost,127.0.0.1,::1,*.ts.net,*.local,10.0.0.0/8,192.168.0.0/16"
+
+# Export placeholders, NOT real values
+export ANTHROPIC_API_KEY="sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
+```
+
+`NO_PROXY` semantics differ by tool. Recent curl supports CIDR; some Node libraries match by hostname substring; Python's `requests` requires explicit hosts. The combo above covers most real cases. Tailor it to your environment.
+
+## 5. Hardening checklist
+
+| Item | Why |
+|---|---|
+| `User=avp Group=avp`; bws-token `0440 root:avp` | Containment if proxy is exploited |
+| `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, `ProtectKernelLogs`, `ProtectHostname`, `ProtectClock` | Standard systemd sandboxing |
+| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `NoNewPrivileges=yes` | Reduce attack surface |
+| `SystemCallFilter=@system-service ~@privileged ~@resources ~@mount` | Reduce syscalls available |
+| `chattr +a` on audit log | Append-only at filesystem level |
+| Hash-pin all Python deps (`uv pip compile --generate-hashes`); dep updates require human review | Dominant compromise vector for Python services |
+| Per-host CA generation (separate CA per machine) | Limit blast radius of proxy CA leak |
+| NTP sync precondition (`timedatectl show -p NTPSynchronized`), refuse to serve if clock unsynchronized | Cache TTL math, audit timestamps, JWT validation |
+| Rotate proxy CA every 6 months | Audit-logged manual ritual |
+| Logrotate with `copytruncate` + `chattr -a` orchestration via privileged helper | Prevent disk-fill DoS without losing audit integrity |
+
+**Deliberately NOT in this list:**
+
+- `MemoryDenyWriteExecute=yes`: cffi (used by `mitmproxy` and `bitwarden-sdk`) needs W+X for callback trampolines. Documented trade-off.
+- nft / iptables rules at the host level: egress policy is the operator's stack
+- `kernel.unprivileged_userns_clone=0`, `kernel.yama.ptrace_scope=2`, same reason
+- AppArmor for the proxy daemon - nice-to-have; the systemd sandbox is sufficient
+
+## 6. Supply-chain controls
+
+The proxy holds every bound secret in flight. Compromising its dependency graph is the cleanest path to all of them at once (R1). The controls below are all in force at the build, install, and update boundaries.
+
+### 6.1 Install-time
+
+| Control | What it does |
+|---|---|
+| `pip install --require-hashes -r requirements{,-dev}.lock` | Every transitive dependency (production AND dev) is pinned to a specific version AND its file hash. A registry-poisoning attack against any package in the graph fails the install. Dev deps are pinned because pytest + ruff load arbitrary Python at test time, a poisoned dev dep would execute in CI just like a poisoned prod dep would in production. |
+| `pip install --only-binary :all:` | Refuses source distributions. Wheels cannot run scripts at install time by format spec: this is the Python equivalent of `npm install --ignore-scripts`. |
+| `bitwarden-sdk` in-process, not shell-out | One process boundary, not two. The BWS SDK never spawns `bws` CLI on demand, so a `$PATH`-shadowing attack on the operator's shell can't substitute a hostile binary at fetch time. |
+
+### 6.2 Lockfile regeneration
+
+| Control | What it does |
+|---|---|
+| `uv pip compile --generate-hashes --exclude-newer "<7d ago>"` | Refuses any package version released in the last 7 days. Compromised releases (Shai-Hulud-style worms, account takeovers, typosquats) typically get yanked or flagged within that window. |
+| Lockfile-drift CI gate | The test workflow re-compiles the lockfile in CI with the same `--exclude-newer` cutoff and fails if it doesn't match what's committed. Bypassing the cooldown requires an explicit code change to the workflow, not a quiet `uv pip compile` on someone's laptop. |
+
+### 6.3 Build-time
+
+| Control | What it does |
+|---|---|
+| Every GitHub Action SHA-pinned | Action references are pinned to commit hashes (not version tags), so a maintainer move on `@v1` cannot change CI behavior. Enforced by `pinact` in pre-commit and re-validated by `zizmor` in CI. |
+| `permissions:` blocks scoped per-job | The default repo token is read-only at the top level; only the publish job gets `id-token: write` (for PyPI OIDC), only the release job gets `contents: write`. |
+| `pull_request`, never `pull_request_target` | Fork PRs run in their own context with no secrets. The release workflow does not trigger on PRs at all. |
+| OIDC publishing to PyPI | No long-lived API token in repo secrets. PyPI's trusted-publisher flow validates the GitHub OIDC token against the configured workflow + environment. |
+| `persist-credentials: false` on every checkout | `.git/config` never contains the workflow token, so it can't end up in artifacts. |
+
+### 6.4 Continuous
+
+| Control | What it does |
+|---|---|
+| OSV-Scanner weekly + on every PR | CVE feed match against both lockfiles. Non-zero exit on findings fails the job. |
+| Bandit on every PR | Python-specific SAST, catches hardcoded credentials, eval/exec, yaml.load, subprocess shell=True, weak crypto. |
+| Semgrep on every PR | Pattern SAST via the `p/security-audit` + `p/python` + `p/secrets` community rulesets: covers OWASP top-10 surface, common API misuse, secret patterns. |
+| TruffleHog on every PR | Full-history secret scan with `--only-verified` (active issuer-side validation). Catches credentials that slip in via rebases. |
+| Zizmor on every PR | Workflow-security audit, including a self-audit of the security workflow itself. |
+| `actions/dependency-review-action` on every PR | Surfaces the CVE delta a PR introduces, blocks merge on moderate-or-higher findings, and rejects AGPL/GPL deps for license-compatibility hygiene. |
+
+### 6.5 Operational
+
+| Control | What it does |
+|---|---|
+| Pre-commit hook chain | Identical lint, format, security, and pinning checks run locally before commit. Passing pre-commit means CI won't complain about the same things. |
+| `dependabot.yml` (recommended for forks) | Optional but recommended: weekly check for dep updates. Updates land as PRs and run through the cooldown gate above before they can merge. |
+
+## 7. Premortem
+
+| # | Failure | Likelihood | Mitigation |
+|---|---|---|---|
+| F1 | Cache TTL too long → rotated secret stays stale | M | TTL 300 s default; admin flush command (future) |
+| F2 | Cache TTL too short → BWS rate-limit during burst → 503 storms | M | TTL 300 s conservative; jitter 30 s |
+| F3 | mitmproxy hot-reload imports broken addon → service degrades | M | `configure()` validation + try/except; keep old in-memory addon on error |
+| F4 | SNI/Host check too strict → CDN-fronted services break | M | Per-secret `allow_sni_host_mismatch: true` escape hatch (off by default) |
+| F5 | Operator adds wildcard bindings to "make it work" → defeats purpose | H | Config-load lint: warn on wildcards exceeding depth 1 |
+| F6 | Audit log fills disk → `fail_on_unwritable: true` = outage | H | Logrotate + monitoring |
+| F7 | CA install drifts when launcher / sandbox profile is regenerated | M | CA install + caller env in the same managed unit |
+| F8 | A subprocess doesn't honor `HTTPS_PROXY` | M | Documented limitation; file upstream issues when found |
+| F9 | BWS SDK has a bug that leaks secret to logs | L | Never `print()` returns; zero cache entries on eviction |
+| F10 | Operator declares wrong placeholder length → content-length disagrees with body | L | Length validation at config load; reject with clear error |
+| F11 | Upstream adds cert pinning → proxy MITM fails | M | Per-secret `bypass: true` escape hatch; documented limitation |
+| F12 | First OAuth need surfaces, design has no extension point | H | `inject:` block extensible; OAuth injector type can be added |
+| F13 | NTP drift → cache TTL math negative, JWT validation fails | M | Startup precondition `timedatectl show -p NTPSynchronized=yes` |
+| F14 | Supply-chain compromise of a Python dep → RCE at proxy UID | M-H | Hash-pinned deps + diff review (privileged operation) |
+| F15 | Prompt-injection laundering through bound destination (T-1.5) | H → MITIGATED | Per-binding method/path scope |
+| F16 | Operator regenerates the calling-env config, CA env vars lost → agent TLS errors → `--insecure` set | M | Caller env owned by the same config management as the daemon; periodic CA-mount healthcheck |
+| F17 | Multi-machine CA cross-contamination | L-M | Per-host CA (no shared CA across deployments) |
+
+## 8. Test plan, verifies G1–G9
+
+| Test | Verifies |
+|---|---|
+| Boot proxy. Issue request with placeholder. Capture: agent core, lo tcpdump, egress tcpdump, audit log. | G1, G2, G6, G7 |
+| Modify agent to send `CONNECT api.anthropic.com:443` then `Host: evil.com` inside tunnel | G3 |
+| Send placeholder to a host bound to a *different* secret | G5 |
+| Stop BWS / break BWS token / make audit unwritable | G4 |
+| Rotate secret in BWS, observe stale until TTL, fresh after | G8 |
+| `kill -9` proxy mid-session, restart, verify audit log integrity + `proxy_restart` event | G9 |
+| From a non-proxy-configured shell, attempt to use proxy directly → TLS verify must fail | G7 |
+
+The pytest suite covers config validation, addon hooks, BWS client behavior, and the scope-matching logic. Run `pytest` to execute it.
+
+## 9. Rollback
+
+Three independent dimensions:
+
+1. **Stop the service.** `sudo systemctl stop agent-vault-proxy`. With env-var-only routing, the agent's outbound TLS will fail (connection refused on loopback). Restart to recover.
+2. **Unset proxy env.** Clear `HTTPS_PROXY` / `NO_PROXY` / CA env vars in the calling shell. The agent reverts to direct egress (subject to whatever the host firewall says).
+3. **Full teardown.** Remove the systemd unit, `/opt/agent-vault-proxy`, `/etc/agent-vault-proxy`. Preserve `/var/log/agent-vault-proxy/audit.jsonl` for forensics.
+
+Because there's no kernel egress lock to "leave on," the rollback model is simple.
+
+## 10. Open questions
+
+- **AWS access:** SigV4 isn't a static header. Deferred - needs a dedicated signer injector.
+- **gh CLI OAuth path:** OAuth refresh tokens land in `~/.config/gh/hosts.yml`. Out of scope until the first concrete OAuth need surfaces.
+- **Admin port form factor:** Unix socket, filesystem-touch protocol, or local-MCP server? Deferred to burn-in feedback.
+
+## 11. Out of scope (re-stated)
+
+- Host root resistance
+- Same-UID attacker resistance (proxy UID is the new vault; intentionally accepted)
+- **Egress filtering / kernel-level network policy**: the host's firewall handles this
+- OAuth refresh-token handling
+- AWS SigV4 / other request-signing schemes
+- K8s deployment (single-host design)
+- Cross-agent multi-tenancy
+- DNS spoofing defense
+- Side-channel resistance
+- Application-layer secret leakage in upstream responses
+
+## 12. Accepted residual risks
+
+**R1 [HIGH] - Supply chain to proxy UID = total compromise of all bound secrets.**
+Mitigation: hash-pinned deps + human-reviewed dep updates. Stronger mitigation (future): out-of-process BWS broker on a separate host. The operator must accept this before deploy.
+
+**R2 [HIGH → MITIGATED], Laundering through bound destinations.**
+Originally HIGH. Closed by per-binding method/path scope. Bindings may declare optional `methods: [GET, …]` and `paths: ["/repos/*"]`; out-of-scope requests have their placeholder forwarded verbatim (G5 preserved) and emit a `binding_scope_violation` audit event.
+
+**R3 [MED] - G5 omission leaks placeholder format / agent intent to attacker-controlled destinations** (only if a binding is loose, e.g., `*.s3.amazonaws.com` covering attacker buckets). Future mitigation: per-deployment placeholder randomization (HMAC of secret name with per-host key).
+
+**R4 [MED], Off-host vault is partial mitigation, not magic.** Even with a separate host serving BWS, an attacker with host-root on the proxy host can exfil during normal operation. Off-host adds physical separation but doesn't defend against in-band exfil.
+
+**R5 [MED], Operational maintenance load is real.** Hash-pinned deps need periodic refresh; CA rotation is manual; audit log monitoring is the operator's responsibility.
+
+**R6 [MED]: Response-side echo can leak the real secret back to the agent.** AVP injects the real credential on the *request* side and returns the upstream response to the agent unmodified. If an upstream endpoint reflects the `Authorization` header (or the request body containing it) in its *response*, debug `/echo` endpoints, verbose 5xx error envelopes, certain SDK request-tracing modes - the agent receives the real secret in the response and the isolation collapses for that exchange. Mitigation: prefer well-behaved upstreams (production-grade APIs from major vendors don't reflect auth headers); operator-side response sanitization at a higher layer if a reflecting endpoint is unavoidable. Out of scope for the proxy itself, response scrubbing requires per-endpoint knowledge of what the response might contain and would add a complex, fail-open path right next to the injection point.
+
+## 13. Deployment lessons learned
+
+Things that turned out non-obvious in real deploys. Recorded for whoever picks this up next.
+
+1. **Fixed system user beats `DynamicUser=yes`.** Dynamic UIDs can't read a fixed-path `0440 root` token file without `LoadCredential=`, which would require addon-side code changes. `User=avp` is simpler.
+
+2. **`MemoryDenyWriteExecute=yes` breaks cffi.** Both `mitmproxy` and `bitwarden-sdk` use cffi for callback trampolines; cffi needs W+X memory. Symptom: `MemoryError: Cannot allocate write+execute memory for ffi.callback()` in the journal. Remove the directive.
+
+3. **`HOME` matters more than you'd think.** mitmproxy generates its CA at `$HOME/.mitmproxy/mitmproxy-ca-cert.pem` on first proxied request. With `ProtectHome=yes` and no explicit `Environment=HOME=`, the daemon has nowhere writable to put the CA. Set `Environment=HOME=/var/lib/agent-vault-proxy` so the CA lands in a `ReadWritePaths` location.
+
+4. **EU vs US Bitwarden regions need explicit URLs.** Default SDK behavior targets `.com`; EU users get auth failures with no clear error. Add `api_url` + `identity_url` overrides in `bindings.yaml`.
+
+5. **`*.claude.com` is a real domain.** Anthropic routes Claude Code traffic through subdomains of `claude.com`. Without `*.claude.com` in the `ANTHROPIC_API_KEY` binding, the CLI fails to start with no useful error message.
+
+6. **`mcp-proxy.anthropic.com` is the cloud-MCP gateway.** Gmail/Calendar/Drive MCPs route through this host. Same Bearer token as the main API. Add to the `ANTHROPIC_API_KEY` binding if you want cloud MCPs to work.
+
+7. **`NO_PROXY` semantics differ by tool.** Recent curl supports CIDR; some Node libraries match by hostname substring; Python's `requests` requires explicit hosts. A safe combo: `localhost,127.0.0.1,::1` plus your internal mesh's domains and CIDRs.
+
+8. **mitmproxy `-s` script loading uses a synthetic module name.** Relative imports (`from .audit import …`) in the addon fail with `ModuleNotFoundError: No module named '__mitmproxy_script__'`. Use absolute imports (`from agent_vault_proxy.audit import …`) throughout.
+
+9. **`pip install $REPO` is a no-op when the version is unchanged.** Add `--force-reinstall --no-deps` to deploy scripts so code edits in the repo actually land in the installed venv on re-run.
+
+10. **`systemctl enable --now` is a no-op when the service is already running.** Re-runs that change the unit file need an explicit `systemctl restart` to pick up the new unit.
+
+11. **`chattr +a` blocks `chown` / `chmod`.** First-run sequence is `touch; chown; chmod; chattr +a`. Re-run sequence is `chattr -a; chown; chmod; chattr +a`. Idempotent scripts must strip `+a` before modifying.
+
+## 14. License posture & clean-room methodology
+
+The architectural pattern (a credential broker that injects on the wire) was inspired by [getKloak](https://www.getkloak.com), which is AGPL-3.0. To avoid AGPL contamination, a strict two-phase clean-room workflow was used:
+
+- **Phase A:** read getKloak's source and produce only a behavioral specification in natural language. No source quotes, no algorithm transcription, no implementation-level vocabulary. The Phase A artifact was checked with a banned-term grep before Phase B began.
+- **Phase B:** design the architecture from (a) the Phase A behavioral spec, (b) MIT-licensed pattern study (the mitmproxy addon API, Infisical Agent Vault), and (c) first-principles atomic guarantees. Phase B did not reference getKloak source.
+
+This document and the implementation are released under **MIT**. Counsel review of the clean-room artifacts is recommended before commercial use; the combination of `{bindings, placeholders, fail-closed}` parallels getKloak's distinctive signature and is worth confirming on a per-jurisdiction basis. Individual elements are universal (Vault has bindings, Infisical has placeholders, fail-closed is universal); the combination plus *placeholder-as-data-plane-marker* is the parallelism worth flagging.
+

@@ -1,0 +1,23 @@
+# CODEOWNERS — gates require-review on listed paths.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# To enforce, configure under Settings → Branches → main branch protection:
+#   [x] Require a pull request before merging
+#   [x] Require review from Code Owners
+#
+# For a solo-maintainer repo this forces "review your own PR" as a second-pass
+# step rather than direct push to main — catches `git push --force` typos and
+# accidental commits to main.
+
+# Security-sensitive: CI/CD definitions + supply-chain manifests.
+# These are exactly the files an attacker would touch to plant a backdoor,
+# so they get the strictest review surface.
+/.github/workflows/  @rathko
+/.github/actions/    @rathko
+/.github/CODEOWNERS  @rathko
+/pyproject.toml      @rathko
+/requirements.lock   @rathko
+
+# Catch-all — every other file still requires the same owner's review.
+# Drop or narrow this line if/when additional maintainers join.
+*                    @rathko

@@ -1,0 +1,86 @@
+# agent-vault-proxy — hardened Docker Compose
+#
+# Walkthrough, threat model, and rationale: docs/docker.md
+#
+# Before first run:
+#   1. mkdir -p secrets && (umask 077; read -rs token; printf '%s' "$token" > secrets/bws-token)
+#   2. cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
+#   3. docker compose build
+
+services:
+  avp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: inflightsec/agent-vault-proxy:0.4.0
+    container_name: agent-vault-proxy
+
+    # Loopback-only host publish. The 127.0.0.1 prefix is critical — without
+    # it, the port publishes on every host interface including any public IP.
+    ports:
+      - "127.0.0.1:14322:14322"
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+
+    volumes:
+      # Persistent state: mitmproxy CA + bws-sdk auth state.
+      # CONTAINS THE CA PRIVATE KEY — back up + restrict accordingly.
+      - avp-state:/var/lib/agent-vault-proxy
+
+      # Persistent audit log. See docs/docker.md §4 for the chattr +a
+      # init step (applied via a separate privileged short-lived container).
+      - avp-logs:/var/log/agent-vault-proxy
+
+      # User-provided binding config, read-only into the container.
+      - ./bindings.yaml:/etc/agent-vault-proxy/bindings.yaml:ro
+
+      # BWS token as a file bind-mount, NEVER as an env var (envs leak to
+      # `docker inspect` and operator shell history). Path matches the
+      # bare-metal install so bindings.yaml is portable between methods.
+      - ./secrets/bws-token:/etc/agent-vault-proxy/bws-token:ro
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+      # The default seccomp profile applies automatically — not overridden.
+
+    pids_limit: 256
+    mem_limit: 512m
+    memswap_limit: 512m   # equal to mem_limit ⇒ swap disabled
+    cpus: 1.0
+
+    restart: unless-stopped
+
+    networks:
+      - avp-net
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# avp-state contains the mitmproxy CA PRIVATE key (mode 0700 inside the
+# container). On Linux the named volume's backing path is under
+# /var/lib/docker/volumes/agent-vault-proxy-state/_data/ — readable by root
+# and anyone in the `docker` group. See docs/docker.md threat model.
+volumes:
+  avp-state:
+    name: agent-vault-proxy-state
+  avp-logs:
+    name: agent-vault-proxy-logs
+
+# Dedicated single-tenant bridge. CRITICAL: do NOT add other services to
+# this network. The proxy binds 0.0.0.0:14322 inside the container; a
+# sibling on the same docker network would reach it directly, bypassing
+# the host's 127.0.0.1 publish constraint. Keep avp-net empty except for
+# the proxy itself.
+networks:
+  avp-net:
+    driver: bridge
+    name: agent-vault-proxy-net

@@ -1,0 +1,171 @@
+name: release
+
+# Triggers on `git push origin v0.4.0` (or any v* tag).
+# Uses PyPI's trusted-publisher OIDC flow — no API token to store.
+# Set up at https://pypi.org/manage/account/publishing/ once before the first
+# release: project name = agent-vault-proxy, owner = inflightsec,
+# repository = agent-vault-proxy, workflow = release.yml, env = pypi.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allow manual re-runs from the Actions tab in case the publish step
+  # transiently fails (PyPI hiccup, etc.).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      # Block unexpected outbound network from the runner.
+      # Start in `audit` mode to collect the actual egress profile from a few
+      # green runs, then flip to `block` with a concrete `allowed-endpoints`
+      # list once the StepSecurity insights page shows what each job reaches.
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # zizmor: artipacked — don't leave credentials in .git/config that
+          # could end up in uploaded artifacts.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Verify version matches tag
+        # Reject the release if pyproject.toml version != git tag (minus the v).
+        # Catches the "forgot to bump pyproject.toml" footgun before publishing.
+        run: |
+          TAG="${GITHUB_REF##*/}"     # refs/tags/v0.4.0 → v0.4.0
+          TAG_VER="${TAG#v}"          # v0.4.0 → 0.4.0
+          PROJECT_VER=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$TAG_VER" != "$PROJECT_VER" ]; then
+            echo "::error::Tag $TAG (=$TAG_VER) does not match pyproject.toml version $PROJECT_VER"
+            exit 1
+          fi
+          echo "Version check passed: $TAG_VER"
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agent-vault-proxy/
+    permissions:
+      # OIDC token for PyPI trusted publishing — no API token needed.
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: dist
+          # Extract to the workspace `dist/` (the publish action's default).
+          # The "extract outside workspace" artifact-overwrite defense
+          # doesn't apply to this job: there's no `checkout` step here,
+          # so a malicious archive has no workflow files to overwrite.
+          # The publish action runs inside a Docker container that only
+          # mounts the workspace, so a host path like /tmp/dist is
+          # invisible to it (FileNotFoundError on the container side).
+          path: dist/
+
+      - name: Publish
+        # SHA-pinned to a published ghcr.io image SHA, NOT to the v1.14.0
+        # release-tag SHA. pypa/gh-action-pypi-publish v1.x is a composite
+        # action that generates an inner Docker action referencing
+        # `ghcr.io/pypa/gh-action-pypi-publish:${{ github.action_ref }}`.
+        # ghcr.io only publishes images for build SHAs from the unstable/v1
+        # branch (plus version-tag aliases like `v1.14.0`). The v1.14.0
+        # release-tag SHA (6733eb7d...) has no ghcr.io image — pinning
+        # to it produces `manifest unknown` at runtime.
+        # ba38be9e... is a build SHA from unstable/v1 that ghcr.io DOES
+        # publish, and that image is the same content as v1.14.0 (a
+        # setup-python build-dep bump merged after the v1.14.0 tag).
+        # `pinact` ignores this entry via .pinact.yaml so it doesn't
+        # "helpfully" rewrite this back to the broken release-tag SHA.
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.0 (ghcr.io build SHA)
+        with:
+          packages-dir: dist/
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # zizmor: artipacked — don't leave credentials in .git/config that
+          # could end up in uploaded artifacts.
+          persist-credentials: false
+
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: dist
+          path: /tmp/dist/   # extract outside the workspace (artifact-overwrite defense)
+
+      - name: Extract changelog section for this tag
+        # Pulls the matching `## [X.Y.Z]` section out of CHANGELOG.md so the
+        # GitHub release body matches the changelog without manual copy-paste.
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          TAG_VER="${TAG#v}"
+          # Print lines between `## [X.Y.Z]` and the next `## [` heading.
+          awk -v ver="$TAG_VER" '
+            $0 ~ "^## \\[" ver "\\]" { capturing=1; next }
+            capturing && /^## \[/ { exit }
+            capturing { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "----- release notes -----"
+          cat release-notes.md
+
+      - name: Create release
+        # Use the runner-provided `gh` CLI instead of a third-party action —
+        # one fewer external dep to trust + audit (zizmor: superfluous-actions).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            /tmp/dist/*

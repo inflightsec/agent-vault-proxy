@@ -1,0 +1,138 @@
+# Pre-commit hooks — install once with `pre-commit install`, then they run
+# on every commit. CI runs the same set, so passing pre-commit locally means
+# CI won't complain about the same things.
+#
+# Keep hook versions current:
+#   pre-commit autoupdate
+#
+# Refs are git tags (not SHAs) for readability. Pre-commit clones the hook
+# repo into a local cache the first time and runs from that — the threat
+# model is the operator's local machine, not the public CI runner.
+
+default_language_version:
+  python: python3.12
+
+repos:
+  # ─── Hygiene: file-level checks that catch sloppy commits ─────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # GH Actions workflow files use a YAML `on:` key, which check-yaml
+        # parses as the keyword `True` and warns about. Workflows are covered
+        # by zizmor + actionlint; skip them here.
+        exclude: '^\.github/workflows/'
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+
+  # ─── Ruff: lint + format. Single source of truth, mirrors CI. ─────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ─── Bandit: Python-specific SAST (catches eval, hardcoded secrets,
+  #     yaml.load instead of safe_load, subprocess with shell=True, etc.) ─
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ['--quiet', '--configfile', 'pyproject.toml']
+        additional_dependencies: ['bandit[toml]']
+        # Test fixtures use real-looking placeholder strings; bandit's
+        # hardcoded-password heuristic trips on them. Skip tests/.
+        exclude: '^tests/'
+
+  # ─── Zizmor: security audit of .github/workflows/ files ──────────────
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.25.2
+    hooks:
+      - id: zizmor
+
+  # ─── Pinact: enforces SHA-pinning of every action reference in
+  #     .github/workflows/. Catches the `@v1` mutable-tag risk. ────────
+  - repo: https://github.com/suzuki-shunsuke/pinact
+    rev: v4.0.0
+    hooks:
+      - id: pinact
+
+  # ─── Local hooks (use already-installed tools, no external pin) ──────
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (static type check on src/)
+        entry: mypy --config-file pyproject.toml src
+        language: system
+        pass_filenames: false
+        # Type-check on every Python change. Catches Optional handling,
+        # type signature drift, return-from-Any at third-party boundaries
+        # that ruff doesn't see.
+        files: '^src/.*\.py$'
+        types: [python]
+
+      - id: pytest
+        name: pytest (unit tests must pass)
+        entry: pytest -q --strict-markers --strict-config
+        language: system
+        pass_filenames: false
+        # Only run when src/ or tests/ changed — skip on doc-only commits.
+        files: '\.(py)$'
+        types: [python]
+
+      - id: lockfile-hashes
+        name: lockfile hash-pinning (every package must have --hash=sha256:)
+        entry: python3 scripts/check-lockfile-hashes.py
+        language: system
+        pass_filenames: false
+        # Run on every commit — it's cheap (no network, ~10ms) and catches
+        # hand-edited lockfiles or pip-compile runs that forgot --generate-hashes.
+        files: '^(requirements(-dev)?\.lock|scripts/check-lockfile-hashes\.py)$'
+
+      - id: lockfile-drift
+        name: lockfile drift (pyproject.toml ↔ lockfile must match)
+        entry: bash scripts/check-lockfile-drift.sh
+        language: system
+        pass_filenames: false
+        # Heavier: re-runs `uv pip compile` with the 7-day cooldown and diffs.
+        # Mirrors the verify-lockfile CI job; runs locally for fast feedback
+        # whenever pyproject.toml or a lockfile changed. Silently skips if uv
+        # isn't installed (CI is the enforcement gate).
+        files: '^(pyproject\.toml|requirements(-dev)?\.lock|scripts/check-lockfile-drift\.sh)$'
+
+      # ─── Heavy security tools — mirror security.yml CI jobs ───────────
+      # All three use Docker (gracefully skip if docker not on PATH).
+      # Scoped to relevant file patterns so most commits don't pay the
+      # container startup tax.
+
+      - id: trufflehog
+        name: TruffleHog (secret scan over diff)
+        entry: bash scripts/precommit-trufflehog.sh
+        language: system
+        pass_filenames: false
+        # Always run — every commit could introduce a secret. ~1-2s with
+        # warm image. First run pulls the image (slower).
+
+      - id: osv-scanner
+        name: OSV-Scanner (CVE check on lockfiles)
+        entry: bash scripts/precommit-osv.sh
+        language: system
+        pass_filenames: false
+        # Only run when something dep-relevant changed. Skips pure code/
+        # doc commits entirely.
+        files: '^(pyproject\.toml|requirements(-dev)?\.lock|scripts/precommit-osv\.sh)$'
+
+      - id: semgrep
+        name: Semgrep (pattern SAST on src/)
+        entry: bash scripts/precommit-semgrep.sh
+        language: system
+        pass_filenames: false
+        # Only run on src/ Python changes — keeps doc-only commits fast.
+        # CI runs this too as the authoritative gate.
+        files: '^src/.*\.py$|^scripts/precommit-semgrep\.sh$'

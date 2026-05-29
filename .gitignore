@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg
+
+# Node / TypeScript (admin MCP, v1.5)
+node_modules/
+*.tsbuildinfo
+.npm/
+.pnp.*
+
+# Lockfiles — kept (committed for reproducibility)
+# uv.lock and package-lock.json should be COMMITTED.
+# This block exists to flag the convention.
+
+# Secrets and keys — never commit
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+secrets.local.yaml
+secrets.local.yml
+bws-token
+*-bws-token
+ca-*.key
+
+# Audit logs (if anything writes to repo by accident)
+audit*.jsonl
+*.audit.log
+
+# Docker runtime artifacts — user-local, never commit
+secrets/
+bindings.yaml
+ca.pem
+ca.pem.bak.*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Local config that shouldn't be shared
+local.yaml
+*.local.yaml
+.scratch/

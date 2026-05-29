@@ -1,0 +1,79 @@
+# .dockerignore — what NOT to send to the docker build context.
+#
+# Goal: ship only what's needed to build the wheel (pyproject.toml, README.md,
+# LICENSE, src/). Everything else stays on the host. Defense-in-depth against
+# accidentally leaking host secrets, audit logs, CA material, or local config
+# into the build context.
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Python ephemera
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDEs / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Tests (runtime image doesn't need them)
+tests/
+
+# Docs (runtime image doesn't need them)
+docs/
+
+# CI / pre-commit (not for runtime)
+.github/
+.pre-commit-config.yaml
+zizmor.yml
+
+# Local secrets / state — should NEVER be in the repo, blocked here too.
+*.env
+.env*
+*-token
+bws-token
+bws-state.json
+ca.pem
+ca.pem.bak.*
+*.pem
+*.key
+audit.jsonl
+*.jsonl
+secrets/
+
+# Runtime configs — the user provides bindings.yaml via bind mount, not in image.
+bindings.yaml
+bindings.example.yaml
+
+# Other docs (keep README.md + LICENSE — referenced by pyproject metadata)
+CHANGELOG.md
+SECURITY.md
+CONTRIBUTING.md
+AGENTS.md
+CLAUDE.md
+
+# Docker artifacts themselves don't need to be in the build context
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml

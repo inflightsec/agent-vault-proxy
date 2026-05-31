@@ -50,11 +50,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # docker + github-actions accept only `default-days` (no semver
+    # granularity — image tags and action refs aren't PEP-440-style
+    # versions Dependabot can sub-classify).
     cooldown:
       default-days: 7
-      semver-major-days: 7
-      semver-minor-days: 7
-      semver-patch-days: 7
     labels:
       - dependencies
       - docker
@@ -69,9 +69,6 @@ updates:
       day: monday
     cooldown:
       default-days: 7
-      semver-major-days: 7
-      semver-minor-days: 7
-      semver-patch-days: 7
     labels:
       - dependencies
       - docker
@@ -87,9 +84,6 @@ updates:
       day: monday
     cooldown:
       default-days: 7
-      semver-major-days: 7
-      semver-minor-days: 7
-      semver-patch-days: 7
     groups:
       actions-minor-patch:
         patterns: ["*"]

@@ -241,7 +241,15 @@ jobs:
   dependency-review:
     name: Dependency review (PR)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Skip on Dependabot PRs: GitHub gives Dependabot-triggered workflows
+    # a restricted GITHUB_TOKEN that can't call the dependency-graph diff
+    # API even with explicit `permissions: pull-requests: write` declared,
+    # so the action errors with "Dependency review is not supported on
+    # this repository." Dependabot already checks the GitHub Advisory
+    # database before opening a PR, and the audit-lockfile + 7-day
+    # cooldown jobs catch CVE introductions on main post-merge — skipping
+    # dep-review on Dependabot PRs is a small redundancy loss, not a gap.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       pull-requests: write   # post the review comment

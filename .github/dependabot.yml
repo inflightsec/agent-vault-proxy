@@ -1,0 +1,79 @@
+# Dependabot config — keeps pinned dependencies current without
+# letting them rot. Three ecosystems covered:
+#
+#   1. pip          — pyproject.toml + requirements{,-dev}.lock
+#   2. docker       — Dockerfile base image + docker-compose images
+#   3. github-actions — every action SHA pinned in .github/workflows/
+#
+# Cadence is weekly. Minor + patch updates are grouped into one PR per
+# ecosystem per week to avoid PR firehose; majors get individual PRs
+# because of semver risk and intentional review burden.
+#
+# Cooldown interaction: the verify-lockfile CI job refuses to compile any
+# package version released in the last 7 days (supply-chain mitigation
+# against same-day malicious uploads). Dependabot PRs against fresh
+# releases will FAIL CI for ~a week, then pass. That's the cooldown
+# doing its job, not a broken pipeline. See CONTRIBUTING.md "Releases"
+# for the maintainer workflow.
+
+version: 2
+
+updates:
+
+  # ---- Python dependencies ------------------------------------------------
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "deps(py)"
+
+  # ---- Production Dockerfile (base image digest) --------------------------
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "deps(docker)"
+
+  # ---- E2E harness compose stack (upstream echo + busybox init) ----------
+  - package-ecosystem: docker
+    directory: /tests/docker-e2e
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+      - tests
+    commit-message:
+      prefix: "deps(docker-e2e)"
+
+  # ---- GitHub Actions (every uses: <action>@<sha> pin) -------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "deps(actions)"

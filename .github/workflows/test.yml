@@ -18,6 +18,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -78,10 +80,46 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: pytest -q --strict-markers --strict-config
 
+  e2e-docker:
+    # End-to-end test: build the image, stand up the proxy + an echo
+    # upstream, prove the placeholder→real substitution happens on the
+    # wire and that unbound destinations get denied. See
+    # tests/docker-e2e/README.md for the test design.
+    #
+    # Independent of the unit-test matrix on purpose — Docker build adds
+    # 60-90s and shouldn't gate the fast pytest jobs. Failures still
+    # surface in this workflow's overall status, so PR merges are gated
+    # by branch protection if you've configured this job as required.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Docker E2E harness
+        run: bash tests/docker-e2e/run.sh
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f tests/docker-e2e/docker-compose.yml logs avp-init || true
+          docker compose -f tests/docker-e2e/docker-compose.yml logs avp || true
+          docker compose -f tests/docker-e2e/docker-compose.yml logs upstream || true
+
   verify-lockfile:
     # Detect when pyproject.toml dependencies drift from either lockfile
     # without anyone re-running pip-compile. Cheap, runs in parallel.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -148,3 +186,134 @@ jobs:
             echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" --extra dev pyproject.toml -o requirements-dev.lock"
             exit 1
           fi
+
+  audit-lockfile:
+    # CVE scan against the committed lockfile. verify-lockfile catches
+    # "lockfile drift from pyproject"; this catches "pinned versions
+    # themselves are known-vulnerable." Pairs with Dependabot: when a CVE
+    # drops Dependabot opens the upgrade PR; pip-audit fails this job
+    # until the upgrade lands (or the CVE is explicitly waived).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        # Pin to an exact version. Without this, a malicious pip-audit
+        # release in the >=2.7,<3 range could silently report "no CVEs"
+        # against the lockfile it's supposed to audit — closes the
+        # bootstrap loop. Bump this pin (and verify the change against
+        # the pip-audit changelog + GitHub release page) when Dependabot
+        # opens a PR for it. The `pip install` here doesn't run with
+        # --require-hashes because pip-audit isn't in our runtime
+        # lockfile; the exact-version pin is the substitute control.
+        run: pip install 'pip-audit==2.9.0'
+
+      - name: Audit production lockfile
+        # --strict so any vulnerability is a non-zero exit. --disable-pip
+        # skips a pip self-version check that would otherwise need network.
+        # Waivers, if ever needed, go in pyproject.toml via [tool.pip-audit]
+        # ignore-vulns — never inline `--ignore-vuln` here.
+        run: pip-audit --strict --requirement requirements.lock
+
+      - name: Audit dev lockfile
+        # Dev-only CVEs (ruff, pytest, mypy) aren't shipped to users, but
+        # they CAN compromise the CI runner that builds the wheel. Worth
+        # gating on, can be waived per-CVE if a dev-only finding becomes
+        # noisy and has no upstream fix yet.
+        run: pip-audit --strict --requirement requirements-dev.lock
+
+  wheel-smoke:
+    # Build the wheel and install it into a fresh venv. Catches the
+    # class of bugs unit tests don't: missing files from the wheel,
+    # entry-point misconfig, version skew between pyproject + __init__,
+    # module-import-time failures that only surface against a clean
+    # interpreter. Mirrors scripts/smoke-test-wheel.sh — same checks,
+    # but no docker wrapper because the runner already provides
+    # interpreter isolation.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: 'pip install --no-cache-dir --only-binary :all: build'
+
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist .
+
+      - name: Locate wheel
+        id: locate
+        run: |
+          WHEEL=$(ls dist/agent_vault_proxy-*.whl | head -1)
+          if [ -z "$WHEEL" ]; then
+            echo "::error::No wheel produced under dist/"
+            exit 1
+          fi
+          echo "wheel=$WHEEL" >> "$GITHUB_OUTPUT"
+          echo "built: $WHEEL"
+
+      - name: Read expected version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")
+          echo "expected=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create fresh venv + install wheel
+        # Fresh venv (not the runner's system Python) so the install
+        # resolves ONLY the wheel-declared deps. Mirrors what a
+        # downstream `pip install agent-vault-proxy` would see.
+        run: |
+          python -m venv /tmp/smokevenv
+          /tmp/smokevenv/bin/pip install --no-cache-dir --only-binary :all: '${{ steps.locate.outputs.wheel }}'
+
+      - name: Assert import works
+        run: /tmp/smokevenv/bin/python -c "import agent_vault_proxy; print('import OK')"
+
+      - name: Assert version matches pyproject
+        run: |
+          ACTUAL=$(/tmp/smokevenv/bin/python -c "import agent_vault_proxy; print(agent_vault_proxy.__version__)")
+          EXPECTED='${{ steps.version.outputs.expected }}'
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::wheel reports $ACTUAL, pyproject.toml says $EXPECTED"
+            exit 1
+          fi
+          echo "version OK: $ACTUAL"
+
+      - name: Assert entry point loads
+        # mitmdump --help exits 0 if the addon-loader path is wired
+        # correctly. If addon.py raises at module-import time (any new
+        # syntactically-valid bug that escaped unit tests) it crashes
+        # here with a non-zero exit.
+        run: /tmp/smokevenv/bin/python -m agent_vault_proxy --help >/dev/null

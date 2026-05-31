@@ -1,0 +1,133 @@
+# End-to-end Docker integration harness for agent-vault-proxy.
+#
+# Stands up two containers on an isolated bridge network:
+#   - avp:      the agent-vault-proxy image built from the repo Dockerfile
+#   - upstream: an HTTP echo server that mirrors received headers back
+#
+# Drives a positive test (placeholder → real secret on the wire) and a
+# negative test (deny on unmatched destination) from the host side via
+# the `run.sh` script. See README.md for the test design.
+#
+# Project name is overridden by run.sh to avoid colliding with any
+# other compose stack the operator may have running.
+
+name: avp-e2e
+
+services:
+
+  # One-shot init: stages the avp service's /etc/agent-vault-proxy/
+  # directory into a named volume with avp-owned (UID 65532) files.
+  #
+  # bindings.yaml is bind-mounted read-only (committed in the repo, no
+  # secret content). secrets.yml is GENERATED in-place from the
+  # TEST_SECRET env var rather than bind-mounted — on a Docker daemon
+  # with userns-remap enabled, container "root" maps to a non-root host
+  # UID and CANNOT read a host 0600 file owned by a different UID. The
+  # bind-mounted approach worked on plain Docker but failed silently
+  # against a hardened daemon (discovered 2026-05-30 via the e2e
+  # diagnostic dump). Generating the file inside the container side-
+  # steps the host-UID mismatch entirely. The literal secret value is
+  # passed via compose's parse-time env interpolation so run.sh stays
+  # the single source of truth.
+  avp-init:
+    image: busybox:1.36
+    container_name: avp-e2e-init
+    user: "0:0"
+    volumes:
+      - ./bindings.yaml:/src/bindings.yaml:ro
+      - avp-e2e-config:/dst
+    environment:
+      - TEST_SECRET=${TEST_SECRET:?run.sh must export TEST_SECRET before compose up}
+    command:
+      - sh
+      - -c
+      - |
+        set -eux
+        ls -la /src/ /dst/
+        id
+        cp /src/bindings.yaml /dst/bindings.yaml
+        # Heredoc keeps the on-disk file off the host filesystem and
+        # avoids quoting pitfalls inside the YAML command block.
+        cat > /dst/secrets.yml <<EOF
+        secrets:
+          TEST_API_KEY: "$TEST_SECRET"
+        EOF
+        chown 65532:65532 /dst/bindings.yaml /dst/secrets.yml
+        chmod 0644 /dst/bindings.yaml
+        chmod 0600 /dst/secrets.yml
+        ls -la /dst/
+
+  avp:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: agent-vault-proxy:e2e
+    container_name: avp-e2e
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - avp-e2e-net
+    ports:
+      # Loopback-only on the host side. The harness publishes 14322 so
+      # the test client can reach the proxy without joining the network.
+      - "127.0.0.1:14322:14322"
+    depends_on:
+      avp-init:
+        condition: service_completed_successfully
+    volumes:
+      # Mount the avp-init-populated volume read-only. The volume holds
+      # avp-owned (UID 65532) copies of the host config files at the
+      # correct modes, so the static backend's world-readable check passes
+      # AND the avp process can actually read them.
+      - avp-e2e-config:/etc/agent-vault-proxy:ro
+      - avp-e2e-state:/var/lib/agent-vault-proxy
+      - avp-e2e-logs:/var/log/agent-vault-proxy
+    tmpfs:
+      - /tmp:size=16m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 14322), timeout=2).close()"]
+      interval: 2s
+      timeout: 2s
+      start_period: 10s
+      retries: 5
+
+  upstream:
+    # TODO(operator): before this lands in CI, pin to a digest:
+    #   docker pull mendhak/http-https-echo:36 && \
+    #   docker image inspect mendhak/http-https-echo:36 \
+    #     --format '{{index .RepoDigests 0}}'
+    # then replace the `:36` tag below with `@sha256:...`. Tag pinning is
+    # acceptable for local-dev runs while the digest is being resolved.
+    image: mendhak/http-https-echo:36
+    container_name: avp-e2e-upstream
+    environment:
+      - HTTP_PORT=8080
+      - LOG_WITHOUT_NEWLINE=true
+      - DISABLE_REQUEST_LOGS=true
+    networks:
+      avp-e2e-net:
+        # Static alias so the binding host in bindings.yaml is stable.
+        aliases:
+          - upstream.test
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/"]
+      interval: 2s
+      timeout: 2s
+      start_period: 5s
+      retries: 5
+
+networks:
+  avp-e2e-net:
+    name: avp-e2e-net
+    driver: bridge
+
+volumes:
+  avp-e2e-state:
+    name: avp-e2e-state
+  avp-e2e-logs:
+    name: avp-e2e-logs
+  avp-e2e-config:
+    name: avp-e2e-config

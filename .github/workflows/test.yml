@@ -294,17 +294,26 @@ jobs:
         # Fresh venv (not the runner's system Python) so the install
         # resolves ONLY the wheel-declared deps. Mirrors what a
         # downstream `pip install agent-vault-proxy` would see.
+        # WHEEL is bound via env: rather than interpolated directly into
+        # the shell — zizmor template-injection guard, even though the
+        # value comes from `ls dist/`-controlled output.
+        env:
+          WHEEL: ${{ steps.locate.outputs.wheel }}
         run: |
           python -m venv /tmp/smokevenv
-          /tmp/smokevenv/bin/pip install --no-cache-dir --only-binary :all: '${{ steps.locate.outputs.wheel }}'
+          /tmp/smokevenv/bin/pip install --no-cache-dir --only-binary :all: "$WHEEL"
 
       - name: Assert import works
         run: /tmp/smokevenv/bin/python -c "import agent_vault_proxy; print('import OK')"
 
       - name: Assert version matches pyproject
+        # EXPECTED via env: rather than direct ${{ }} interpolation —
+        # zizmor template-injection guard. Source is pyproject.toml,
+        # not attacker-controllable, but the pattern-level fix is cheap.
+        env:
+          EXPECTED: ${{ steps.version.outputs.expected }}
         run: |
           ACTUAL=$(/tmp/smokevenv/bin/python -c "import agent_vault_proxy; print(agent_vault_proxy.__version__)")
-          EXPECTED='${{ steps.version.outputs.expected }}'
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::wheel reports $ACTUAL, pyproject.toml says $EXPECTED"
             exit 1

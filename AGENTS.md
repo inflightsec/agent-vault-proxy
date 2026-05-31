@@ -120,4 +120,3 @@ When adding feature reference material (filter tables, config examples, etc.):
 ## When in doubt
 
 Default to opening an issue rather than a PR. The maintainer would rather discuss approach for 15 minutes than review a 500-line PR that takes a direction the project won't merge.
-

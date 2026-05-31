@@ -42,4 +42,3 @@ The proxy works against any deployment that exposes the BWS Secrets Manager API.
 - **Docker install:** either bake the CA into a custom image layer (`COPY your-private-ca.pem /usr/local/share/ca-certificates/private-ca.crt` + `RUN update-ca-certificates`), or extend `docker-compose.yml` with a bind-mount of the CA file under `/usr/local/share/ca-certificates/` and an entrypoint that runs `update-ca-certificates` before the proxy starts.
 
 **Vaultwarden is NOT supported.** Vaultwarden is a community Rust reimplementation of the Bitwarden password-manager API only - it does not implement the BWS Secrets Manager API that this proxy depends on. If you're running Vaultwarden today, you'd need to switch to the official self-hosted Bitwarden distribution (which does include Secrets Manager) for this proxy to work.
-

@@ -10,7 +10,15 @@
 # model is the operator's local machine, not the public CI runner.
 
 default_language_version:
-  python: python3.12
+  # Use whatever python3 is on the contributor's PATH. pyproject.toml
+  # requires-python = ">=3.12" so anything >= 3.12 satisfies the
+  # project's runtime contract. Pinning to a specific minor (e.g.
+  # python3.12) here forces every contributor to install that exact
+  # interpreter just to run pre-commit, even though only bandit
+  # actually needs a Python interpreter — ruff, zizmor are Rust
+  # binaries and the rest are `language: system` shells. CI still
+  # gates against the 3.12 + 3.13 matrix in test.yml.
+  python: python3
 
 repos:
   # ─── Hygiene: file-level checks that catch sloppy commits ─────────────
@@ -56,19 +64,28 @@ repos:
     hooks:
       - id: zizmor
 
-  # ─── Pinact: enforces SHA-pinning of every action reference in
-  #     .github/workflows/. Catches the `@v1` mutable-tag risk. ────────
-  - repo: https://github.com/suzuki-shunsuke/pinact
-    rev: v4.0.0
-    hooks:
-      - id: pinact
+  # Note: pinact does not ship `.pre-commit-hooks.yaml` at any tag (verified
+  # 2026-05-31), so the canonical `repo: https://github.com/suzuki-shunsuke/pinact`
+  # ref errors with InvalidManifestError on first install. Pinact's *detection*
+  # overlaps ~entirely with zizmor's `unpinned-uses` audit rule above, but its
+  # *auto-fix* (rewriting `@v1` → `@<sha> # v1`) is unique. We invoke pinact
+  # as a local hook (see precommit-pinact.sh below) so contributors who have
+  # it installed get the redundant check; everyone else gets zizmor's coverage.
 
   # ─── Local hooks (use already-installed tools, no external pin) ──────
+  # mypy + pytest run from the project venv at .venv/bin/<tool>. We do
+  # NOT use `language: python` (which would have pre-commit build its
+  # own venv and pip-install our deps from PyPI) because:
+  #   1. pre-commit's hook venvs ignore our locked --hash-pinned requirements;
+  #   2. they'd need network on every fresh clone;
+  #   3. they'd drift from CI, which uses .venv via `uv pip sync`.
+  # The .venv path is the authoritative source — same interpreter used
+  # for development and the same one CI sets up.
   - repo: local
     hooks:
       - id: mypy
         name: mypy (static type check on src/)
-        entry: mypy --config-file pyproject.toml src
+        entry: .venv/bin/mypy --config-file pyproject.toml src
         language: system
         pass_filenames: false
         # Type-check on every Python change. Catches Optional handling,
@@ -79,7 +96,7 @@ repos:
 
       - id: pytest
         name: pytest (unit tests must pass)
-        entry: pytest -q --strict-markers --strict-config
+        entry: .venv/bin/pytest -q --strict-markers --strict-config
         language: system
         pass_filenames: false
         # Only run when src/ or tests/ changed — skip on doc-only commits.
@@ -136,3 +153,13 @@ repos:
         # Only run on src/ Python changes — keeps doc-only commits fast.
         # CI runs this too as the authoritative gate.
         files: '^src/.*\.py$|^scripts/precommit-semgrep\.sh$'
+
+      - id: pinact
+        name: pinact (--check SHA-pinning of action refs)
+        entry: bash scripts/precommit-pinact.sh
+        language: system
+        pass_filenames: false
+        # Only run when a workflow file or this hook script changed.
+        # Skips gracefully if the pinact binary isn't on PATH — install
+        # via `aqua install pinact` if you want this enforced locally.
+        files: '^(\.github/workflows/.*\.ya?ml|scripts/precommit-pinact\.sh)$'

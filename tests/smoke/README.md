@@ -177,4 +177,3 @@ ps -o user,pid,cmd -C python | grep mitmdump
 
 If the proxy is bound to anything other than 127.0.0.1, or running as root,
 stop and investigate before proceeding.
-

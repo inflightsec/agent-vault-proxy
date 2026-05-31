@@ -11,7 +11,7 @@ Your agent (or dev laptop, CI runner, build server, cron job, etc) gets a fake p
 
 [![agent-vault-proxy demo: prompt injection vs. credential isolation](docs/demo.svg)](docs/demo.cast)
 
-Under the hood: a loopback HTTPS proxy that fetches credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space.
+Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden](https://github.com/bitwarden) Secrets Manager — cloud or self-hosted — just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space.
 
 ## How it works
 
@@ -72,6 +72,8 @@ AVP keeps the credential **bytes** out of the agent, and out of anything the age
 Although built for agents, the mechanism is fully general: any process that holds a placeholder in its env and routes HTTPS through AVP gets the same protection - CI runners, build servers, scrapers, cron jobs, or a developer machine you're hardening against software-supply-chain compromise. The agent case is just where it matters most. Prompt injection puts the credential-holder and the attacker-controlled-input-reader in the same process, which is the one situation where filtering and alignment can't reliably save you and removing the bytes is the only real fix. For plain software the supply-chain benefit still applies; the injection benefit largely doesn't.
 
 **What AVP doesn't do - and what to layer on:** AVP prevents *exfiltration* of the raw key, not *misuse of the authority* the key represents on permitted destinations. If you bind `GITHUB_PAT_WORK` to `api.github.com` with no method/path scope, prompt injection can still ask the proxy to authenticate a `DELETE /repos/...` call as you. The lever for that is `methods:` and `paths:` on each binding: see [`bindings.example.yaml`](bindings.example.yaml). For extra security, pair AVP with an egress firewall on the agent's UID so unbound calls are blocked outright. Pair with response-side review for endpoints that may echo back the `Authorization` header in their response body, AVP injects on the request, but does not scrub the response.
+
+**AVP is not a vault — and not trying to be.** Plenty of mature secret-vault implementations already exist: [Bitwarden](https://github.com/bitwarden) Secrets Manager, 1Password, HashiCorp Vault, Doppler, AWS Secrets Manager, Google Secrets Manager. The goal here isn't to reinvent any of them — use whichever you already trust. AVP is the just-in-time wire-substitution layer that sits between your vault and your agent's process. Bitwarden (cloud + self-hosted) is the reference backend that ships today; other vaults plug in via the `SecretsBackend` Protocol — see [docs/adapter-architecture.md](docs/adapter-architecture.md). PRs welcome.
 
 How this compares to HashiCorp Vault Agent, Doppler, `op run`, `superfly/tokenizer`, and Kloak: [docs/comparison.md](docs/comparison.md).
 
@@ -137,7 +139,7 @@ Alternatives ways to install:
 
 ## Privacy
 
-The proxy never phones home. The only outbound connections it makes are (1) to the Bitwarden Secrets Manager endpoint you configure in `bindings.yaml`, and (2) the upstream APIs your agent is actually calling on your behalf. No analytics, telemetry, update checks, crash reports or metrics export. 
+The proxy never phones home. The only outbound connections it makes are (1) to the Bitwarden Secrets Manager endpoint you configure in `bindings.yaml`, and (2) the upstream APIs your agent is actually calling on your behalf. No analytics, telemetry, update checks, crash reports or metrics export.
 
 The audit log under `/var/log/agent-vault-proxy/audit.jsonl` is local-only.
 
@@ -166,4 +168,3 @@ Bug reports and PRs welcome. New here? Check the [good first issues](https://git
 ## License
 
 MIT - see [LICENSE](LICENSE).
-

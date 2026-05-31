@@ -483,4 +483,3 @@ The architectural pattern (a credential broker that injects on the wire) was ins
 - **Phase B:** design the architecture from (a) the Phase A behavioral spec, (b) MIT-licensed pattern study (the mitmproxy addon API, Infisical Agent Vault), and (c) first-principles atomic guarantees. Phase B did not reference getKloak source.
 
 This document and the implementation are released under **MIT**. Counsel review of the clean-room artifacts is recommended before commercial use; the combination of `{bindings, placeholders, fail-closed}` parallels getKloak's distinctive signature and is worth confirming on a per-jurisdiction basis. Individual elements are universal (Vault has bindings, Infisical has placeholders, fail-closed is universal); the combination plus *placeholder-as-data-plane-marker* is the parallelism worth flagging.
-

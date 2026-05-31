@@ -59,4 +59,3 @@ The repo itself is operational hygiene: version history, multi-host scale-out, a
 - **`.gitignore` always:** `secrets/bws-token`, `ca.pem`, anything containing real values. Real values stay in Bitwarden Secrets Manager: the whole point of this proxy.
 - **Multi-host:** branches or directories per host (e.g., `laptop/bindings.yaml`, `ci-runner/bindings.yaml`). Make sure your deploy command binds explicitly to the host it's targeting: accidentally shipping `laptop/bindings.yaml` to `ci-runner` cross-contaminates two hosts that were supposed to stay isolated.
 - **Deploy step:** whatever fits your setup - `scp` + `systemctl restart` for systemd, `docker compose restart` for Docker, `ansible-playbook` for fleet. Keep it a one-line script you run by hand. The manual step IS the review gate.
-

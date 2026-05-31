@@ -101,4 +101,3 @@ sudo install -m 0644 -o root -g root \
 The CA private key stays inside `/var/lib/agent-vault-proxy/.mitmproxy/`, owned by `avp` mode `0700`. Do not regenerate the CA on subsequent deploys: anything pinned to `/etc/agent-vault-proxy/ca.pem` will break. Rotation procedure in [systemd-unit.md](systemd-unit.md#ca-rotation).
 
 Continue to [usage.md](usage.md) to point your agent at the proxy.
-

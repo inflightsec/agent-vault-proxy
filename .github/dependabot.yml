@@ -9,12 +9,14 @@
 # ecosystem per week to avoid PR firehose; majors get individual PRs
 # because of semver risk and intentional review burden.
 #
-# Cooldown interaction: the verify-lockfile CI job refuses to compile any
-# package version released in the last 7 days (supply-chain mitigation
-# against same-day malicious uploads). Dependabot PRs against fresh
-# releases will FAIL CI for ~a week, then pass. That's the cooldown
-# doing its job, not a broken pipeline. See CONTRIBUTING.md "Releases"
-# for the maintainer workflow.
+# Cooldown: each ecosystem block carries a native Dependabot `cooldown:`
+# (7 days for all bump types). This mirrors the 7-day floor enforced by
+# the verify-lockfile CI job (supply-chain mitigation against same-day
+# malicious uploads, e.g. Shai-Hulud-style worms). The cooldown gate is
+# friendlier than the CI gate — Dependabot won't even *open* the PR
+# until the cooldown passes, vs opening a PR that's guaranteed to fail
+# CI for ~a week. See CONTRIBUTING.md "Releases" for the maintainer
+# workflow.
 
 version: 2
 
@@ -27,6 +29,11 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
     groups:
       python-minor-patch:
         patterns: ["*"]
@@ -43,6 +50,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
     labels:
       - dependencies
       - docker
@@ -55,6 +67,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
     labels:
       - dependencies
       - docker
@@ -68,6 +85,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
     groups:
       actions-minor-patch:
         patterns: ["*"]

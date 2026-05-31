@@ -312,4 +312,3 @@ You skipped step 4 (chattr init). Run it. If you're on a filesystem without exte
 
 **`docker exec` complains about /bin/sh:**
 Future Dockerfile revisions may strip the shell for additional hardening. If/when that happens, use `docker compose exec avp python -c "..."` or `docker cp` instead.
-

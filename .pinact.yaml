@@ -9,5 +9,9 @@ version: 3
 # See .github/workflows/release.yml `publish-pypi` job for the long
 # explanation. Ignoring this single action is safer than disabling
 # pinact entirely or removing it from pre-commit.
+# pinact 3.10+ schema: both `name` and `ref` are required. `ref` is a regex
+# matched against the version reference; `.*` ignores every ref of this
+# action (i.e. never rewrite it, regardless of version).
 ignore_actions:
   - name: pypa/gh-action-pypi-publish
+    ref: .*

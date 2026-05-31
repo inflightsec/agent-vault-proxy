@@ -136,4 +136,3 @@ Initial single-operator deployment. Not published publicly.
 [0.4.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.0
 [0.2.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.1.0
-

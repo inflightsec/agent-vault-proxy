@@ -338,4 +338,3 @@ If this design holds up to scrutiny:
 3. Reject and want a different shape → tell me why; alternatives are: keep v0.2.0 BWS-only forever, OR adopt a fully async protocol, OR use entry-point plugins, OR something else
 
 The refactor doesn't have to ship before v0.3.0, it could be a v0.4 thing if you want to soak v0.2.0 in the wild first. The design above is forward-compatible either way.
-

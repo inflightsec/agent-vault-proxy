@@ -13,4 +13,3 @@ Other tools in this space:
 - **Kloak**, the project that sparked this design. eBPF substitution at `SSL_write` (and similar TLS write functions) for any OpenSSL/BoringSSL/Go-`crypto/tls` runtime in a Pod. Architecturally the cleanest version of the pattern, but Kubernetes-only - mutating admission webhook, DaemonSet, Pod-label opt-in, no documented standalone single-host install path, and AGPL-3.0. AVP applies the same substitution-on-the-wire idea to any process on any host, not just Pods in a cluster.
 
 `agent-vault-proxy` is a thin substitution layer that terminates TLS for the local agent, fetches secrets from BWS just-in-time, and substitutes them on the upstream socket. It is not a vault, key manager or a rotation system: it's the missing piece between the existing vault and an autonomous agent.
-

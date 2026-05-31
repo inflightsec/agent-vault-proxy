@@ -26,10 +26,13 @@ echo "Cooldown cutoff: $CUTOFF"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+# Suppress stdout (each line of the resolved tree, noisy), but let stderr
+# through — if uv fails, the operator needs to see the reason (e.g. older
+# uv missing `--exclude-newer`, or a transient network error).
 uv pip compile --generate-hashes --exclude-newer "$CUTOFF" \
-    pyproject.toml -o "$TMP/requirements.lock.fresh" >/dev/null 2>&1
+    pyproject.toml -o "$TMP/requirements.lock.fresh" >/dev/null
 uv pip compile --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
-    pyproject.toml -o "$TMP/requirements-dev.lock.fresh" >/dev/null 2>&1
+    pyproject.toml -o "$TMP/requirements-dev.lock.fresh" >/dev/null
 
 fail=0
 for lock in requirements.lock requirements-dev.lock; do

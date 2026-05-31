@@ -125,4 +125,3 @@ curl -sS -H "Authorization: Bearer $OPENAI_API_KEY" \
   https://api.openai.com/v1/models -o /dev/null -w "%{http_code}\n"
 # Expect 200 + a fresh inject_decision in the audit log.
 ```
-

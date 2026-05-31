@@ -98,4 +98,3 @@ Reporters who prefer anonymity will be credited as "an anonymous security resear
 ## Bug bounty
 
 There is no monetary bounty program at this time. Thanks-and-credit only.
-

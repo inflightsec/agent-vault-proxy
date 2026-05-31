@@ -80,4 +80,3 @@ Schedule a quarterly review of:
 - Workflow action SHAs (`pinact run .github/workflows/*.yml`)
 - The maintainer list on the PyPI trusted publisher and tag-protection allow-list
 - The supported-versions table in `SECURITY.md`
-

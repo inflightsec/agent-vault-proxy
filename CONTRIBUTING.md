@@ -12,14 +12,30 @@ For **security vulnerabilities**, do not open a public issue or PR. Follow the [
 
 ## Dev setup
 
+Recommended path — mirrors CI exactly (Python 3.12, hash-pinned deps from the committed lockfile):
+
 ```bash
 git clone https://github.com/inflightsec/agent-vault-proxy
 cd agent-vault-proxy
+bash scripts/bootstrap-venv.sh
+```
+
+Requires [`uv`](https://docs.astral.sh/uv/) on PATH (`curl -LsSf https://astral.sh/uv/install.sh | sh`). The script:
+
+1. wipes any existing `.venv` and creates a fresh one with Python 3.12 (uv will fetch a managed copy if your system doesn't have one — works on Arch where `python3` is 3.14),
+2. installs every dependency from `requirements-dev.lock` under `--require-hashes` (every package verified against an upstream sha256),
+3. adds the project itself in editable mode.
+
+Re-run any time you want a clean slate. `PY=python3.13 bash scripts/bootstrap-venv.sh` overrides the interpreter.
+
+Fallback if you don't want uv:
+
+```bash
 python3 -m venv .venv
 .venv/bin/pip install --only-binary :all: -e '.[dev]'
 ```
 
-`--only-binary :all:` refuses source distributions - the Python equivalent of `npm install --ignore-scripts`. Mirrors what CI does.
+`--only-binary :all:` refuses source distributions — the Python equivalent of `npm install --ignore-scripts`. This path resolves deps fresh from PyPI (no hash verification against the committed lockfile), so it's a quicker setup but doesn't reproduce CI's exact pin set.
 
 ## Pre-commit hooks (install once, then automatic)
 
@@ -126,4 +142,3 @@ We're happy to merge:
 ## Code of Conduct
 
 Be respectful. Disagree on technical substance, not on identity. Maintainers reserve the right to lock or close discussions that go sideways.
-

@@ -163,6 +163,34 @@ def test_requestheaders_substitutes_placeholder_on_match(tmp_path: Path) -> None
     assert inject_events[0]["secret_name"] == "ANTHROPIC_API_KEY"
 
 
+def test_requestheaders_denies_ambiguous_placeholder_match(tmp_path: Path) -> None:
+    """If a single header value contains placeholders for two distinct
+    configured secrets, the addon refuses to guess and returns 400. The
+    addon's placeholder detector is substring-based, and picking the
+    first match could route the wrong real secret onto the wire."""
+    addon, audit_path = _build_addon(tmp_path)
+    flow = _make_request(
+        "api.anthropic.com",
+        {"Authorization": f"Bearer {PLACEHOLDER} {OPENAI_PLACEHOLDER}"},
+    )
+    addon.http_connect(flow)
+    addon.requestheaders(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 400
+    # The original placeholder header value must NOT have been mutated.
+    assert PLACEHOLDER in flow.request.headers["Authorization"]
+    assert OPENAI_PLACEHOLDER in flow.request.headers["Authorization"]
+    events = _read_audit(audit_path)
+    inject_events = [e for e in events if e["type"] == "inject_decision"]
+    assert len(inject_events) == 1
+    assert inject_events[0]["decision"] == "denied"
+    assert inject_events[0]["reason"] == "ambiguous_placeholder_match"
+    assert sorted(inject_events[0]["matched_secret_names"]) == [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    ]
+
+
 def test_requestheaders_omits_substitution_on_wrong_secret_for_destination(
     tmp_path: Path,
 ) -> None:
@@ -213,6 +241,54 @@ def test_requestheaders_fails_closed_when_bws_unavailable(tmp_path: Path) -> Non
         and "secret_unavailable" in e["reason"]
     ]
     assert len(deny_events) == 1
+
+
+def test_requestheaders_fails_closed_on_unexpected_backend_exception(tmp_path: Path) -> None:
+    """G6 regression — discovered via docker-e2e diagnostic dump 2026-05-30.
+
+    The previous addon caught only ``(BackendUnavailableError,
+    SecretNotFoundError)`` around ``client.get(secret_name)``. A backend
+    that raised any other exception type (e.g., ``PermissionError`` from
+    the static backend bind-mounted with the wrong UID) would let the
+    exception bubble up to mitmproxy, which logged the traceback and
+    forwarded the request **unmodified** — placeholder bytes reached the
+    upstream. This test pins the new fail-closed branch: any uncaught
+    backend exception MUST return 503, leave the request header
+    unmodified, and audit ``inject_decision: denied, reason:
+    secret_fetch_error:<ExceptionType>``."""
+    addon, audit_path = _build_addon(tmp_path)
+
+    class _ExplodingBackend:
+        def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+            raise PermissionError(f"simulated bind-mount perm denial for {name!r}")
+
+    addon.client = CachingSecretsClient(
+        _ExplodingBackend(),
+        ttl_seconds=300,
+        jitter_seconds=0,
+        max_entries=100,
+    )
+
+    flow = _make_request("api.anthropic.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
+    addon.http_connect(flow)
+    addon.requestheaders(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+    # The placeholder MUST still be in the request — proves the addon did
+    # not forward a partially-mutated header on its way to a 503.
+    assert flow.request.headers["Authorization"] == f"Bearer {PLACEHOLDER}"
+    events = _read_audit(audit_path)
+    deny_events = [
+        e
+        for e in events
+        if e["type"] == "inject_decision"
+        and e["decision"] == "denied"
+        and e["reason"].startswith("secret_fetch_error:")
+    ]
+    assert len(deny_events) == 1
+    # The reason field includes the exception class so an operator can
+    # tell "permission denied" from "out of memory" from "stale TLS cert".
+    assert deny_events[0]["reason"] == "secret_fetch_error:PermissionError"
 
 
 def _build_scoped_addon(

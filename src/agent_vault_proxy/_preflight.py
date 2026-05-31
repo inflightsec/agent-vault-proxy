@@ -85,10 +85,16 @@ class PreflightFailedError(RuntimeError):
 def _in_container() -> bool:
     """Detect if we're running inside an OCI container.
 
-    Checks three indicators in order:
+    Checks four indicators in order:
       - /.dockerenv (docker creates this stub file)
       - /run/.containerenv (podman equivalent)
-      - cgroup path contains docker/containerd/podman markers
+      - cgroup v1 path contains docker/containerd/podman markers
+      - cgroup v2 single-line ``0::/`` form — modern containers with a
+        cgroup namespace see PID 1's cgroup as bare ``0::/``, while a
+        bare-metal systemd host shows ``0::/init.scope`` (or similar
+        non-empty path). Without this check the BWS-token and root-UID
+        warnings silently muted on cgroup v2 runtimes that didn't drop
+        a ``/.dockerenv`` stub — the reviewer-flagged gap.
 
     Returns False if /proc isn't mounted (non-Linux test runners)."""
     if Path("/.dockerenv").exists() or Path("/run/.containerenv").exists():
@@ -97,7 +103,9 @@ def _in_container() -> bool:
         cgroup = Path("/proc/1/cgroup").read_text()
     except OSError:
         return False
-    return any(marker in cgroup for marker in ("docker", "containerd", "podman", "kubepods"))
+    if any(marker in cgroup for marker in ("docker", "containerd", "podman", "kubepods")):
+        return True
+    return cgroup.strip() == "0::/"
 
 
 def check_bws_token_via_env_in_container() -> list[str]:

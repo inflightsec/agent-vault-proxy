@@ -15,7 +15,7 @@ def _minimal_raw(extra: dict) -> dict:
         "version": 1,
         "secrets": {
             "FOO": {
-                "placeholder": "x",
+                "placeholder": "test_PLACEHOLDER_01HXY1234567890",
                 "inject": {"header": "Authorization", "format": "Bearer {secret}"},
                 "bindings": [{"host": "api.example.com"}],
             }
@@ -66,7 +66,12 @@ def test_build_backend_raises_when_no_backend_configured() -> None:
         build_backend(config)
 
 
-def test_build_backend_raises_on_unknown_type() -> None:
+def test_unknown_backend_type_fails_at_config_load() -> None:
+    """v0.4.1 moves backend-type validation forward to config-load so
+    typos in `backend.type` surface in `bindings diff` / `--check`, not
+    only at first secret fetch."""
+    from pydantic import ValidationError
+
     raw = _minimal_raw(
         {
             "backend": {
@@ -75,14 +80,15 @@ def test_build_backend_raises_on_unknown_type() -> None:
             }
         }
     )
-    config = Config.model_validate(raw)
-    with pytest.raises(ConfigError, match="unknown backend type"):
-        build_backend(config)
+    with pytest.raises(ValidationError, match="unknown backend type"):
+        Config.model_validate(raw)
 
 
-def test_v04_backend_block_strict_with_extra_forbid() -> None:
-    """v0.4 users writing `backend:` directly get strict validation — typos
-    in config fail loudly rather than being silently dropped."""
+def test_v04_backend_block_strict_with_extra_forbid_at_load() -> None:
+    """Typos under `backend.config` fail at config-load (v0.4.1 m1),
+    not deferred to the first build_backend() / first secret fetch."""
+    from pydantic import ValidationError
+
     raw = _minimal_raw(
         {
             "backend": {
@@ -95,15 +101,13 @@ def test_v04_backend_block_strict_with_extra_forbid() -> None:
             }
         }
     )
-    config = Config.model_validate(raw)
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
-        build_backend(config)
+        Config.model_validate(raw)
 
 
-def test_build_backend_validates_per_type_config_schema() -> None:
-    """type=bws with foreign field rejected by BwsConfig's extra=forbid."""
+def test_backend_config_validated_per_type_at_load() -> None:
+    """type=bws with foreign field rejected at load time by BwsConfig's
+    extra=forbid, not deferred to build_backend()."""
     from pydantic import ValidationError
 
     raw = _minimal_raw(
@@ -118,6 +122,25 @@ def test_build_backend_validates_per_type_config_schema() -> None:
             }
         }
     )
-    config = Config.model_validate(raw)
     with pytest.raises(ValidationError):
-        build_backend(config)
+        Config.model_validate(raw)
+
+
+def test_build_backend_reuses_eagerly_validated_config() -> None:
+    """The after-validator on BackendBlock stashes the validated per-backend
+    config; build_backend() reuses it instead of re-validating. Asserts the
+    instance is the same Python object, not a fresh re-parse."""
+    raw = _minimal_raw(
+        {
+            "backend": {
+                "type": "bws",
+                "config": {"type": "bws", "organization_id": "org-1"},
+            }
+        }
+    )
+    config = Config.model_validate(raw)
+    assert config.backend is not None
+    stashed = config.backend._validated_config
+    assert stashed is not None
+    _backend, backend_config = build_backend(config)
+    assert backend_config is stashed

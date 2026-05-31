@@ -68,6 +68,30 @@ def test_b64decode_invalid_input_render_error() -> None:
         tpl.render({"X": "not-valid-base64!@#$"})
 
 
+def test_b64decode_value_error_caught() -> None:
+    """base64.b64decode(validate=True) can raise ValueError (not binascii.Error)
+    on some malformed inputs in Python 3.12+. The filter must catch both and
+    surface them as a clean render_failed, not an uncaught exception that
+    bubbles past the addon's audit boundary."""
+    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    # Empty string after stripping padding is one input class that historically
+    # produced ValueError rather than binascii.Error on some CPython versions.
+    # Any malformed input that ends up raising ValueError exercises the new
+    # branch — the assertion is on the exception type, not the specific input.
+    with pytest.raises(TemplateRenderError, match="b64decode"):
+        tpl.render({"X": "==="})  # padding-only, no data
+
+
+def test_b64decode_non_ascii_input_caught() -> None:
+    """v.encode("ascii") raises UnicodeEncodeError on non-ASCII input.
+    Composite secrets passed through b64decode must not let that exception
+    bypass the render_failed audit boundary — operators rely on
+    render_failed being the catch-all for "composite input was unusable."""
+    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    with pytest.raises(TemplateRenderError, match="b64decode"):
+        tpl.render({"X": "café"})  # non-ASCII — fails at .encode("ascii")
+
+
 def test_sha256_filter() -> None:
     tpl = AvpTemplate("{{ X | sha256 }}", ["X"])
     assert tpl.render({"X": "hello"}) == hashlib.sha256(b"hello").hexdigest()

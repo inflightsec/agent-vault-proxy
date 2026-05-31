@@ -1,8 +1,8 @@
 # agent-vault-proxy
 
-**Zero-knowledge API keys for AI agents: the agent only ever sees a placeholder.**
+**Zero-knowledge API keys for AI agents - and any other process you route through it: the caller only ever sees a placeholder.**
 
-Your agent gets a fake placeholder string (like `sk-PLACEHOLDER-...`) and uses it as if it were a real API key. This proxy sits between the agent and the internet, and swaps the fake for the real secret at the last possible moment - on the way out to the upstream API. If the agent gets prompt-injected, dumps a log, or runs a program with a software-supply-chain issue, the only thing that escapes is the fake placeholder. The real key never enters the agent's process.
+Your agent - or CI runner, build server, scraper, cron job, dev laptop - gets a fake placeholder string (like `sk-PLACEHOLDER-...`) and uses it as if it were a real API key. This proxy sits between the caller and the internet, and swaps the fake for the real secret at the last possible moment - on the way out to the upstream API. If the caller gets prompt-injected, dumps a log, or runs a program with a software-supply-chain issue, the only thing that escapes is the fake placeholder. The real key never enters the calling process. Agents are the headline use case because they're the rare process that both holds credentials and reads attacker-controlled input in the same address space - the one situation where filtering can't reliably save you and removing the bytes is the only real fix.
 
 
 [![PyPI](https://img.shields.io/pypi/v/agent-vault-proxy.svg)](https://pypi.org/project/agent-vault-proxy/)
@@ -69,6 +69,8 @@ Two threats keep getting worse, and your API keys sit in the blast radius of bot
 
 AVP keeps the credential **bytes** out of the agent, and out of anything the agent runs, and in fact out of any software you can run on that host. As long as the outbound HTTPS goes through AVP, none of it ever sees the real secret. The secrets live in Bitwarden; everyone else gets a placeholder. AVP swaps placeholder with a real value on the wire, default-deny per destination (the proxy refuses to inject for hosts you haven't bound to that secret), and additionally scopes per binding by HTTP method and URL path.
 
+Although built for agents, the mechanism is fully general: any process that holds a placeholder in its env and routes HTTPS through AVP gets the same protection - CI runners, build servers, scrapers, cron jobs, or a developer machine you're hardening against software-supply-chain compromise. The agent case is just where it matters most. Prompt injection puts the credential-holder and the attacker-controlled-input-reader in the same process, which is the one situation where filtering and alignment can't reliably save you and removing the bytes is the only real fix. For plain software the supply-chain benefit still applies; the injection benefit largely doesn't.
+
 **What AVP doesn't do - and what to layer on:** AVP prevents *exfiltration* of the raw key, not *misuse of the authority* the key represents on permitted destinations. If you bind `GITHUB_PAT_WORK` to `api.github.com` with no method/path scope, prompt injection can still ask the proxy to authenticate a `DELETE /repos/...` call as you. The lever for that is `methods:` and `paths:` on each binding: see [`bindings.example.yaml`](bindings.example.yaml). For extra security, pair AVP with an egress firewall on the agent's UID so unbound calls are blocked outright. Pair with response-side review for endpoints that may echo back the `Authorization` header in their response body, AVP injects on the request, but does not scrub the response.
 
 How this compares to HashiCorp Vault Agent, Doppler, `op run`, `superfly/tokenizer`, and Kloak: [docs/comparison.md](docs/comparison.md).
@@ -86,7 +88,7 @@ Four steps. Once you've done this, every new API key is just "add to Bitwarden +
    # vetted version. Tracking `main` exposes you to a window where a
    # maintainer-account compromise could ship a malicious commit before
    # anyone notices.
-   git clone -b v0.4.0 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
+   git clone -b v0.4.1 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
    mkdir -p secrets && bash -c '( umask 077 && read -rsp "BWS access token: " T && printf "%s" "$T" > secrets/bws-token && echo )'
    cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
    ```
@@ -143,13 +145,15 @@ The audit log under `/var/log/agent-vault-proxy/audit.jsonl` is local-only.
 
 Nine binary, individually-testable invariants (G1–G9): the agent process address space never contains real secret bytes; substitution only happens on permitted destinations; failures are closed; audit events are fsynced before the modified request goes on the wire. See [docs/architecture.md](docs/architecture.md) for the threat model, invariant tests, hardening checklist, and accepted residual risks.
 
+**Trust-store trade-off.** The blast radius of a proxy compromise scales with how much you route through it. Point AVP at one agent and a proxy compromise exposes that agent's TLS; point your whole dev machine at it and the same compromise sees every TLS connection that machine makes. More coverage = bigger single point of interception. Decide deliberately.
+
 Vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Status
 
-**v0.4.0**, first public release. Adds composite secret bindings (`compose:` + sandboxed Jinja2 templates for credentials assembled from multiple BWS values), an adapter architecture (`SecretsBackend` Protocol with BWS as the reference implementation, so 1Password / Vault / Doppler / AWS adapters can land without forking), and hardened supply-chain gates (hash-pinned dev lockfile, mypy + Ruff C90 in CI + pre-commit, two-layer lockfile drift detection). v0.3 was skipped - the adapter refactor was bundled with composite secrets in one release. Full entry in [CHANGELOG.md](./CHANGELOG.md).
+**v0.4.1**, security + review-followup release on top of v0.4.0. Closes a G6 fail-open path (any uncaught backend exception now returns 503 + audits rather than forwarding the placeholder), tightens config validation (`extra="forbid"` everywhere, placeholder structural checks, eager backend.config validation, case-insensitive host matching, cgroup v2 container detection in preflight), hardens the Dockerfile to install from the hash-pinned lockfile, and ships a Docker E2E harness exercised in CI. v0.4.0 introduced composite secret bindings (`compose:` + sandboxed Jinja2 templates), the `SecretsBackend` Protocol adapter architecture, and hash-pinned dev lockfiles. v0.3 was skipped. Full entries in [CHANGELOG.md](./CHANGELOG.md).
 
-The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 260+ automated tests passing, two rounds of adversarial review per feature (pentest + cross-model Oracle), and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
+The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 289+ automated tests passing, two rounds of adversarial review per feature (pentest + cross-model Oracle), and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
 
 Not yet supported: OAuth refresh-token flows, AWS SigV4, multi-tenant routing, off-host BWS broker, admin Unix socket / MCP interface. The [`avp bindings diff`](docs/architecture.md) semantic-review CLI, cosign-signed `ghcr.io` container images, SBOMs at build time, and a published Ansible role are planned for v0.5.0+.
 

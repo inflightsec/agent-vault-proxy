@@ -97,7 +97,19 @@ def _filter_b64decode(value: Any) -> str:
     v = _require_str("b64decode", value)
     try:
         return base64.b64decode(v.encode("ascii"), validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError) as e:
+    except (binascii.Error, ValueError, UnicodeEncodeError, UnicodeDecodeError) as e:
+        # The except tuple covers four distinct failure modes on the single
+        # expression above:
+        #   - binascii.Error / ValueError — base64.b64decode(validate=True)
+        #     surfaces malformed input as either, depending on CPython
+        #     version + which validation rule fails first.
+        #   - UnicodeEncodeError — v.encode("ascii") raises this if the
+        #     composite value contains any non-ASCII character. Without
+        #     this in the tuple, a composite secret with e.g. 'é' would
+        #     surface as an uncaught exception in the addon and bypass the
+        #     render_failed audit boundary.
+        #   - UnicodeDecodeError — the final .decode("utf-8") on the
+        #     decoded bytes; covers binary payloads that aren't valid UTF-8.
         raise TemplateRenderError(f"b64decode: invalid input: {e}") from None
 
 

@@ -29,9 +29,9 @@ RUN apt-get update \
 
 WORKDIR /build
 
-# Layer cache: copy ONLY pyproject + LICENSE + README first.
+# Layer cache: copy pyproject + lockfile + LICENSE + README first.
 # Editing files under src/ shouldn't invalidate the dep-install layer.
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml requirements.lock README.md LICENSE ./
 
 # Create the runtime venv (ships to runtime stage). Put the `build` tool
 # itself in a SEPARATE throwaway venv so build tooling doesn't leak into
@@ -41,13 +41,36 @@ RUN python -m venv /opt/avp/.venv \
  && python -m venv /tmp/build-venv \
  && /tmp/build-venv/bin/pip install --no-cache-dir --only-binary :all: build
 
+# Install runtime dependencies from the hash-pinned lockfile FIRST,
+# before the project wheel. This matches the CI install posture
+# (`--require-hashes` refuses any package whose SHA-256 doesn't match
+# requirements.lock) and closes the gap where installing the project
+# wheel directly would resolve dependency lower-bound ranges
+# (mitmproxy>=11, pydantic>=2.7, …) against live PyPI at build time.
+# With deps already pinned in the venv, the wheel install below uses
+# `--no-deps` and cannot pull anything fresh. `--only-binary :all:`
+# refuses sdists, blocking install-time script execution from a
+# compromised dependency.
+RUN /opt/avp/.venv/bin/pip install \
+        --no-cache-dir \
+        --require-hashes \
+        --only-binary :all: \
+        -r requirements.lock
+
 # Source change invalidates only from here forward.
 COPY src/ ./src/
 
-# --only-binary :all: refuses sdist for transitive deps, blocking
-# install-time script execution from a compromised dependency.
+# Build the project wheel and install it with `--no-deps` — runtime
+# dependencies are already pinned in the venv from the locked install
+# above, so nothing should be resolved here. `--only-binary :all:` is
+# redundant given `--no-deps` but kept for defense-in-depth in case
+# anyone refactors this step later.
 RUN /tmp/build-venv/bin/python -m build --wheel --outdir /build/dist . \
- && /opt/avp/.venv/bin/pip install --no-cache-dir --only-binary :all: /build/dist/*.whl
+ && /opt/avp/.venv/bin/pip install \
+        --no-cache-dir \
+        --no-deps \
+        --only-binary :all: \
+        /build/dist/*.whl
 
 # ------------------------------------------------------------
 # Runtime stage — minimal. No compilers, no -dev packages.

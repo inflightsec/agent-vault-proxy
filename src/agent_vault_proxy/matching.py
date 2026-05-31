@@ -5,6 +5,13 @@ from functools import lru_cache
 
 
 def host_matches_pattern(host: str, pattern: str) -> bool:
+    # DNS is case-insensitive; normalize both sides so a request to
+    # `API.OpenAI.com` matches a binding written as `api.openai.com`.
+    # Config-load already lowercases binding hosts, but the runtime input
+    # comes straight from the client's request line / Host header and may
+    # carry uppercase — match-time normalization is the load-bearing one.
+    host = host.lower()
+    pattern = pattern.lower()
     if pattern == host:
         return True
     if pattern.startswith("*."):

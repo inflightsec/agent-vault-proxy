@@ -9,6 +9,10 @@ from agent_vault_proxy.config import Config, load_config
 
 EXAMPLE_PATH = Path(__file__).parent.parent / "bindings.example.yaml"
 
+# Test placeholders: ≥ 24 chars, contain PLACEHOLDER marker, disjoint.
+_FOO_PH = "foo_PLACEHOLDER_01HXY1234567890"
+_BAR_PH = "bar_PLACEHOLDER_01HXY1234567890"
+
 
 def test_example_yaml_validates() -> None:
     config = load_config(EXAMPLE_PATH)
@@ -16,13 +20,31 @@ def test_example_yaml_validates() -> None:
     assert "ANTHROPIC_API_KEY" in config.secrets
 
 
-def test_unmatched_destination_policy_defaults_to_forward_unmodified() -> None:
-    """The proxy is a credential broker, not a firewall. Default behavior
-    for destinations without a binding is to pass the request through
-    unmodified; users opt in to deny mode explicitly if they want
-    firewall-like enforcement."""
-    config = load_config(EXAMPLE_PATH)
+def test_unmatched_destination_policy_code_default_is_forward_unmodified() -> None:
+    """The Config schema default stays `forward_unmodified` for backward
+    compatibility — the proxy is a credential broker by design, not a
+    firewall. The example file is allowed to opt into the stricter
+    `deny` posture; this test pins the SCHEMA default."""
+    minimal: dict = {
+        "version": 1,
+        "secrets": {
+            "FOO": {
+                "placeholder": _FOO_PH,
+                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "bindings": [{"host": "api.example.com"}],
+            }
+        },
+        "audit": {"path": "/tmp/x.jsonl"},
+    }
+    config = Config.model_validate(minimal)
     assert config.unmatched_destination_policy == "forward_unmodified"
+
+
+def test_example_file_opts_into_deny_for_hardened_default() -> None:
+    """The example config opts into `deny` so a new operator copying it
+    gets fail-closed unbound-destination behavior by default."""
+    config = load_config(EXAMPLE_PATH)
+    assert config.unmatched_destination_policy == "deny"
 
 
 def test_empty_bindings_rejected() -> None:
@@ -32,7 +54,7 @@ def test_empty_bindings_rejected() -> None:
                 "version": 1,
                 "secrets": {
                     "FOO": {
-                        "placeholder": "x",
+                        "placeholder": _FOO_PH,
                         "inject": {"header": "Authorization", "format": "Bearer {secret}"},
                         "bindings": [],
                     }
@@ -49,7 +71,7 @@ def test_overbroad_wildcard_rejected() -> None:
                 "version": 1,
                 "secrets": {
                     "FOO": {
-                        "placeholder": "x",
+                        "placeholder": _FOO_PH,
                         "inject": {"header": "Authorization", "format": "Bearer {secret}"},
                         "bindings": [{"host": "*.com"}],
                     }
@@ -59,18 +81,201 @@ def test_overbroad_wildcard_rejected() -> None:
         )
 
 
+def test_mixed_case_host_is_lowercased_with_warning(caplog) -> None:
+    """DNS is case-insensitive; binding hosts written in mixed case
+    (e.g., a vendor doc paste) get normalised at config-load and the
+    operator gets a visible log warning. Silent rewrites lose audit value."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.config"):
+        cfg = Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "API.OpenAI.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+    assert cfg.secrets["FOO"].bindings[0].host == "api.openai.com"
+    assert any("uppercase" in r.message for r in caplog.records)
+
+
+def test_lowercase_host_does_not_warn(caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.config"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "api.openai.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+    assert not any("uppercase" in r.message for r in caplog.records)
+
+
 def _minimal_secret(extra_binding: dict) -> dict:
     return {
         "version": 1,
         "secrets": {
             "FOO": {
-                "placeholder": "x",
+                "placeholder": _FOO_PH,
                 "inject": {"header": "Authorization", "format": "Bearer {secret}"},
                 "bindings": [{"host": "api.example.com", **extra_binding}],
             }
         },
         "audit": {"path": "/tmp/x.jsonl"},
     }
+
+
+# ---------------------------------------------------------------------------
+# Strict-models: extra fields rejected
+# ---------------------------------------------------------------------------
+
+
+def test_binding_unknown_field_rejected() -> None:
+    """A `method:` typo for `methods:` would otherwise produce a binding
+    with no method scope, silently widening the credential's authority."""
+    with pytest.raises(ValidationError, match="[Ee]xtra"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [
+                            {"host": "api.example.com", "method": ["GET"]},  # typo
+                        ],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_inject_unknown_field_rejected() -> None:
+    with pytest.raises(ValidationError, match="[Ee]xtra"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {
+                            "header": "Authorization",
+                            "format": "Bearer {secret}",
+                            "headers": "Authorization",
+                        },
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_config_unknown_top_level_field_rejected() -> None:
+    with pytest.raises(ValidationError, match="[Ee]xtra"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+                "unmatchd_destination_policy": "deny",  # typo
+            }
+        )
+
+
+# ---------------------------------------------------------------------------
+# Placeholder validation
+# ---------------------------------------------------------------------------
+
+
+def _two_secrets(ph_a: str, ph_b: str) -> dict:
+    return {
+        "version": 1,
+        "secrets": {
+            "FOO": {
+                "placeholder": ph_a,
+                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "bindings": [{"host": "api.example.com"}],
+            },
+            "BAR": {
+                "placeholder": ph_b,
+                "inject": {"header": "X-Other", "format": "{secret}"},
+                "bindings": [{"host": "other.example.com"}],
+            },
+        },
+        "audit": {"path": "/tmp/x.jsonl"},
+    }
+
+
+def test_placeholder_too_short_rejected() -> None:
+    with pytest.raises(ValidationError, match="at least 24"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": "short_PLACEHOLDER",
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_placeholder_missing_marker_rejected() -> None:
+    with pytest.raises(ValidationError, match="must contain the literal marker"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": "x" * 40,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_placeholder_duplicate_across_secrets_rejected() -> None:
+    with pytest.raises(ValidationError, match="identical"):
+        Config.model_validate(_two_secrets(_FOO_PH, _FOO_PH))
+
+
+def test_placeholder_substring_of_another_rejected() -> None:
+    short = "ghp_PLACEHOLDER_01HXY12345"
+    longer = short + "_EXTENDED"
+    with pytest.raises(ValidationError, match="substring"):
+        Config.model_validate(_two_secrets(short, longer))
+
+
+def test_placeholder_disjoint_pair_accepted() -> None:
+    Config.model_validate(_two_secrets(_FOO_PH, _BAR_PH))
 
 
 def test_empty_methods_rejected() -> None:
@@ -110,7 +315,7 @@ def test_inject_format_must_contain_secret_placeholder() -> None:
                 "version": 1,
                 "secrets": {
                     "FOO": {
-                        "placeholder": "x",
+                        "placeholder": _FOO_PH,
                         "inject": {"header": "Authorization", "format": "Bearer hardcoded"},
                         "bindings": [{"host": "api.example.com"}],
                     }
@@ -307,7 +512,7 @@ def test_nested_composition_rejected_silas_f6() -> None:
         "version": 1,
         "secrets": {
             "INNER": {
-                "placeholder": "inner_PLACEHOLDER_01",
+                "placeholder": "inner_PLACEHOLDER_01HXY12345",
                 "inject": {
                     "header": "X-Inner",
                     "template": "{{ A + B }}",
@@ -316,7 +521,7 @@ def test_nested_composition_rejected_silas_f6() -> None:
                 "bindings": [{"host": "inner.example.com"}],
             },
             "OUTER": {
-                "placeholder": "outer_PLACEHOLDER_01",
+                "placeholder": "outer_PLACEHOLDER_01HXY12345",
                 "inject": {
                     "header": "Authorization",
                     "template": "Bearer {{ INNER }}",
@@ -340,12 +545,12 @@ def test_compose_can_share_name_with_single_secret_binding_silas_f6() -> None:
         "version": 1,
         "secrets": {
             "JIRA_API_TOKEN": {
-                "placeholder": "jira_tok_PLACEHOLDER_01",
+                "placeholder": "jira_tok_PLACEHOLDER_01HXY12345",
                 "inject": {"header": "X-Jira-Token", "format": "{secret}"},
                 "bindings": [{"host": "jira.example.com"}],
             },
             "JIRA_API_BASIC": {
-                "placeholder": "jira_basic_PLACEHOLDER_01",
+                "placeholder": "jira_basic_PLACEHOLDER_01HXY12345",
                 "inject": {
                     "header": "Authorization",
                     "template": "Basic {{ (JIRA_EMAIL + ':' + JIRA_API_TOKEN) | b64encode }}",

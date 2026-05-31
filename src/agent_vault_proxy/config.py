@@ -4,10 +4,23 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from agent_vault_proxy.matching import path_glob_matches
 from agent_vault_proxy.template import AvpTemplate, UnsupportedTemplateError
+
+# Every config model rejects unknown fields. A `method:` typo for
+# `methods:` would otherwise silently produce an unscoped binding
+# instead of a method-scoped one — scope enforcement off, no error.
+_STRICT_MODEL = ConfigDict(extra="forbid")
+
+# Placeholder hardening: long enough to avoid accidental collision with
+# real token-like content, must carry an explicit marker, must be
+# unique across all secrets, no placeholder a substring of another.
+# Substring matters because the addon detects placeholders via `in`
+# matching on the request header.
+_PLACEHOLDER_MIN_LEN = 24
+_PLACEHOLDER_MARKER = "PLACEHOLDER"
 
 
 class InjectSpec(BaseModel):
@@ -20,6 +33,8 @@ class InjectSpec(BaseModel):
       sandboxed expression with strict whitelist (see ``template.py``).
       Requires the parent SecretSpec to declare a ``compose:`` list.
     """
+
+    model_config = _STRICT_MODEL
 
     header: str
     format: str | None = None
@@ -49,13 +64,31 @@ _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
 
 class BindingSpec(BaseModel):
+    model_config = _STRICT_MODEL
+
     host: str
     methods: list[str] | None = None
     paths: list[str] | None = None
 
     @field_validator("host")
     @classmethod
-    def reject_overbroad_wildcard(cls, v: str) -> str:
+    def normalize_and_validate_host(cls, v: str) -> str:
+        # DNS is case-insensitive but the matcher is comparing strings;
+        # normalize at config-load so the runtime matcher only sees one
+        # canonical form. Warn (not fail) on mixed case so an operator
+        # who pasted `API.OpenAI.com` from a vendor doc gets a visible
+        # signal rather than a silent rewrite.
+        if v != v.lower():
+            import logging
+
+            logging.getLogger("agent_vault_proxy.config").warning(
+                "binding host %r contains uppercase; normalising to %r. "
+                "DNS is case-insensitive; write hostnames lowercase to "
+                "silence this warning.",
+                v,
+                v.lower(),
+            )
+            v = v.lower()
         if v.startswith("*.") and v.count(".") < 2:
             raise ValueError(f"wildcard '{v}' is too broad; require at least two DNS labels")
         return v
@@ -110,6 +143,8 @@ _COMPOSE_MAX = 4  # raised from 3 during grill — covers tenant_id-style patter
 
 
 class SecretSpec(BaseModel):
+    model_config = _STRICT_MODEL
+
     placeholder: str
     inject: InjectSpec
     compose: list[str] | None = None
@@ -197,12 +232,16 @@ class SecretSpec(BaseModel):
 
 
 class CacheSpec(BaseModel):
+    model_config = _STRICT_MODEL
+
     ttl_seconds: int = Field(default=300, ge=10, le=3600)
     max_entries: int = Field(default=100, ge=1)
     jitter_seconds: int = Field(default=30, ge=0)
 
 
 class AuditSpec(BaseModel):
+    model_config = _STRICT_MODEL
+
     path: str
     fail_on_unwritable: bool = True
 
@@ -216,6 +255,8 @@ class PreflightSpec(BaseModel):
     over advisory output.
     """
 
+    model_config = _STRICT_MODEL
+
     fail_on_warning: bool = False
 
 
@@ -223,8 +264,38 @@ class BackendBlock(BaseModel):
     """Backend selector. `type` is the discriminator; `config` is the
     per-backend pydantic model from BACKEND_REGISTRY[type]."""
 
+    model_config = _STRICT_MODEL
+
     type: str
-    config: dict  # validated against the backend's own config model in build_backend()
+    config: dict
+
+    # Populated by the after-validator below. Holds the per-backend pydantic
+    # model instance so build_backend() doesn't re-validate. Not serialised.
+    _validated_config: BaseModel | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def validate_inner_config(self) -> BackendBlock:
+        """Eagerly validate ``config`` against the per-backend pydantic model.
+
+        A typo under ``backend.config`` (e.g., ``organization_iddd`` for
+        ``organization_id``) would otherwise only surface at first secret
+        fetch, when the addon calls ``build_backend()``. Validating at
+        config-load makes ``avp bindings diff`` and ``--check`` honest about
+        backend-block correctness instead of deferring it to runtime.
+        """
+        from agent_vault_proxy.backends import BACKEND_REGISTRY, _normalize_name
+
+        type_name = _normalize_name(self.type)
+        if type_name not in BACKEND_REGISTRY:
+            raise ValueError(
+                f"unknown backend type {self.type!r}; "
+                f"available types: {sorted(BACKEND_REGISTRY.keys())}"
+            )
+        _backend_cls, config_cls = BACKEND_REGISTRY[type_name]
+        # Let pydantic's ValidationError surface as-is — it carries the
+        # field-level detail (which key was unknown / what type was wrong).
+        self._validated_config = config_cls.model_validate(self.config)
+        return self
 
 
 class ConfigError(Exception):
@@ -233,6 +304,8 @@ class ConfigError(Exception):
 
 
 class Config(BaseModel):
+    model_config = _STRICT_MODEL
+
     version: Literal[1]
     secrets: dict[str, SecretSpec]
     # Default is forward_unmodified: the proxy is a credential broker, not
@@ -245,6 +318,42 @@ class Config(BaseModel):
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
     backend: BackendBlock | None = None
+
+    @model_validator(mode="after")
+    def validate_placeholders(self) -> Config:
+        seen: dict[str, str] = {}
+        for name, spec in self.secrets.items():
+            ph = spec.placeholder
+            if not ph:
+                raise ValueError(f"secret {name!r}: placeholder is empty")
+            if len(ph) < _PLACEHOLDER_MIN_LEN:
+                raise ValueError(
+                    f"secret {name!r}: placeholder must be at least "
+                    f"{_PLACEHOLDER_MIN_LEN} characters (got {len(ph)})"
+                )
+            if _PLACEHOLDER_MARKER not in ph:
+                raise ValueError(
+                    f"secret {name!r}: placeholder must contain the "
+                    f"literal marker {_PLACEHOLDER_MARKER!r}"
+                )
+            if not ph.isprintable():
+                raise ValueError(f"secret {name!r}: placeholder must be printable")
+            if ph in seen:
+                raise ValueError(
+                    f"secret {name!r}: placeholder is identical to secret {seen[ph]!r}"
+                )
+            seen[ph] = name
+        # Pairwise substring check: a placeholder that is a substring of
+        # another would let the addon's `in` matching route the wrong
+        # secret onto the wire. n is small so O(n²) is fine.
+        for ph_a, name_a in seen.items():
+            for ph_b, name_b in seen.items():
+                if name_a != name_b and ph_a in ph_b:
+                    raise ValueError(
+                        f"secret {name_a!r}: placeholder is a substring "
+                        f"of secret {name_b!r}'s placeholder"
+                    )
+        return self
 
     @model_validator(mode="after")
     def reject_nested_composition(self) -> Config:
@@ -302,7 +411,12 @@ def build_backend(config: Config):
             f"Available types: {sorted(BACKEND_REGISTRY.keys())}"
         )
     backend_cls, config_cls = BACKEND_REGISTRY[type_name]
-    backend_config = config_cls.model_validate(config.backend.config)
+    # BackendBlock's after-validator already validated this at config-load;
+    # reuse the result so we don't double-validate (and so the model_validate
+    # call here can't surface a different error than load_config did).
+    backend_config = config.backend._validated_config
+    if backend_config is None:  # pragma: no cover — defensive
+        backend_config = config_cls.model_validate(config.backend.config)
     # SecretsBackend is a Protocol — it cannot statically express that every
     # concrete backend's __init__ takes a `config=` kwarg. The registry is
     # what enforces the convention at runtime (see backends/__init__.py

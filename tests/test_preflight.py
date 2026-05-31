@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_vault_proxy._preflight import (
+    _in_container,
     check_audit_log_append_only,
     check_bws_token_via_env_in_container,
     check_loose_bindings_on_sensitive_hosts,
@@ -32,7 +33,7 @@ def _make_minimal_config(
             "version": 1,
             "secrets": {
                 "FOO": {
-                    "placeholder": "ph",
+                    "placeholder": "test_PLACEHOLDER_01HXY1234567890",
                     "inject": {"header": "Authorization", "format": "Bearer {secret}"},
                     "bindings": [
                         b.model_dump() for b in (bindings or [BindingSpec(host="x.example.com")])
@@ -43,6 +44,112 @@ def _make_minimal_config(
             "backend": {"type": "bws", "config": {"type": "bws", "organization_id": "org-1"}},
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# _in_container() — direct tests for the detection heuristic
+# ---------------------------------------------------------------------------
+
+
+def _stub_path(monkeypatch, mapping: dict[str, str | None]) -> None:
+    """Stub Path.exists()/read_text() for a small set of /proc and /run paths.
+
+    ``mapping`` maps absolute path → file contents (str = file exists with
+    that content, None = path does not exist).
+    """
+    from pathlib import Path as _Path
+
+    real_exists = _Path.exists
+    real_read = _Path.read_text
+
+    def fake_exists(self: _Path) -> bool:
+        p = str(self)
+        if p in mapping:
+            return mapping[p] is not None
+        return real_exists(self)
+
+    def fake_read_text(self: _Path, *a, **kw) -> str:
+        p = str(self)
+        if p in mapping:
+            v = mapping[p]
+            if v is None:
+                raise FileNotFoundError(p)
+            return v
+        return real_read(self, *a, **kw)
+
+    monkeypatch.setattr(_Path, "exists", fake_exists)
+    monkeypatch.setattr(_Path, "read_text", fake_read_text)
+
+
+def test_in_container_dockerenv_stub(monkeypatch) -> None:
+    _stub_path(
+        monkeypatch,
+        {"/.dockerenv": "", "/run/.containerenv": None, "/proc/1/cgroup": None},
+    )
+    assert _in_container() is True
+
+
+def test_in_container_podman_containerenv_stub(monkeypatch) -> None:
+    _stub_path(
+        monkeypatch,
+        {"/.dockerenv": None, "/run/.containerenv": "", "/proc/1/cgroup": None},
+    )
+    assert _in_container() is True
+
+
+def test_in_container_cgroup_v1_docker_marker(monkeypatch) -> None:
+    _stub_path(
+        monkeypatch,
+        {
+            "/.dockerenv": None,
+            "/run/.containerenv": None,
+            "/proc/1/cgroup": "12:devices:/docker/abc123\n",
+        },
+    )
+    assert _in_container() is True
+
+
+def test_in_container_cgroup_v2_bare_root_is_container(monkeypatch) -> None:
+    """Reviewer-flagged gap: cgroup v2 with a cgroup namespace, no
+    /.dockerenv stub, and no v1-style runtime markers. PID 1 sees its
+    own cgroup as bare '0::/'. A bare-metal systemd host shows
+    '0::/init.scope' (or similar non-root path) so this is unambiguous."""
+    _stub_path(
+        monkeypatch,
+        {
+            "/.dockerenv": None,
+            "/run/.containerenv": None,
+            "/proc/1/cgroup": "0::/\n",
+        },
+    )
+    assert _in_container() is True
+
+
+def test_in_container_cgroup_v2_systemd_host_is_not_container(monkeypatch) -> None:
+    """Negative: a bare-metal cgroup v2 host running systemd shows PID 1
+    inside '0::/init.scope' — must NOT trigger container detection."""
+    _stub_path(
+        monkeypatch,
+        {
+            "/.dockerenv": None,
+            "/run/.containerenv": None,
+            "/proc/1/cgroup": "0::/init.scope\n",
+        },
+    )
+    assert _in_container() is False
+
+
+def test_in_container_no_proc_returns_false(monkeypatch) -> None:
+    """Non-Linux test runner / no /proc at all."""
+    _stub_path(
+        monkeypatch,
+        {
+            "/.dockerenv": None,
+            "/run/.containerenv": None,
+            "/proc/1/cgroup": None,
+        },
+    )
+    assert _in_container() is False
 
 
 # ---------------------------------------------------------------------------

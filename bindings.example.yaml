@@ -22,17 +22,29 @@ secrets:
         paths: ["/v1/messages", "/v1/messages/batches/**"]
       # Anthropic-hosted MCP gateway — Claude Code uses this for cloud MCPs
       # (Gmail, Calendar, Drive, etc.). Same Bearer token; path scope omitted
-      # because MCP paths are upstream-defined and may expand.
+      # because MCP paths are upstream-defined and may expand. Method scope
+      # is kept tight: MCP is request/response over POST, so a GET on this
+      # host from a prompt-injected agent is already suspicious.
       - host: "mcp-proxy.anthropic.com"
+        methods: [POST]
       # Claude Code CLI also routes traffic via *.claude.com (api.claude.com,
       # console.claude.com, etc.). Without this binding the CLI fails to
-      # start. Anthropic owns both domains; same Bearer token works.
+      # start. Anthropic owns both domains; same Bearer token works. Method
+      # scope is broader because the CLI mixes GET (configuration reads)
+      # and POST (telemetry / control plane).
       - host: "*.claude.com"
+        methods: [GET, POST]
 
   # Two GitHub PATs — work and personal — each with its own placeholder so
   # the agent can pick the right identity per request. Both read-only on
   # api.github.com (closes laundering via gist POST). Distinct placeholder
   # strings ensure the proxy's substring match cannot ambiguate.
+  #
+  # Path scope on api.github.com is REST-namespace-shaped: agents typically
+  # read repos, the auth'd user, search results, and orgs. Narrow further if
+  # your agent only browses one repo — e.g.
+  #   paths: ["/repos/your-org/your-repo/**", "/user"]
+  # closes most exfil routes through unrelated repos and search.
   GITHUB_PAT_WORK:
     placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
     inject:
@@ -41,7 +53,19 @@ secrets:
     bindings:
       - host: "api.github.com"
         methods: [GET]
+        paths:
+          - "/repos/**"
+          - "/user"
+          - "/users/**"
+          - "/orgs/**"
+          - "/search/**"
+      # uploads.github.com is used for release-asset / large-file uploads.
+      # Scope to POST/PUT plus the documented upload-asset path — agents
+      # that only read repos should never hit this host at all, but if your
+      # workflow uploads a release artifact, keep the binding narrow.
       - host: "uploads.github.com"
+        methods: [POST, PUT]
+        paths: ["/repos/**/releases/**"]
 
   GITHUB_PAT_PERSONAL:
     placeholder: "ghp_PLACEHOLDER_PERSONAL_01HXY1234"
@@ -51,7 +75,15 @@ secrets:
     bindings:
       - host: "api.github.com"
         methods: [GET]
+        paths:
+          - "/repos/**"
+          - "/user"
+          - "/users/**"
+          - "/orgs/**"
+          - "/search/**"
       - host: "uploads.github.com"
+        methods: [POST, PUT]
+        paths: ["/repos/**/releases/**"]
 
 # ─── Binding scope semantics ───────────────────────────────────────────────
 # Each binding may optionally constrain the HTTP method and/or URL path:
@@ -140,12 +172,21 @@ secrets:
       - JIRA_EMAIL
       - JIRA_API_TOKEN
     bindings:
+      # Jira Cloud REST + Agile APIs are under /rest/**. Narrowing methods
+      # to read-shaped verbs keeps a prompt-injected agent from creating
+      # tickets or commenting on issues even with a valid bound token.
+      # Widen to POST/PUT/DELETE only if your agent legitimately mutates.
       - host: "your-tenant.atlassian.net"
+        methods: [GET]
+        paths: ["/rest/**"]
 
-# The proxy is a credential broker, not an egress firewall — destinations
-# without a binding pass through unmodified. Set this to "deny" if you want
-# the proxy to also enforce a destination allow-list (firewall-like).
-unmatched_destination_policy: forward_unmodified
+# Destinations without a binding default to deny here. The proxy is a
+# credential broker, not a firewall — but for an agent workstation the
+# safer example is "allow-list of bound destinations only." Loosen this
+# to forward_unmodified if you genuinely want the proxy to behave as a
+# transparent forwarder for unrelated egress (and pair the relaxation
+# with your OS firewall / OpenSnitch / nftables).
+unmatched_destination_policy: deny
 
 cache:
   ttl_seconds: 300

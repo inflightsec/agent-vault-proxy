@@ -8,6 +8,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 _No changes pending._
 
+## [0.4.1], 2026-05-30
+
+External security review of the v0.4.0 release surface flagged a handful of items as "must fix before high-value credentials." This release lands those.
+
+### Changed
+
+- **Dockerfile installs runtime dependencies from the hash-pinned lockfile.** Previous Docker builds installed the project wheel directly, which resolved dependency lower-bound ranges (`mitmproxy>=11`, `pydantic>=2.7`, etc.) against live PyPI at build time and produced an image whose deps were unpinned even though `requirements.lock` exists. The Dockerfile now runs `pip install --require-hashes --only-binary :all: -r requirements.lock` first, then installs the project wheel with `--no-deps`. Matches the CI install posture.
+- **`bindings.example.yaml` defaults to `unmatched_destination_policy: deny`.** New operators copying the example get fail-closed unbound-destination behavior; the schema default in `Config` stays `forward_unmodified` for backward compatibility.
+
+### Added (security hardening)
+
+- **`extra="forbid"` on every config model** (`InjectSpec`, `BindingSpec`, `SecretSpec`, `CacheSpec`, `AuditSpec`, `PreflightSpec`, `BackendBlock`, `Config`). Operator typos like `method:` for `methods:` are now rejected at config load instead of silently producing an unscoped binding. `BwsConfig` already had this guard from v0.4.0.
+- **Structural placeholder validation.** Each `secrets[].placeholder` must be non-empty, at least 24 characters, contain the literal marker `PLACEHOLDER`, be printable, be unique across the file, and not be a substring of any other placeholder. The substring check matters because the addon detects placeholders via `in` matching on the request header: an overlap would route the wrong real secret onto the wire.
+- **Ambiguous multi-placeholder match denial.** If a single header value contains placeholders for two distinct configured secrets, the addon now refuses to inject, returns 400, and audits `inject_decision: denied, reason: ambiguous_placeholder_match` with `matched_secret_names: [...]`. Belt-and-suspenders on top of the config-load substring check: a request constructed by a buggy or hostile caller could embed two distinct placeholders even when the config itself is clean.
+- **Tighter scopes throughout `bindings.example.yaml`.** Every binding in the example now declares `methods:`; nine of twelve also declare `paths:`. The two remaining bindings without `paths:` (Anthropic MCP gateway, `*.claude.com`) have documented reasons. GitHub PAT bindings gained `/repos/**`, `/user`, `/users/**`, `/orgs/**`, `/search/**` path scope and `uploads.github.com` is now `methods: [POST, PUT]` with `paths: ["/repos/**/releases/**"]`. Jira composite binding gained `methods: [GET]` + `paths: ["/rest/**"]`.
+
+### Added (tooling)
+
+- **`static` secrets backend** (`backend: {type: static, config: {path: ...}}`). Reads `{name: value}` pairs from a YAML file on disk, refuses world-readable files, emits a clear startup warning that this backend is for dev / integration testing only. Drives the new Docker E2E harness; available for anyone who needs a plaintext-file backend during local development.
+- **`tests/docker-e2e/`** — scripted end-to-end integration test. Builds the production Dockerfile, stands the proxy up next to an HTTP echo upstream on an isolated bridge network, and asserts that (a) the upstream's echoed `Authorization` header contains the real secret and not the placeholder, (b) the audit log records `inject_decision: allowed`, (c) an unbound destination is denied with 403 and audited. Runs as a CI job (`e2e-docker` in `.github/workflows/test.yml`) on every PR; runnable locally via `bash tests/docker-e2e/run.sh` or `pytest -m docker`. The compose stack uses a one-shot `avp-init` busybox container running as root to copy `bindings.yaml` + `secrets.yml` into a named `avp-e2e-config` volume with `chown 65532:65532` + correct modes (0644/0600); the avp service then `depends_on: avp-init: condition: service_completed_successfully` and mounts the volume read-only. This sidesteps the bind-mount UID mismatch that would otherwise prevent the avp process (UID 65532) from reading host-UID-owned config files.
+
+### Fixed (security)
+
+- **G6 regression: addon now fails closed on any uncaught backend exception.** Previously the addon caught only `(BackendUnavailableError, SecretNotFoundError)` around `client.get(...)`. A backend that raised any other exception type — for example, the static backend hitting `PermissionError` on a misconfigured bind mount — would let the exception bubble to mitmproxy, which logged the traceback and **forwarded the request unmodified** with the placeholder bytes intact. The single-secret and composite paths now both catch `Exception` as a final clause, return 503, and emit `inject_decision: denied, reason: secret_fetch_error:<ExceptionType>` (or `composite_fetch_error:` on the composite path) with the exception class in the audit reason. Discovered via the docker-e2e diagnostic dump 2026-05-30 — the harness's mount-permission gap surfaced the silent fail-open class.
+- **`StaticSecretsBackend` now converts `OSError` on the secrets-file read to `BackendUnavailableError`.** Previously `path.read_text()` was outside the `try` block, so `PermissionError` / read-time `OSError` propagated unwrapped. With the addon's broadened catch above this would already be safe, but converting at the backend layer keeps the audit reason consistent (`secret_unavailable:BackendUnavailableError`) regardless of which backend produced the failure.
+- **E2E `dump_diagnostics` no longer `cat`s `secrets.yml`.** The harness uses a fake test value, but the pattern would leak real credentials if copied into a production diagnostic path. The diagnostic now prints `stat` only (mode + UID:GID + size) — enough to confirm the file is present, owned, and at the expected mode without surfacing the value. The standalone `avp-e2e-diagnose.sh` handoff script got the same treatment.
+- **`tests/docker-e2e/run.sh` input-validates `REAL_SECRET`** against `^[A-Za-z0-9_-]+$` before exporting `TEST_SECRET`. The avp-init heredoc embeds the value into a YAML string literal, and a value containing `"`, `\n`, or `\\` could break the YAML or inject extra keys. The hardcoded harness value satisfies the constraint; this guard exists to keep future edits from regressing into a YAML-injection-shaped path.
+- **`_filter_b64decode` also catches `UnicodeEncodeError`** from `v.encode("ascii")`. Previously, a composite secret containing any non-ASCII character would have raised an uncaught exception in the template path and bypassed the addon's `render_failed` audit boundary. The catch tuple is now `(binascii.Error, ValueError, UnicodeEncodeError, UnicodeDecodeError)` — covers all four documented failure modes of the single `b64decode(v.encode("ascii"), validate=True).decode("utf-8")` chain.
+- **`pip-audit` install pinned to exact version (`==2.9.0`)** rather than the broader `>=2.7,<3` range. Closes the bootstrap loop where a malicious pip-audit release in the version range could silently report "no CVEs" against the lockfile it audits. Bump this pin when Dependabot opens its PR.
+
+### Fixed (follow-up review)
+
+A second-pass code review of the v0.4.0 surface raised four landable items. Three deferred items (a perf tweak, a perf bound to document, and a composite-fetch availability edge case) are noted below the fixed list.
+
+- **Host matching is case-insensitive.** `host_matches_pattern` lowercases both inputs, and the `BindingSpec.host` field validator normalises at config-load with a clear log warning when the input was mixed case. DNS is case-insensitive but the previous string compare was not, so an operator who pasted `API.OpenAI.com` from a vendor doc got a silent miss at request time instead of a binding-match. Now: load-time warning + match-time normalisation.
+- **`base64.b64decode` catches `ValueError` as well as `binascii.Error`.** Python 3.12's `b64decode(validate=True)` raises `ValueError` (not `binascii.Error`) on some malformed inputs. The previous `except (binascii.Error, UnicodeDecodeError)` tuple would have let the `ValueError` propagate out of the composite-render path and bypass the addon's `render_failed` audit boundary.
+- **Backend config validated eagerly at config-load.** `BackendBlock` runs an after-validator that validates `backend.config` against the per-backend pydantic model (e.g., `BwsConfig`) from `BACKEND_REGISTRY[type]`. Typos under `backend.config` (e.g., `organization_iddd`) now fail at `Config.model_validate` rather than at the first secret fetch. `build_backend()` reuses the eagerly-validated instance.
+- **Container detection covers cgroup v2.** `_in_container()` now recognises the cgroup v2 + cgroup-namespace signature (PID 1's cgroup is bare `0::/` rather than `0::/init.scope` on a bare-metal systemd host). Previously the `BWS_ACCESS_TOKEN`-via-env and root-UID-in-container preflight warnings were silently muted on modern runtimes that didn't drop a `/.dockerenv` stub.
+
+### Deferred from the same review
+
+- **`audit.AuditWriter` uses `os.fsync` rather than `os.fdatasync`.** For an append-only JSONL log, `fdatasync` would be sufficient and lower latency. Correctness is unaffected; throughput tweak parked for a future release if anyone reports the fsync bound is hurting them.
+- **O(N×M) header scan in `_find_placeholder_matches`.** Fine for N ≤ 20 in practice (typical credential count per proxy). Worth indexing once someone runs a proxy with O(100) bindings; for the current scale it would be premature optimisation.
+- **`composite_fetch` discards-and-retries the whole assembly on a flush between component fetches.** Correctness is preserved (fail-closed via `_StaleAfterFlushError`); under frequent secret rotation, composites will retry more often than single-secret fetches. Reordering the fetch loop to hold the flush lock across all component reads would touch the flush-invariant and isn't worth the risk for an availability-under-rotation edge case.
+
 ## [0.4.0], 2026-05-29
 
 First public release.

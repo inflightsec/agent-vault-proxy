@@ -156,13 +156,16 @@ def _reset_registry_for_tests() -> None:
     """
     _registry.clear()
     from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
+    from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
     register_backend("bws", BitwardenBackend, BwsConfig)
+    register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
 
 
 # Import backend modules at package import time so their register_backend()
 # calls run. Order doesn't matter (each registers under a unique name).
 from agent_vault_proxy.backends import bws as _bws_module  # noqa: E402, F401
+from agent_vault_proxy.backends import static as _static_module  # noqa: E402, F401
 
 __all__ = [
     "BACKEND_REGISTRY",

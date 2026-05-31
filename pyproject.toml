@@ -1,6 +1,6 @@
 [project]
 name = "agent-vault-proxy"
-version = "0.4.0"
+version = "0.4.1"
 description = "Loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -92,6 +92,13 @@ max-complexity = 10
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "docker: end-to-end test that requires a running Docker daemon (skipped by default)",
+]
+# Skip the docker-e2e suite by default. CI's `e2e-docker` job opts in
+# via the dedicated `bash tests/docker-e2e/run.sh` invocation; local
+# operators can opt in with `pytest -m docker`.
+addopts = "-m 'not docker'"
 
 [tool.mypy]
 python_version = "3.12"

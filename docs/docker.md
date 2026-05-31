@@ -243,8 +243,8 @@ vs the bare-metal systemd install: systemd's `SystemCallFilter=@system-service` 
 | **Egress restriction** | The proxy MUST forward to arbitrary upstream APIs. The binding-scope check in `bindings.yaml` is what controls which destinations get the real secret vs the placeholder; Docker-level egress controls would either be no-ops or break the proxy. |
 | **Image signature verification** | The image isn't published to a registry yet. v0.5.0 will ship cosign-signed images via `cosign verify ghcr.io/inflightsec/agent-vault-proxy@<digest>`. For now, build locally from the pinned-base Dockerfile. |
 | **SBOM at build time** | Deferred to v0.5.0 (syft / CycloneDX in `release.yml`). |
-| **Auto-applied `chattr +a`** | The proxy can't apply it itself (no `LINUX_IMMUTABLE`). Auto-init via depends_on/init container being evaluated for v0.5.0; in v0.4.0 it's a documented manual step. |
-| **Hash-pinned pip install** | The build wheel installs with `--only-binary :all:` (no sdists, no install scripts), but `--require-hashes` against `requirements.lock` is still on the v0.5.0 list. CI uses the hash-pinned path; the Dockerfile path does not yet. |
+| **Auto-applied `chattr +a`** | The proxy can't apply it itself (no `LINUX_IMMUTABLE`). Auto-init via depends_on/init container being evaluated for v0.5.0; in v0.4.1 it's a documented manual step. |
+| **Hash-pinned pip install** | **Landed in v0.4.1.** The Dockerfile now installs runtime deps from `requirements.lock` with `--require-hashes --only-binary :all:`, then installs the project wheel with `--no-deps`. Matches the CI install posture. |
 | **Rootless docker as default** | Works (see below) but adds setup friction. Documented as an option, not the default. |
 | **Replicas / horizontal scaling** | Not applicable. Each container generates its own CA; replicas would break host trust. Single-instance only. |
 

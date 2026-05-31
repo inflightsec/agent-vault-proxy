@@ -16,7 +16,7 @@ body:
     attributes:
       label: Version
       description: Output of `pip show agent-vault-proxy | grep Version` or commit SHA
-      placeholder: "0.4.0"
+      placeholder: "0.4.1"
     validations:
       required: true
 

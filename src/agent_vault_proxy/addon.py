@@ -126,7 +126,13 @@ class AgentVaultProxyAddon:
                 {"Content-Type": "text/plain"},
             )
 
-    def requestheaders(self, flow: http.HTTPFlow) -> None:
+    def requestheaders(self, flow: http.HTTPFlow) -> None:  # noqa: C901
+        # Single request-lifecycle pipeline: snapshot → CONNECT/host
+        # consistency → destination allow-list → placeholder match →
+        # ambiguity check → binding match → scope check → fetch → mutate
+        # → audit. Each branch maps one-to-one to an audit reason; folding
+        # them behind helpers obscures the per-branch invariants.
+        #
         # Snapshot (config, client, audit) at handler entry — Silas F3.
         # Any subsequent configure() call publishes a new triple that this
         # request will never see.
@@ -175,10 +181,36 @@ class AgentVaultProxyAddon:
             )
             return
 
-        match = _find_placeholder_in_headers(config, flow)
-        if match is None:
+        matches = _find_placeholder_matches(config, flow)
+        if not matches:
             return
-        secret_name, secret_spec, header_name, header_value = match
+        if len(matches) > 1:
+            # More than one configured placeholder appears in the request
+            # headers. Config-load validation already forbids
+            # substring-overlap and duplicate placeholder strings, but an
+            # adversarial or accidental request could still embed two
+            # distinct placeholders in the same header value (e.g., a
+            # composed header an upstream library built from two env
+            # vars). Refuse to guess which secret to inject — picking the
+            # first match could route the wrong real secret onto the
+            # wire. Deny, 400, audit.
+            audit.emit(
+                {
+                    "type": "inject_decision",
+                    "request_id": request_id,
+                    "decision": "denied",
+                    "reason": "ambiguous_placeholder_match",
+                    "matched_secret_names": sorted({m[0] for m in matches}),
+                    "destination": {"host": target_host, "port": flow.request.port},
+                }
+            )
+            flow.response = http.Response.make(
+                400,
+                b"agent-vault-proxy: ambiguous placeholder match\n",
+                {"Content-Type": "text/plain"},
+            )
+            return
+        secret_name, secret_spec, header_name, header_value = matches[0]
 
         matched_binding = _matched_binding(target_host, secret_spec)
         if matched_binding is None:
@@ -244,6 +276,38 @@ class AgentVaultProxyAddon:
                 flow.response = http.Response.make(
                     503,
                     b"agent-vault-proxy: secret unavailable\n",
+                    {"Content-Type": "text/plain"},
+                )
+                return
+            except Exception as e:  # noqa: BLE001
+                # G6 fail-closed: any uncaught backend exception (e.g., the
+                # static backend hit a PermissionError on a misconfigured
+                # bind mount) MUST NOT result in the placeholder being
+                # forwarded verbatim. Without this branch the exception
+                # bubbles up to mitmproxy, which logs the traceback and
+                # forwards the unmodified request — silently leaking the
+                # placeholder to the upstream. Discovered via docker-e2e
+                # diagnostic dump 2026-05-30. Audit reason is distinct from
+                # `secret_unavailable:` so an operator can grep for the
+                # "this was an unexpected backend bug" class separately.
+                _log.exception(
+                    "unexpected backend exception fetching %s: %s",
+                    secret_name,
+                    type(e).__name__,
+                )
+                audit.emit(
+                    {
+                        "type": "inject_decision",
+                        "request_id": request_id,
+                        "decision": "denied",
+                        "reason": f"secret_fetch_error:{type(e).__name__}",
+                        "secret_name": secret_name,
+                        "destination": {"host": target_host, "port": flow.request.port},
+                    }
+                )
+                flow.response = http.Response.make(
+                    503,
+                    b"agent-vault-proxy: secret fetch failed\n",
                     {"Content-Type": "text/plain"},
                 )
                 return
@@ -319,6 +383,32 @@ class AgentVaultProxyAddon:
             flow.response = http.Response.make(
                 503,
                 b"agent-vault-proxy: composite secret unavailable\n",
+                {"Content-Type": "text/plain"},
+            )
+            return None
+        except Exception as e:  # noqa: BLE001
+            # G6 fail-closed mirror of the single-secret path: any uncaught
+            # backend exception during composite fetch must result in a 503,
+            # not a forwarded placeholder.
+            _log.exception(
+                "unexpected backend exception fetching composite %s: %s",
+                secret_name,
+                type(e).__name__,
+            )
+            audit.emit(
+                {
+                    "type": "inject_decision",
+                    "request_id": request_id,
+                    "decision": "denied",
+                    "reason": f"composite_fetch_error:{type(e).__name__}",
+                    "secret_name": secret_name,
+                    "compose": list(secret_spec.compose),
+                    "destination": {"host": target_host, "port": flow.request.port},
+                }
+            )
+            flow.response = http.Response.make(
+                503,
+                b"agent-vault-proxy: composite secret fetch failed\n",
                 {"Content-Type": "text/plain"},
             )
             return None
@@ -420,15 +510,20 @@ def _matched_binding(host: str, spec: SecretSpec) -> BindingSpec | None:
     return None
 
 
-def _find_placeholder_in_headers(
+def _find_placeholder_matches(
     config: Config, flow: http.HTTPFlow
-) -> tuple[str, SecretSpec, str, str] | None:
+) -> list[tuple[str, SecretSpec, str, str]]:
+    """Collect every (secret_name, spec, header_name, value) where the
+    secret's placeholder appears inside its configured target header.
+    Multiple matches mean the request is ambiguous and the addon will
+    refuse to inject (see requestheaders)."""
+    matches: list[tuple[str, SecretSpec, str, str]] = []
     for secret_name, spec in config.secrets.items():
         target_header = spec.inject.header
         value = flow.request.headers.get(target_header)
         if value and spec.placeholder in value:
-            return secret_name, spec, target_header, value
-    return None
+            matches.append((secret_name, spec, target_header, value))
+    return matches
 
 
 addons = [AgentVaultProxyAddon()]

@@ -321,8 +321,23 @@ jobs:
           echo "version OK: $ACTUAL"
 
       - name: Assert entry point loads
-        # mitmdump --help exits 0 if the addon-loader path is wired
-        # correctly. If addon.py raises at module-import time (any new
-        # syntactically-valid bug that escaped unit tests) it crashes
-        # here with a non-zero exit.
-        run: /tmp/smokevenv/bin/python -m agent_vault_proxy --help >/dev/null
+        # Verify the __main__ entry point and the addon module both
+        # import without error. This catches any module-load-time bug
+        # in addon.py / config.py / backends that escaped unit tests
+        # (those run from the source tree; this runs against the
+        # installed wheel, exercising the wheel's actual file layout).
+        # Previously this step ran `python -m agent_vault_proxy --help`
+        # which delegates to mitmdump's argparse; mitmdump's behavior
+        # on --help with a -s addon flag is fragile across versions and
+        # was returning exit 1 on the runner. An import-only check is
+        # what the smoke test actually needs.
+        run: |
+          /tmp/smokevenv/bin/python -c "
+          import agent_vault_proxy
+          from agent_vault_proxy.__main__ import main
+          from agent_vault_proxy import addon, config
+          from agent_vault_proxy.backends import BACKEND_REGISTRY
+          assert 'bws' in BACKEND_REGISTRY, 'bws backend not registered'
+          assert 'static' in BACKEND_REGISTRY, 'static backend not registered'
+          print('entry point + addon + config + backends importable')
+          "

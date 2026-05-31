@@ -1,0 +1,44 @@
+version: 1
+
+# E2E harness: route the TEST_API_KEY placeholder through to the
+# upstream echo container as a real Bearer token. The echo container
+# responds with the request headers in its JSON body, which the test
+# client parses to confirm the substitution actually happened on the
+# wire.
+secrets:
+  TEST_API_KEY:
+    placeholder: "test-PLACEHOLDER-01HXY1234567890ABC"
+    inject:
+      header: "Authorization"
+      format: "Bearer {secret}"
+    bindings:
+      - host: "upstream.test"
+        methods: [GET]
+        paths: ["/"]
+
+# Fail-closed for any host not listed above. The negative test exercises
+# this by aiming a request at an unbound destination and asserting the
+# proxy refuses + audits the deny.
+unmatched_destination_policy: deny
+
+cache:
+  ttl_seconds: 60
+  max_entries: 16
+  jitter_seconds: 5
+
+audit:
+  path: /var/log/agent-vault-proxy/audit.jsonl
+  fail_on_unwritable: true
+
+# Quiet preflight: the documented happy path for this harness shouldn't
+# log noise. Strict mode would fail the harness if any new preflight
+# warning landed; leave it advisory so the harness keeps running across
+# preflight additions until we explicitly decide to tighten it.
+preflight:
+  fail_on_warning: false
+
+backend:
+  type: static
+  config:
+    type: static
+    path: /etc/agent-vault-proxy/secrets.yml

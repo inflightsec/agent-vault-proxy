@@ -43,7 +43,11 @@ audit*.jsonl
 
 # Docker runtime artifacts — user-local, never commit
 secrets/
-bindings.yaml
+# Scoped to repo root only: the operator's live bindings.yaml at the
+# root must never be committed, but the e2e test fixture at
+# tests/docker-e2e/bindings.yaml MUST be (CI uses it).
+/bindings.yaml
+!tests/docker-e2e/bindings.yaml
 ca.pem
 ca.pem.bak.*
 

@@ -27,7 +27,13 @@ services:
       - ./bindings.yaml:/src/bindings.yaml:ro
       - avp-pypi-smoke-config:/dst
     environment:
-      - TEST_SECRET=${TEST_SECRET:?run.sh must export TEST_SECRET before compose up}
+      # Empty-default rather than strict-require: compose interpolates
+      # all referenced vars at parse time (including for `down`), so the
+      # strict form blocked teardown when TEST_SECRET wasn't exported.
+      # run.sh exports the real value before `compose up`; a manual
+      # `compose up` without TEST_SECRET will fail the positive test at
+      # run time (empty secret on the wire) rather than at compose time.
+      - TEST_SECRET=${TEST_SECRET:-}
     command:
       - sh
       - -c

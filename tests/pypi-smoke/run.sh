@@ -23,12 +23,12 @@
 #
 # Usage:
 #   bash tests/pypi-smoke/run.sh <version>                                # install from PyPI
-#   bash tests/pypi-smoke/run.sh 0.4.1
-#   bash tests/pypi-smoke/run.sh 0.4.1 --keep                             # leave stack up after
-#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.4.1
+#   bash tests/pypi-smoke/run.sh 0.4.2
+#   bash tests/pypi-smoke/run.sh 0.4.2 --keep                             # leave stack up after
+#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.4.2
 #
 #   bash tests/pypi-smoke/run.sh --local-wheel <path>                     # install from local wheel
-#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.4.1-py3-none-any.whl
+#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.4.2-py3-none-any.whl
 #
 # The --local-wheel form is the dry-run before tagging a release: build
 # the wheel locally (`python -m build`), smoke it through this harness,
@@ -53,7 +53,7 @@ Usage:
   $0 <version> [--keep]                          # install from PyPI
   $0 --local-wheel <path-to-wheel> [--keep]      # install from local wheel
 
-  <version>          e.g. 0.4.1  (no leading 'v')
+  <version>          e.g. 0.4.2  (no leading 'v')
   --local-wheel PATH path to a built wheel — typically dist/agent_vault_proxy-<ver>-py3-none-any.whl
   --keep             don't tear down after the run (for debugging)
 EOF
@@ -108,7 +108,7 @@ if [ "$INSTALL_SOURCE" = "local" ]; then
     # regardless of where the script is called from.
     LOCAL_WHEEL="$(cd "$(dirname "$LOCAL_WHEEL")" && pwd)/$(basename "$LOCAL_WHEEL")"
     # Parse the version out of the wheel filename:
-    #   agent_vault_proxy-0.4.1-py3-none-any.whl → 0.4.1
+    #   agent_vault_proxy-0.4.2-py3-none-any.whl → 0.4.2
     WHEEL_BASE="$(basename "$LOCAL_WHEEL")"
     PACKAGE_VERSION="$(printf '%s' "$WHEEL_BASE" | sed -nE 's/^agent_vault_proxy-([0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?)-.*\.whl$/\1/p')"
     if [ -z "$PACKAGE_VERSION" ]; then
@@ -120,7 +120,7 @@ elif [ -z "$PACKAGE_VERSION" ]; then
     usage
 fi
 
-# Strip any accidental leading 'v' so callers can pass `v0.4.1` or `0.4.1`.
+# Strip any accidental leading 'v' so callers can pass `v0.4.2` or `0.4.2`.
 PACKAGE_VERSION="${PACKAGE_VERSION#v}"
 
 # Sanity-check the version shape — refuse weird inputs early. PEP 440 is
@@ -309,12 +309,25 @@ if [ "$NEG_STATUS" = "200" ]; then
     exit 1
 fi
 
+# The addon has two separate deny paths for an unbound destination,
+# depending on which gate fires first:
+#   1. unmatched_destination_policy: deny — fires BEFORE placeholder
+#      analysis when the request's host is in no binding at all.
+#      Emits {"type":"deny","reason":"unmatched_destination",...}.
+#   2. inject_decision destination_not_in_binding — fires inside the
+#      inject path when a placeholder IS present but the matched
+#      secret's bindings don't cover this host.
+#      Emits {"type":"inject_decision","decision":"denied",...}.
+# The pypi-smoke negative test aims at example.invalid (in no binding
+# at all), so path 1 fires. Earlier versions of this grep only knew
+# path 2 and went red despite the proxy correctly returning 403 — see
+# v0.4.2 changelog. tests/docker-e2e/run.sh already greps both shapes.
 AUDIT_DENIED=$(docker exec avp-pypi-smoke sh -c '
-  grep -E "\"decision\":\"denied\"|\"decision\":\"forwarded_unmodified\"" \
+  grep -E "\"decision\":\"denied\"|\"decision\":\"forwarded_unmodified\"|\"type\":\"deny\"" \
     /var/log/agent-vault-proxy/audit.jsonl | tail -1
 ') || AUDIT_DENIED=""
 if [ -z "$AUDIT_DENIED" ]; then
-    red "NEG: no deny/forwarded_unmodified entry in audit log for the unbound destination"
+    red "NEG: no deny/inject_decision-denied/forwarded_unmodified entry in audit log for the unbound destination"
     dump_diagnostics
     exit 1
 fi

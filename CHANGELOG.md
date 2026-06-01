@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 _No changes pending._
 
+## [0.4.2], 2026-06-02
+
+Release-tooling-only patch on top of v0.4.1. **No proxy code changes** — v0.4.1's substitution and audit guarantees are unchanged. v0.4.1 was correctly published to PyPI and the core wire-format behavior was verified by the smoke harness's positive test on the published wheel. The release.yml `pypi-install-smoke` gate did its job: it caught a real signal mismatch and held back the GitHub Release until investigation was complete. The investigation found the proxy was behaving correctly; the harness's negative-assertion grep needed updating.
+
+### Fixed (release tooling)
+
+- **`tests/pypi-smoke/run.sh` NEGATIVE assertion** now accepts the `"type":"deny"` audit event in addition to the `"decision":"denied"` / `"decision":"forwarded_unmodified"` shapes. The addon has two distinct deny paths for an unbound destination: (1) the `unmatched_destination_policy: deny` policy gate fires BEFORE placeholder analysis when the request's host is in no binding at all and emits `{"type":"deny","reason":"unmatched_destination",...}`; (2) the `destination_not_in_binding` check inside the inject path fires when a placeholder IS present but the matched secret's bindings don't cover the request host and emits `{"type":"inject_decision","decision":"denied",...}`. The pypi-smoke negative test aims at `example.invalid` (in no binding at all), so the policy gate fires first. The previous grep only knew path (2) and the smoke went red despite the proxy correctly returning 403 + auditing the deny. `tests/docker-e2e/run.sh:236` already greps the `"type":"deny"` shape, so this was a pypi-smoke-only regression introduced when the pypi-smoke harness was first added in v0.4.1.
+- **`tests/pypi-smoke/docker-compose.yml`** uses `${TEST_SECRET:-}` instead of the strict `${TEST_SECRET:?...}` for the `avp-init` env reference. The strict form blocked `docker compose down -v` teardown when `TEST_SECRET` wasn't exported, because compose interpolates all referenced vars at parse time even for `down`. The empty default unblocks teardown without weakening the test: `run.sh` still exports the real value before `compose up`, and a manual `compose up` without `TEST_SECRET` produces a broken `secrets.yml` that fails the positive assertion at run time rather than at compose time.
+
+### Changed
+
+- README.md and tests/pypi-smoke/README.md version pointers bumped from `0.4.1` to `0.4.2`. The "Status" prose now leads with the v0.4.2 framing (release-tooling patch only; v0.4.1 guarantees unchanged) before recapping v0.4.1 and v0.4.0.
+
 ## [0.4.1], 2026-05-30
 
 External security review of the v0.4.0 release surface flagged a handful of items as "must fix before high-value credentials." This release lands those.
@@ -139,7 +152,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.2
 [0.4.1]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.1
 [0.4.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.0
 [0.2.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.2.0

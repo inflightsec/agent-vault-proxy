@@ -93,7 +93,7 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
    Full walkthrough: [docs/install-systemd.md](docs/install-systemd.md). ~10 minutes the first time. The doc:
 
    - creates a dedicated `avp` UNIX user with no shell, no home directory,
-   - **pip-installs the published wheel from PyPI** (`pip install --only-binary :all: agent-vault-proxy==0.4.1`) into a system-wide venv at `/opt/agent-vault-proxy/.venv` — `--only-binary :all:` refuses source distributions, so a compromised transitive dep can't run code at install time,
+   - **pip-installs the published wheel from PyPI** (`pip install --only-binary :all: agent-vault-proxy==0.4.2`) into a system-wide venv at `/opt/agent-vault-proxy/.venv` — `--only-binary :all:` refuses source distributions, so a compromised transitive dep can't run code at install time,
    - drops your BWS token at `/etc/agent-vault-proxy/bws-token` (root-owned, `avp`-readable) and your bindings at `/etc/agent-vault-proxy/bindings.yaml`,
    - installs a locked-down systemd unit (`ProtectSystem=strict`, `RestrictAddressFamilies`, syscall filter, `chattr +a` append-only audit log) — sandbox controls Docker can't offer.
 
@@ -107,7 +107,7 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
    # Pick a tagged release, not `main` — tags are how you opt into a vetted
    # version. Tracking `main` exposes you to a window where a compromised
    # maintainer account could push a malicious commit before anyone notices.
-   git clone -b v0.4.1 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
+   git clone -b v0.4.2 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
    mkdir -p secrets && bash -c '( umask 077 && read -rsp "BWS access token: " T && printf "%s" "$T" > secrets/bws-token && echo )'
    cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
    docker compose up -d
@@ -178,7 +178,7 @@ Vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Status
 
-**v0.4.1**, security + review-followup release on top of v0.4.0. Closes a G6 fail-open path (any uncaught backend exception now returns 503 + audits rather than forwarding the placeholder), tightens config validation (`extra="forbid"` everywhere, placeholder structural checks, eager backend.config validation, case-insensitive host matching, cgroup v2 container detection in preflight), hardens the Dockerfile to install from the hash-pinned lockfile, and ships a Docker E2E harness exercised in CI. v0.4.0 introduced composite secret bindings (`compose:` + sandboxed Jinja2 templates), the `SecretsBackend` Protocol adapter architecture, and hash-pinned dev lockfiles. v0.3 was skipped. Full entries in [CHANGELOG.md](./CHANGELOG.md).
+**v0.4.2**, release-tooling patch on top of v0.4.1 — fixes a grep in the PyPI install-smoke harness that mis-classified the `unmatched_destination_policy: deny` audit event (the proxy itself was always returning 403 + auditing correctly). No proxy code changes; v0.4.1's guarantees are unchanged. **v0.4.1**, security + review-followup release on top of v0.4.0. Closes a G6 fail-open path (any uncaught backend exception now returns 503 + audits rather than forwarding the placeholder), tightens config validation (`extra="forbid"` everywhere, placeholder structural checks, eager backend.config validation, case-insensitive host matching, cgroup v2 container detection in preflight), hardens the Dockerfile to install from the hash-pinned lockfile, and ships a Docker E2E harness exercised in CI. v0.4.0 introduced composite secret bindings (`compose:` + sandboxed Jinja2 templates), the `SecretsBackend` Protocol adapter architecture, and hash-pinned dev lockfiles. v0.3 was skipped. Full entries in [CHANGELOG.md](./CHANGELOG.md).
 
 The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 289+ automated tests passing, two rounds of adversarial review per feature (pentest + cross-model Oracle), and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
 

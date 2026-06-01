@@ -95,24 +95,32 @@ Four steps. Once you've done this, every new API key is just "add to Bitwarden +
    cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
    ```
 
-3. **Start the daemon:**
+3. **Install + start the daemon. Pick your platform:**
 
-   ```bash
-   docker compose up -d
-   ```
-
-   Docker Compose covers Linux, macOS (Docker Desktop), Windows (WSL2). For bare-metal Linux + systemd (most hardened), see [docs/install-systemd.md](docs/install-systemd.md).
+   - **Linux (recommended — the hardened path):** follow [docs/install-systemd.md](docs/install-systemd.md). ~10 minutes the first time. Runs as a dedicated `avp` UNIX user under a locked-down systemd unit (`ProtectSystem=strict`, `RestrictAddressFamilies`, syscall filter, append-only audit log) — sandbox controls Docker can't offer.
+   - **Cross-platform / quick start (macOS, Windows-WSL2, or a Linux dev box):** `docker compose up -d`. Faster to stand up; weaker isolation than systemd. Threat model + caveats in [docs/docker.md](docs/docker.md).
 
 4. **Point your agent at the proxy:**
 
+   First, copy the mitmproxy-generated CA cert into the calling shell's working dir. The location depends on install path:
+
    ```bash
-   docker cp agent-vault-proxy:/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem ca.pem
+   # systemd install (see install-systemd.md step 5):
+   sudo cp /etc/agent-vault-proxy/ca.pem ./ca.pem && sudo chown "$USER" ./ca.pem
+
+   # Docker install:
+   docker cp agent-vault-proxy:/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem ./ca.pem
+   ```
+
+   Then point the agent at the proxy + give it the placeholder:
+
+   ```bash
    export HTTPS_PROXY="http://127.0.0.1:14322"  NODE_EXTRA_CA_CERTS="$PWD/ca.pem"  SSL_CERT_FILE="$PWD/ca.pem"
    export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
    curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
    ```
 
-> ⚠️  **Two hard prerequisites for the Docker path:** (1) your AI agent's UID must NOT have docker daemon access - docker-group membership ≈ host root, which lets the agent `docker exec` the CA private key + BWS token out of the proxy. (2) Do NOT add other containers to the proxy's `avp-net` network. If either is hard to guarantee, use the systemd install path. Full threat model in [docs/docker.md](docs/docker.md).
+> ⚠️  **If you went with Docker, two hard prerequisites:** (1) your AI agent's UID must NOT have docker daemon access — docker-group membership ≈ host root, which lets the agent `docker exec` the CA private key + BWS token out of the proxy. (2) Do NOT add other containers to the proxy's `avp-net` network. If either is hard to guarantee on your host, use the systemd install path. Full threat model in [docs/docker.md](docs/docker.md).
 
 ## Add a secret
 
@@ -120,17 +128,17 @@ After the one-time setup, every new credential is the same three steps:
 
 1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `OPENAI_API_KEY`).
 2. **Bindings:** add a block to `bindings.yaml`, the BWS name, a placeholder string, the destination host(s), and how to inject it. Composite credentials (e.g. `base64(email:token)` for Jira / Atlassian Cloud) use `compose:` + a sandboxed Jinja2 template - see [`bindings.example.yaml`](bindings.example.yaml) for one-secret and composite patterns covering OpenAI, GitHub, Jira, Slack.
-3. **Restart:** `docker compose restart agent-vault-proxy` (or `systemctl restart agent-vault-proxy.service`). Verify with a request from the calling shell: the proxy audits every decision to `/var/log/agent-vault-proxy/audit.jsonl`.
+3. **Restart:** `sudo systemctl restart agent-vault-proxy.service` (or `docker compose restart agent-vault-proxy` if you went with Docker). Verify with a request from the calling shell: the proxy audits every decision to `/var/log/agent-vault-proxy/audit.jsonl`.
 
 That's it. Your agent uses the placeholder; the proxy swaps it for the real value on the wire.
 
-## Other install paths
+## Deeper docs
 
-- [docs/prerequisites.md](docs/prerequisites.md), Bitwarden Secrets Manager setup (10 minutes, do this first)
-- [docs/install-systemd.md](docs/install-systemd.md) - bare-metal Linux + systemd (most hardened; recommended for production hosts where the agent might share the box)
-- [docs/docker.md](docs/docker.md), full Docker walkthrough (threat model, troubleshooting, rootless option)
-- [docs/usage.md](docs/usage.md) - env-var setup for the calling shell, configuration reference
-- [bindings.example.yaml](bindings.example.yaml), full config schema with reference patterns for Anthropic, OpenAI, GitHub, Groq, Mistral, DigitalOcean
+- [docs/prerequisites.md](docs/prerequisites.md) — Bitwarden Secrets Manager setup (10 minutes, do this first)
+- [docs/install-systemd.md](docs/install-systemd.md) — full bare-metal Linux + systemd walkthrough (the recommended install path on Linux)
+- [docs/docker.md](docs/docker.md) — full Docker walkthrough (threat model, troubleshooting, rootless option) for the cross-platform / dev-box install path
+- [docs/usage.md](docs/usage.md) — env-var setup for the calling shell, configuration reference
+- [bindings.example.yaml](bindings.example.yaml) — full config schema with reference patterns for Anthropic, OpenAI, GitHub, Groq, Mistral, DigitalOcean
 
 Alternatives ways to install:
 

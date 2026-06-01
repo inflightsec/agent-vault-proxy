@@ -118,9 +118,59 @@ jobs:
         with:
           packages-dir: dist/
 
+  pypi-install-smoke:
+    name: PyPI install smoke (post-publish)
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    # Read-only is sufficient: this job only reads the repo (to access
+    # tests/pypi-smoke/) and pulls public images from registries.
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Wait for PyPI CDN to propagate
+        # The publish step returns success the moment Warehouse accepts
+        # the upload, but the CDN that pip resolves against can take
+        # 30-120s before the new version becomes visible to a fresh
+        # client. Without this wait, the smoke racy-fails with "No
+        # matching distribution found for agent-vault-proxy==X.Y.Z".
+        # 120s covers the long tail; shorter is flakier.
+        run: sleep 120
+
+      - name: Extract release version from tag
+        # refs/tags/v0.4.1 → 0.4.1 (no leading v). The smoke script
+        # accepts both shapes but we normalise here for clarity in logs.
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Smoking agent-vault-proxy==$VERSION from real PyPI"
+
+      - name: Run PyPI smoke harness against real PyPI
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash tests/pypi-smoke/run.sh "$VERSION"
+
+      # On failure, the workflow goes red and `github-release` (which
+      # depends on this job) doesn't run. The published PyPI version is
+      # already irreversible at this point — the operator needs to yank
+      # it manually via `pypi-cli yank` or the PyPI web UI. Better to
+      # have a yanked version than a broken Release.
+
   github-release:
     name: Create GitHub Release
-    needs: publish-pypi
+    needs: pypi-install-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: write

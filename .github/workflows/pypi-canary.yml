@@ -1,0 +1,113 @@
+name: pypi-canary
+
+# Daily canary against the LATEST released PyPI version of
+# `agent-vault-proxy`. Catches issues that a one-shot post-publish
+# smoke can't surface:
+#
+#   - A transitive dep gets yanked weeks after release.
+#   - A Python minor-version regression surfaces (e.g. CPython 3.12.x
+#     point release breaks something we relied on).
+#   - PyPI side effects (CDN inconsistency, metadata re-rendering).
+#   - A new mitmproxy release on PyPI breaks our addon at runtime even
+#     though our pyproject doesn't pin the version that ships in the
+#     wheel.
+#
+# Schedule: 03:00 UTC daily — quiet hour for most operators, off-peak
+# for PyPI. `workflow_dispatch` allows manual re-runs.
+#
+# Failure mode: opens a GitHub Issue tagged `pypi-canary` so the
+# operator sees it even if they don't watch the Actions tab. Existing
+# open issues are reused (we don't pile up duplicates) — the comment
+# stream becomes the run history.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel any in-flight canary run when a new one starts — daily cadence
+# means at most one should ever be active.
+concurrency:
+  group: pypi-canary
+  cancel-in-progress: true
+
+jobs:
+  smoke-latest:
+    name: Smoke latest PyPI release
+    runs-on: ubuntu-latest
+    permissions:
+      # Need write for the failure-issue step (only fires on red).
+      contents: read
+      issues: write
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Resolve latest released version from PyPI
+        # JSON API exposes the canonical "latest" version under
+        # `.info.version`. Cheaper + more reliable than scraping the
+        # HTML page. `jq` is preinstalled on the GitHub runner.
+        id: resolve
+        run: |
+          set -euo pipefail
+          PAYLOAD=$(curl -fsSL https://pypi.org/pypi/agent-vault-proxy/json)
+          VERSION=$(printf '%s' "$PAYLOAD" | jq -r '.info.version')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::Could not resolve latest agent-vault-proxy version from PyPI"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Smoking latest PyPI release: agent-vault-proxy==$VERSION"
+
+      - name: Run PyPI smoke harness against latest
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: bash tests/pypi-smoke/run.sh "$VERSION"
+
+      - name: Open or update GitHub Issue on canary failure
+        # Only runs when an earlier step failed in this job. Reuses an
+        # existing open `pypi-canary` issue if one exists (single
+        # rolling thread); otherwise creates a fresh one.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="PyPI canary red: agent-vault-proxy==$VERSION"
+          BODY=$(cat <<EOF
+          The daily PyPI canary failed.
+
+          - **Version under test:** \`$VERSION\`
+          - **Workflow run:** $RUN_URL
+
+          The smoke either couldn't \`pip install\` the published wheel, couldn't bring the proxy up, or the substitution / fail-closed assertions didn't hold. Check the run logs for the failing assertion + diagnostic dump.
+
+          This is a rolling issue — every subsequent canary failure adds a comment here rather than opening a fresh one. Close this once the canary is back to green to reset the thread.
+          EOF
+          )
+          # Search for an open issue we should reuse. The label
+          # `pypi-canary` is auto-created on first failure (gh issue
+          # create --label will create it).
+          EXISTING=$(gh issue list --state open --label pypi-canary --limit 1 --json number,title --jq '.[0].number')
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            gh issue comment "$EXISTING" --body "Canary failed again at $(date -u +%FT%TZ) on \`$VERSION\` — see $RUN_URL"
+          else
+            gh issue create \
+              --title "$TITLE" \
+              --body  "$BODY" \
+              --label pypi-canary
+          fi

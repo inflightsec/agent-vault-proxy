@@ -51,6 +51,11 @@ secrets/
 ca.pem
 ca.pem.bak.*
 
+# PyPI smoke harness: wheels/ is a transient build context (run.sh
+# copies a local wheel into it for --local-wheel mode, or leaves it
+# empty for PyPI mode). Never commit the staged wheel.
+tests/pypi-smoke/wheels/
+
 # Editor / OS
 .vscode/
 .idea/

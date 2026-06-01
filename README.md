@@ -1,6 +1,8 @@
 # agent-vault-proxy
 
-**Zero-knowledge API keys for AI agents - and any other process you route through it: the caller only ever sees a placeholder.**
+**Zero-knowledge[^zk] API keys for AI agents - and any other process you route through it: the caller only ever sees a placeholder.**
+
+[^zk]: "Zero-knowledge" in the colloquial / operational sense — the calling process has zero knowledge of the real key. **Not** a cryptographic zero-knowledge proof construction. The proxy itself learns the secret (it has to, to inject it on the wire); the *agent* doesn't.
 
 Your agent (or dev laptop, CI runner, build server, cron job, etc) gets a fake placeholder string (like `sk-PLACEHOLDER-...`) and uses it as if it were a real API key. This proxy sits between the caller and the internet, and swaps the fake for the real secret at the last possible moment - on the way out to the upstream API. If the caller gets prompt-injected, dumps a log, or runs a program with a software-supply-chain issue, the only thing that escapes is the fake placeholder. The real key never enters the calling process. Agents are the headline use case because they're the rare process that both holds credentials and reads attacker-controlled input in the same address space - the one situation where filtering can't reliably save you and removing the bytes is the only real fix.
 
@@ -79,28 +81,46 @@ How this compares to HashiCorp Vault Agent, Doppler, `op run`, `superfly/tokeniz
 
 ## Setup (one-time)
 
-Four steps. Once you've done this, every new API key is just "add to Bitwarden + a few lines of YAML + restart": see [Add a secret](#add-a-secret) below.
+Three steps. Once you've done this, every new API key is just "add to Bitwarden + a few lines of YAML + restart": see [Add a secret](#add-a-secret) below.
 
 1. **Bitwarden Secrets Manager**, enable it on your org, create a project for this host, create a machine account with **read** access to the project, generate a token. ~10 minutes the first time. [Walkthrough](docs/prerequisites.md).
 
-2. **Clone a tagged release + give the daemon the BWS token + your initial bindings:**
+2. **Install + start the daemon. Pick the install path that matches your host:**
+
+   <details open>
+   <summary><b>Linux (recommended — hardened systemd install)</b></summary>
+
+   Full walkthrough: [docs/install-systemd.md](docs/install-systemd.md). ~10 minutes the first time. The doc:
+
+   - creates a dedicated `avp` UNIX user with no shell, no home directory,
+   - **pip-installs the published wheel from PyPI** (`pip install --only-binary :all: agent-vault-proxy==0.4.1`) into a system-wide venv at `/opt/agent-vault-proxy/.venv` — `--only-binary :all:` refuses source distributions, so a compromised transitive dep can't run code at install time,
+   - drops your BWS token at `/etc/agent-vault-proxy/bws-token` (root-owned, `avp`-readable) and your bindings at `/etc/agent-vault-proxy/bindings.yaml`,
+   - installs a locked-down systemd unit (`ProtectSystem=strict`, `RestrictAddressFamilies`, syscall filter, `chattr +a` append-only audit log) — sandbox controls Docker can't offer.
+
+   Token, bindings, audit log, and CA cert all live under `/etc/agent-vault-proxy/` and `/var/{lib,log}/agent-vault-proxy/`.
+   </details>
+
+   <details>
+   <summary><b>Cross-platform / quick start (macOS, Windows-WSL2, or a Linux dev box)</b></summary>
 
    ```bash
-   # Pick a tagged release, not `main`. Tags are how you opt into a specific
-   # vetted version. Tracking `main` exposes you to a window where a
-   # maintainer-account compromise could ship a malicious commit before
-   # anyone notices.
+   # Pick a tagged release, not `main` — tags are how you opt into a vetted
+   # version. Tracking `main` exposes you to a window where a compromised
+   # maintainer account could push a malicious commit before anyone notices.
    git clone -b v0.4.1 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
    mkdir -p secrets && bash -c '( umask 077 && read -rsp "BWS access token: " T && printf "%s" "$T" > secrets/bws-token && echo )'
    cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
+   docker compose up -d
    ```
 
-3. **Install + start the daemon. Pick your platform:**
+   Faster setup; weaker isolation than systemd. Threat model + caveats in [docs/docker.md](docs/docker.md).
 
-   - **Linux (recommended — the hardened path):** follow [docs/install-systemd.md](docs/install-systemd.md). ~10 minutes the first time. Runs as a dedicated `avp` UNIX user under a locked-down systemd unit (`ProtectSystem=strict`, `RestrictAddressFamilies`, syscall filter, append-only audit log) — sandbox controls Docker can't offer.
-   - **Cross-platform / quick start (macOS, Windows-WSL2, or a Linux dev box):** `docker compose up -d`. Faster to stand up; weaker isolation than systemd. Threat model + caveats in [docs/docker.md](docs/docker.md).
+   > ⚠️  **Two hard prerequisites for the Docker path:** (1) your AI agent's UID must NOT have docker daemon access — docker-group membership ≈ host root, which lets the agent `docker exec` the CA private key + BWS token out of the proxy. (2) Do NOT add other containers to the proxy's `avp-net` network. If either is hard to guarantee on your host, use the systemd install path instead.
 
-4. **Point your agent at the proxy:**
+   A pre-built, cosign-signed container image at `ghcr.io/inflightsec/agent-vault-proxy:<tag>` is planned for v0.5.0 — `cosign verify` + `docker pull` will replace the clone-and-build step. Until then, build locally from the cloned tag.
+   </details>
+
+3. **Point your agent at the proxy:**
 
    First, copy the mitmproxy-generated CA cert into the calling shell's working dir. The location depends on install path:
 
@@ -120,8 +140,6 @@ Four steps. Once you've done this, every new API key is just "add to Bitwarden +
    curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
    ```
 
-> ⚠️  **If you went with Docker, two hard prerequisites:** (1) your AI agent's UID must NOT have docker daemon access — docker-group membership ≈ host root, which lets the agent `docker exec` the CA private key + BWS token out of the proxy. (2) Do NOT add other containers to the proxy's `avp-net` network. If either is hard to guarantee on your host, use the systemd install path. Full threat model in [docs/docker.md](docs/docker.md).
-
 ## Add a secret
 
 After the one-time setup, every new credential is the same three steps:
@@ -140,10 +158,9 @@ That's it. Your agent uses the placeholder; the proxy swaps it for the real valu
 - [docs/usage.md](docs/usage.md) — env-var setup for the calling shell, configuration reference
 - [bindings.example.yaml](bindings.example.yaml) — full config schema with reference patterns for Anthropic, OpenAI, GitHub, Groq, Mistral, DigitalOcean
 
-Alternatives ways to install:
+Alternative install for the embed / library case:
 
-- **`pipx install agent-vault-proxy`** - for the library / non-Docker case: writing a new `SecretsBackend` adapter, wiring AVP into your own Ansible / Nix / image build with hash-pinned deps, or running inside an existing Python venv. The PyPI badge at the top of this README links to the published wheel.
-- **Signed container image on `ghcr.io`** (planned for v0.5.0), `cosign verify ghcr.io/inflightsec/agent-vault-proxy:<tag>` + `docker run` with a tiny mount-only Compose snippet you write yourself. Removes the clone and pins the binary + its hardening assumptions to a single signed digest. Until then, build locally from the cloned tag.
+- **`pipx install agent-vault-proxy`** — for embedding AVP into your own Ansible role, Nix derivation, container image with hash-pinned deps, or an existing Python venv. Also the right entry point if you're writing a new `SecretsBackend` adapter. Same wheel that the recommended systemd install uses under the hood; you supply the service-supervision layer yourself. The PyPI badge at the top of this README links to the published artifact.
 
 ## Privacy
 

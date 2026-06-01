@@ -5,19 +5,53 @@
 #   [x] Require a pull request before merging
 #   [x] Require review from Code Owners
 #
-# For a solo-maintainer repo this forces "review your own PR" as a second-pass
-# step rather than direct push to main — catches `git push --force` typos and
-# accidental commits to main.
+# Order matters: GitHub uses the LAST matching pattern as the effective
+# owner. So the catch-all `*` line goes FIRST, and specific overrides for
+# security-sensitive surface go AFTER, so they win. If a future
+# co-maintainer is added to the catch-all, the sensitive paths below
+# still require the security owner's explicit review.
 
-# Security-sensitive: CI/CD definitions + supply-chain manifests.
-# These are exactly the files an attacker would touch to plant a backdoor,
-# so they get the strictest review surface.
-/.github/workflows/  @rathko
-/.github/actions/    @rathko
-/.github/CODEOWNERS  @rathko
-/pyproject.toml      @rathko
-/requirements.lock   @rathko
+# Catch-all — every file requires the maintainer's review. Today this is
+# the same person as the sensitive-paths owner; when a co-maintainer
+# joins, this line gets the broader set and the specific overrides below
+# stay narrow.
+*                          @rathko
 
-# Catch-all — every other file still requires the same owner's review.
-# Drop or narrow this line if/when additional maintainers join.
-*                    @rathko
+# ─── Security-sensitive overrides (must come AFTER the catch-all) ────
+# These are exactly the files an attacker would touch to plant a backdoor.
+# A future co-maintainer with auto-merge rights still can't land changes
+# here without the security owner's explicit review.
+
+# CI/CD: anything that runs in the build, anything that decides what
+# runs, anything that decides who can run it.
+/.github/workflows/        @rathko
+/.github/actions/          @rathko
+/.github/CODEOWNERS        @rathko
+/.github/dependabot.yml    @rathko
+
+# Supply-chain manifests + lockfiles. Any dep change ships in the wheel,
+# so a malicious or compromised dep is a direct path to RCE on operator
+# hosts.
+/pyproject.toml            @rathko
+/requirements.lock         @rathko
+/requirements-dev.lock     @rathko
+
+# Container surface: production image + e2e harness compose stack.
+/Dockerfile                @rathko
+/tests/docker-e2e/         @rathko
+
+# Local + CI security gates. Editing these silently weakens the supply
+# chain (e.g., removing a ruleset, dropping a hook) — exactly the kind
+# of change that needs four eyes.
+/.pre-commit-config.yaml   @rathko
+/.pinact.yaml              @rathko
+
+# Security policy + threat model — visible to anyone consuming the
+# project; should not change without owner sign-off.
+/SECURITY.md               @rathko
+/docs/architecture.md      @rathko
+
+# Release pipeline scripts — anything that decides what gets published
+# to PyPI on tag push.
+/scripts/pre-release.sh        @rathko
+/scripts/smoke-test-wheel.sh   @rathko

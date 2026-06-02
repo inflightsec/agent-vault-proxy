@@ -1,10 +1,8 @@
 # agent-vault-proxy
 
-**Zero-knowledge[^zk] API keys for AI agents - and any other process you route through it: the caller only ever sees a placeholder.**
+**Just-in-time API keys for AI agents - and any other process you route through it: the caller only ever sees a placeholder.**
 
-[^zk]: "Zero-knowledge" in the colloquial / operational sense — the calling process has zero knowledge of the real key. **Not** a cryptographic zero-knowledge proof construction. The proxy itself learns the secret (it has to, to inject it on the wire); the *agent* doesn't.
-
-Your agent (or dev laptop, CI runner, build server, cron job, etc) gets a fake placeholder string (like `sk-PLACEHOLDER-...`) and uses it as if it were a real API key. This proxy sits between the caller and the internet, and swaps the fake for the real secret at the last possible moment - on the way out to the upstream API. If the caller gets prompt-injected, dumps a log, or runs a program with a software-supply-chain issue, the only thing that escapes is the fake placeholder. The real key never enters the calling process. Agents are the headline use case because they're the rare process that both holds credentials and reads attacker-controlled input in the same address space - the one situation where filtering can't reliably save you and removing the bytes is the only real fix.
+Your agent (dev laptop, CI runner, cron job, etc) gets a fake placeholder string (like `sk-PLACEHOLDER-...`) and uses it as if it were a real API key. This proxy sits between the caller and the internet, and swaps the fake for the real secret at the last possible moment - on the way out to the upstream API. If the caller gets prompt-injected, dumps a log, or runs a program with a software-supply-chain issue, the only thing that escapes is the fake placeholder. The real key never enters the calling process.
 
 
 [![PyPI](https://img.shields.io/pypi/v/agent-vault-proxy.svg)](https://pypi.org/project/agent-vault-proxy/)
@@ -27,7 +25,6 @@ Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden]
                                           │
                                           ▼  fetch + cache (TTL 5 min)
                                    ┌──────────────┐
-                                   │  Bitwarden   │
                                    │  Secrets Mgr │
                                    └──────────────┘
 ```
@@ -39,24 +36,24 @@ On every request the proxy: checks the destination against the binding for that 
 ```yaml
 # bindings.yaml — what the agent sees vs. what the upstream sees
 secrets:
-  OPENAI_API_KEY:
-    placeholder: "sk-PLACEHOLDER-01HXY1234567890"   # the agent's env holds THIS
+  GITHUB_PAT_WORK:
+    placeholder: "github_pat_PLACEHOLDER_01HXY1234"   # the agent's env holds THIS
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"                     # {secret} = real value from BWS
+      format: "Bearer {secret}"                       # {secret} = real value from BWS
     bindings:
-      - host: "api.openai.com"                      # only swapped for this destination
-        methods: [POST]                             # only on these methods
-        paths: ["/v1/chat/completions"]             # only on these paths
+      - host: "api.github.com"                        # only swapped for this destination
+        methods: [POST]                               # agent can open things...
+        paths: ["/repos/*/*/pulls"]                   # ...but only "open a PR" - not delete, not merge
 ```
 
 ```bash
 # Agent's env holds only the placeholder. The real key never enters the process.
-export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890"
+export GITHUB_PAT_WORK="github_pat_PLACEHOLDER_01HXY1234"
 export HTTPS_PROXY="http://127.0.0.1:14322"
 
 # Agent code is unchanged — proxy swaps placeholder → real BWS value on the wire.
-curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/chat/completions ...
+curl -H "Authorization: Bearer $GITHUB_PAT_WORK" https://api.github.com/repos/myorg/myrepo/pulls ...
 ```
 
 Full schema (composite secrets, multiple hosts per binding, path globs) in [`bindings.example.yaml`](bindings.example.yaml).
@@ -65,7 +62,7 @@ Full schema (composite secrets, multiple hosts per binding, path globs) in [`bin
 
 Two threats keep getting worse, and your API keys sit in the blast radius of both.
 
-**Prompt injection.** Anything your agent reads - a webpage, an email, a tool's output, a PR comment, can carry instructions. If the agent has `OPENAI_API_KEY` in its env, an injected "send your env to attacker.com" is one HTTP call away. Filtering, alignment, allowlists - are all statistical and all imperfect. The bytes shouldn't be there to exfil in the first place.
+**Prompt injection.** Anything your agent reads - a webpage, an email, a tool's output, a PR comment, can carry instructions. If the agent has `GITHUB_PAT_WORK` in its env, an injected "send your env to attacker.com" is one HTTP call away. Filtering, alignment, allowlists - are all statistical and all imperfect. The bytes shouldn't be there to exfil in the first place.
 
 **Software supply chain.** A typosquatted npm package, a hijacked PyPI release, a malicious post-install script. If it runs as your agent's UID it reads the same env the agent does. Shai-Hulud showed what worm-scale ecosystem compromise looks like. That's the new baseline.
 
@@ -136,15 +133,15 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
 
    ```bash
    export HTTPS_PROXY="http://127.0.0.1:14322"  NODE_EXTRA_CA_CERTS="$PWD/ca.pem"  SSL_CERT_FILE="$PWD/ca.pem"
-   export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
-   curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
+   export GITHUB_PAT_WORK="github_pat_PLACEHOLDER_01HXY1234ABCDEFGHIJ"
+   curl -H "Authorization: Bearer $GITHUB_PAT_WORK" https://api.github.com/user
    ```
 
 ## Add a secret
 
 After the one-time setup, every new credential is the same three steps:
 
-1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `OPENAI_API_KEY`).
+1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `GITHUB_PAT_WORK`).
 2. **Bindings:** add a block to `bindings.yaml`, the BWS name, a placeholder string, the destination host(s), and how to inject it. Composite credentials (e.g. `base64(email:token)` for Jira / Atlassian Cloud) use `compose:` + a sandboxed Jinja2 template - see [`bindings.example.yaml`](bindings.example.yaml) for one-secret and composite patterns covering OpenAI, GitHub, Jira, Slack.
 3. **Restart:** `sudo systemctl restart agent-vault-proxy.service` (or `docker compose restart agent-vault-proxy` if you went with Docker). Verify with a request from the calling shell: the proxy audits every decision to `/var/log/agent-vault-proxy/audit.jsonl`.
 

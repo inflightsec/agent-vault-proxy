@@ -17,10 +17,17 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Portable cooldown cutoff (7 days ago in UTC). `date -d` is GNU-only; BSD
-# date on macOS doesn't accept it. Python's datetime is in every supported
-# Python version and produces identical ISO-8601 output across platforms.
-CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+# Cooldown cutoff: midnight UTC of 7 days ago. The time portion is
+# rounded to 00:00:00 so the cutoff is stable for ~24h — a regen at
+# 20:07 and a pre-commit re-run at 20:09 produce identical resolutions.
+# The per-second variant flapped on any commit that crossed a package's
+# release minute. Security property ("don't install anything younger
+# than ~7 days") unchanged; rounding down to midnight only ever makes
+# the cutoff stricter, never weaker.
+# `date -d` is GNU-only; BSD date on macOS doesn't accept it. Python's
+# datetime is in every supported Python version and produces identical
+# ISO-8601 output across platforms.
+CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
 echo "Cooldown cutoff: $CUTOFF"
 
 TMP=$(mktemp -d)
@@ -53,7 +60,7 @@ Lockfile drift detected. Either:
   (b) the lockfile pins a version younger than the 7-day cooldown.
 
 Regenerate:
-  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
   uv pip compile --generate-hashes --exclude-newer "\$CUTOFF" \\
       pyproject.toml -o requirements.lock
   uv pip compile --generate-hashes --exclude-newer "\$CUTOFF" --extra dev \\

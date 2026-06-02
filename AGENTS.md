@@ -48,7 +48,7 @@ Pre-commit runs ruff, bandit, TruffleHog (secret scan), Semgrep (pattern SAST), 
 If your change adds, removes, or version-bumps a dependency in `pyproject.toml`, regenerate **both** lockfiles with the 7-day supply-chain cooldown applied:
 
 ```bash
-CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
 uv pip compile --generate-hashes --exclude-newer "$CUTOFF" \
   pyproject.toml -o requirements.lock
 uv pip compile --generate-hashes --exclude-newer "$CUTOFF" --extra dev \

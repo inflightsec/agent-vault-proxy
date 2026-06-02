@@ -4,7 +4,7 @@
 
 Other tools in this space:
 
-- **HashiCorp Vault Agent / Infisical Agent**: render templates with real secrets to files the agent reads. Excellent at reducing blast radius for the vault token itself, but the per-API secrets still land in the agent's filesystem (and from there easily in its memory). Not zero-knowledge for the per-API secrets.
+- **HashiCorp Vault Agent / Infisical Agent**: render templates with real secrets to files the agent reads. Excellent at reducing blast radius for the vault token itself, but the per-API secrets still land in the agent's filesystem (and from there easily in its memory). No isolation at the agent boundary for the per-API secrets themselves.
 
 - **Doppler / `op run` / `aws-vault exec`**: inject secrets into the agent's process environment at start time. Same exposure: real secret bytes live in the agent's address space for the duration of the run.
 

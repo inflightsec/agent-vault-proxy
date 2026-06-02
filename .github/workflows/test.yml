@@ -154,7 +154,10 @@ jobs:
           #
           # Same Python expression as scripts/check-lockfile-drift.sh — keeps
           # the CI gate and local pre-commit gate in exact byte agreement.
-          CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          # Time portion hardcoded to 00:00:00 so the cutoff is stable for
+          # ~24h (security property unchanged; rounding only ever makes the
+          # cutoff stricter, never weaker).
+          CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
           echo "Cooldown cutoff: $CUTOFF"
           uv pip compile --generate-hashes \
             --exclude-newer "$CUTOFF" \
@@ -181,7 +184,7 @@ jobs:
           done
           if [ "$fail" -ne 0 ]; then
             echo "::error::Regenerate locally with:"
-            echo "::error::  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime(\"%Y-%m-%dT%H:%M:%SZ\"))')"
+            echo "::error::  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime(\"%Y-%m-%dT00:00:00Z\"))')"
             echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" pyproject.toml -o requirements.lock"
             echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" --extra dev pyproject.toml -o requirements-dev.lock"
             exit 1

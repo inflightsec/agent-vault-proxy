@@ -23,12 +23,12 @@
 #
 # Usage:
 #   bash tests/pypi-smoke/run.sh <version>                                # install from PyPI
-#   bash tests/pypi-smoke/run.sh 0.4.2
-#   bash tests/pypi-smoke/run.sh 0.4.2 --keep                             # leave stack up after
-#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.4.2
+#   bash tests/pypi-smoke/run.sh 0.4.3
+#   bash tests/pypi-smoke/run.sh 0.4.3 --keep                             # leave stack up after
+#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.4.3
 #
 #   bash tests/pypi-smoke/run.sh --local-wheel <path>                     # install from local wheel
-#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.4.2-py3-none-any.whl
+#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.4.3-py3-none-any.whl
 #
 # The --local-wheel form is the dry-run before tagging a release: build
 # the wheel locally (`python -m build`), smoke it through this harness,
@@ -53,7 +53,7 @@ Usage:
   $0 <version> [--keep]                          # install from PyPI
   $0 --local-wheel <path-to-wheel> [--keep]      # install from local wheel
 
-  <version>          e.g. 0.4.2  (no leading 'v')
+  <version>          e.g. 0.4.3  (no leading 'v')
   --local-wheel PATH path to a built wheel — typically dist/agent_vault_proxy-<ver>-py3-none-any.whl
   --keep             don't tear down after the run (for debugging)
 EOF
@@ -108,7 +108,7 @@ if [ "$INSTALL_SOURCE" = "local" ]; then
     # regardless of where the script is called from.
     LOCAL_WHEEL="$(cd "$(dirname "$LOCAL_WHEEL")" && pwd)/$(basename "$LOCAL_WHEEL")"
     # Parse the version out of the wheel filename:
-    #   agent_vault_proxy-0.4.2-py3-none-any.whl → 0.4.2
+    #   agent_vault_proxy-0.4.3-py3-none-any.whl → 0.4.3
     WHEEL_BASE="$(basename "$LOCAL_WHEEL")"
     PACKAGE_VERSION="$(printf '%s' "$WHEEL_BASE" | sed -nE 's/^agent_vault_proxy-([0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?)-.*\.whl$/\1/p')"
     if [ -z "$PACKAGE_VERSION" ]; then
@@ -120,7 +120,7 @@ elif [ -z "$PACKAGE_VERSION" ]; then
     usage
 fi
 
-# Strip any accidental leading 'v' so callers can pass `v0.4.2` or `0.4.2`.
+# Strip any accidental leading 'v' so callers can pass `v0.4.3` or `0.4.3`.
 PACKAGE_VERSION="${PACKAGE_VERSION#v}"
 
 # Sanity-check the version shape — refuse weird inputs early. PEP 440 is

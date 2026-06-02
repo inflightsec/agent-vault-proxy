@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 _No changes pending._
 
+## [0.4.3], 2026-06-02
+
+Single-line follow-up to v0.4.2. **No proxy code changes** — v0.4.2's proxy runtime was already byte-for-byte identical to v0.4.1 (all v0.4.2 diffs were in `tests/`, `pyproject.toml`, `README.md`, and `CHANGELOG.md`).
+
+### Fixed
+
+- **`src/agent_vault_proxy/__init__.py` `__version__` now agrees with `pyproject.toml`.** The v0.4.2 release bumped `pyproject.toml` to `0.4.2` but left `__version__ = "0.4.1"` in `src/agent_vault_proxy/__init__.py`. The published v0.4.2 wheel installed correctly via `pip` (PyPI metadata = 0.4.2) but reported `agent_vault_proxy.__version__ == "0.4.1"` at runtime. The `wheel-smoke` job in `.github/workflows/test.yml` is designed to catch exactly this skew (its comment lists it as the canonical failure mode) and went red on `main` after the v0.4.2 push.
+- **`scripts/smoke-test-wheel.sh` entry-point check switched from `python -m agent_vault_proxy --help` to an import-only check** matching `.github/workflows/test.yml`'s `wheel-smoke` job. mitmdump's argparse behavior on `--help` with a `-s addon` flag is fragile across versions and returns exit 1 in some environments, masking real wheel issues as entry-point failures. The CI job already learned this lesson and switched to importing `agent_vault_proxy`, `agent_vault_proxy.__main__.main`, `agent_vault_proxy.addon`, `agent_vault_proxy.config`, and `agent_vault_proxy.backends.BACKEND_REGISTRY`; the local pre-release tool now does the same. Without this, `scripts/pre-release.sh` step 11 (which invokes `smoke-test-wheel.sh`) couldn't go green.
+- **Release-tooling fixes from v0.4.2 are preserved unchanged in v0.4.3** (`tests/pypi-smoke/run.sh` NEGATIVE assertion accepting `"type":"deny"`, `tests/pypi-smoke/docker-compose.yml` empty-default for `TEST_SECRET`).
+- **Release handoff now gates on `scripts/pre-release.sh`** between commit and tag — that script's section 3 (Version constants agree?) does the exact pyproject vs `__init__.py` comparison that would have caught the v0.4.2 skew. Order matters: `pre-release.sh`'s first check is `git status --porcelain` for a clean working tree, so it runs AFTER `git commit`, not before. This is a process fix, not a code fix; recorded here for traceability.
+
+### Changed
+
+- Version pointers in `README.md`, `tests/pypi-smoke/README.md`, `tests/pypi-smoke/run.sh` usage examples, `docker-compose.yml` image tag, and `scripts/smoke-test-wheel.sh` usage examples bumped to `0.4.3`. The historical reference to "v0.4.2 changelog" in `tests/pypi-smoke/run.sh:324` is preserved — the harness fix is documented in the v0.4.2 entry.
+
 ## [0.4.2], 2026-06-02
 
 Release-tooling-only patch on top of v0.4.1. **No proxy code changes** — v0.4.1's substitution and audit guarantees are unchanged. v0.4.1 was correctly published to PyPI and the core wire-format behavior was verified by the smoke harness's positive test on the published wheel. The release.yml `pypi-install-smoke` gate did its job: it caught a real signal mismatch and held back the GitHub Release until investigation was complete. The investigation found the proxy was behaving correctly; the harness's negative-assertion grep needed updating.
@@ -152,7 +167,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.3
 [0.4.2]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.2
 [0.4.1]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.1
 [0.4.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.0

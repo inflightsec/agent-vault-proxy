@@ -12,8 +12,8 @@
 #   2. The wheel installs into a fresh interpreter.
 #   3. `import agent_vault_proxy` succeeds.
 #   4. `agent_vault_proxy.__version__` matches what pyproject.toml says.
-#   5. `python -m agent_vault_proxy --help` exits cleanly (proves the
-#      entry point + addon-loader path is wired correctly).
+#   5. Entry-point + addon imports succeed (proves __main__.main and
+#      every runtime-required module load against the installed wheel).
 #
 # Run AGAINST THE LOCAL TREE before tagging / publishing — catches the
 # "we shipped a broken wheel that imports fine but blows up at entry"
@@ -29,7 +29,7 @@
 # Usage:
 #
 #   bash scripts/smoke-test-wheel.sh                 # build + test local tree
-#   bash scripts/smoke-test-wheel.sh --pypi 0.4.1    # test the already-published version
+#   bash scripts/smoke-test-wheel.sh --pypi 0.4.3    # test the already-published version
 #
 # No host Python touched; runs entirely in a throwaway container.
 
@@ -43,7 +43,7 @@ PYPI_VERSION=""
 
 if [ "${1:-}" = "--pypi" ]; then
     MODE="pypi"
-    PYPI_VERSION="${2:?--pypi requires a version, e.g. --pypi 0.4.1}"
+    PYPI_VERSION="${2:?--pypi requires a version, e.g. --pypi 0.4.3}"
 fi
 
 # Source of truth for expected version: pyproject.toml. The smoke test
@@ -109,12 +109,27 @@ if [ "$MODE" = "local" ]; then
             fi
             echo "version OK: $ACTUAL"
 
-            # 6. Entry point — proves the __main__.py + mitmdump glue
-            # loads. mitmdump --help exits 0; if the addon-loader path
-            # is broken (e.g., ImportError landing inside addon.py at
-            # module-load time) it crashes here.
-            /tmp/testvenv/bin/python -m agent_vault_proxy --help >/dev/null
-            echo "entry point OK"
+            # 6. Entry point + addon module imports. Originally this
+            # ran `python -m agent_vault_proxy --help`, which delegates
+            # to the mitmdump argparse layer; mitmdump --help with a
+            # -s addon flag is fragile across versions and returns
+            # exit 1 on the runner. The test.yml wheel-smoke job
+            # already switched to an import-only check; this brings
+            # smoke-test-wheel.sh in line. Imports prove every module
+            # the runtime depends on loads against the installed wheel.
+            # NOTE: no APOSTROPHE characters anywhere in this inner
+            # block — comments included. The whole inner script runs
+            # as a single-quoted argument to sh -eux -c. A bare
+            # APOSTROPHE inside closes the outer quote and breaks the
+            # shell parse with: unexpected EOF while looking for
+            # matching quote.
+            /tmp/testvenv/bin/python -c "
+import agent_vault_proxy
+from agent_vault_proxy.__main__ import main
+from agent_vault_proxy import addon, config
+from agent_vault_proxy.backends import BACKEND_REGISTRY
+print(\"entry point OK\")
+"
         '
 else
     green "[1/2] Smoke-testing published agent-vault-proxy==${PYPI_VERSION} from PyPI..."

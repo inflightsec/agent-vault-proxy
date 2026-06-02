@@ -90,6 +90,50 @@ uv pip compile --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
 
 If you genuinely need a newer dep (e.g. a fresh CVE fix), say so in the PR description and we'll talk about it.
 
+## Releasing
+
+The release loop is three commands + one editor session. Do not bump version literals by hand — use the script, which writes every mechanical reference at once.
+
+```bash
+# 1. Bump every mechanical version reference (pyproject.toml,
+#    src/agent_vault_proxy/__init__.py, README install + clone tag,
+#    docker-compose.yml image tag, smoke-test usage examples).
+#    Reads the current version from pyproject.toml and rewrites
+#    every known location to the target.
+bash scripts/bump-version.sh 0.5.0
+
+# 2. Edit CHANGELOG.md — add the new ## [0.5.0], YYYY-MM-DD entry
+#    with release notes, advance [Unreleased] compare base to v0.5.0,
+#    add a [0.5.0] footer link. Edit README.md "Status" prose to lead
+#    with the v0.5.0 framing. These are content changes, not mechanical
+#    bumps — the script deliberately does not touch them.
+$EDITOR CHANGELOG.md README.md
+
+# 3. Stage everything and run the pre-release gauntlet. Section 3
+#    of pre-release.sh validates that every tracked version literal
+#    agrees with pyproject.toml — the safety net for the class of
+#    skew that broke v0.4.2. Other sections run lint, mypy, pytest,
+#    lockfile pinning, zizmor, the wheel smoke, and the e2e harness.
+git add -A
+bash scripts/pre-release.sh
+
+# 4. If green: commit, tag, push. Tag push triggers release.yml,
+#    which builds + publishes to PyPI + runs the post-publish smoke
+#    + creates the GitHub Release page. Approve the `pypi` environment
+#    when GitHub prompts.
+git commit -m "release: v0.5.0"
+git tag -a v0.5.0 -m "AVP v0.5.0"
+git push origin main
+git push origin v0.5.0
+```
+
+**Rules of the road:**
+
+- **`pyproject.toml` is the source of truth for the version.** Every other location must agree. `pre-release.sh` section 3 enforces this — if it goes red, run `bash scripts/bump-version.sh <version>` again rather than editing files by hand.
+- **`pre-release.sh` runs on a clean tree.** Its first check is `git status --porcelain`. Commit first, then run pre-release; if pre-release fails after commit, `git reset --soft HEAD~1` restores staging without losing edits, fix the problem, retry.
+- **The local `--local-wheel` smoke and the CI post-publish PyPI smoke exercise different code paths in `tests/pypi-smoke/Dockerfile`** (the `INSTALL_SOURCE=local` branch vs. the `INSTALL_SOURCE=pypi` branch). The local dry-run before tagging cannot fully validate the PyPI branch — that's what the daily `pypi-canary` workflow is for. If the post-publish smoke fails on PyPI propagation, re-run the failed job in the GitHub UI; the published wheel is unaffected.
+- **`git push origin main` first, then `git push origin <tag>`.** The tag push is what triggers `release.yml`.
+
 ## Testing philosophy
 
 - **Behavior, not implementation.** Tests use the public interface (`load_config`, `BindingSpec.matches_scope`, addon hooks). Internal helpers are exercised through that surface, not tested directly.

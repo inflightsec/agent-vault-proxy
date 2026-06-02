@@ -97,27 +97,58 @@ else
 fi
 
 # ============================================================================
-# 3. Version alignment: pyproject.toml ↔ src/.../__init__.py
+# 3. Version alignment: pyproject.toml is the source of truth — every
+#    other version-tracking location in the repo must agree.
 #    (Catches the silent skew where pyproject went 0.4.0 but __init__
-#    stayed "0.1.0" through multiple releases.)
+#    stayed "0.1.0" through multiple releases — v0.4.2 shipped with
+#    exactly this kind of skew. The check below is wider than just
+#    __init__.py: it covers every mechanical version reference that
+#    bump-version.sh writes to.)
 # ============================================================================
 header "3. Version constants agree?"
 TAG_VER=$("$PY" -c "
 import tomllib, pathlib
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
 ")
-INIT_VER=$("$PY" -c "
-import re, pathlib
-p = pathlib.Path('src/agent_vault_proxy/__init__.py').read_text()
-m = re.search(r'__version__\s*=\s*[\"\']([^\"\']+)[\"\']', p)
-print(m.group(1) if m else 'MISSING')
-")
-if [ "$TAG_VER" = "$INIT_VER" ]; then
-    pass "pyproject.toml == __init__.py == $TAG_VER"
+
+# Extract every tracked version literal. Each value should equal $TAG_VER.
+# We avoid sed-with-/-delimiter conflicts (the docker-compose image tag
+# itself contains a slash) by using grep -Eo with a tight pattern, then
+# a small awk strip to peel the literal off the surrounding context.
+
+# 1. src/agent_vault_proxy/__init__.py — `__version__ = "X.Y.Z"`
+INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/agent_vault_proxy/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}')
+
+# 2. README.md install line — `agent-vault-proxy==X.Y.Z`
+README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}')
+
+# 3. README.md clone tag — `git clone -b vX.Y.Z`
+README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//')
+
+# 4. docker-compose.yml image tag — `image: inflightsec/agent-vault-proxy:X.Y.Z`
+COMPOSE_VER=$(grep -Eo 'inflightsec/agent-vault-proxy:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}')
+
+VERSION_SKEW=0
+check_one() {
+    local label="$1" found="$2"
+    if [ -z "$found" ]; then
+        red "$label: no version literal found"
+        VERSION_SKEW=1
+    elif [ "$found" != "$TAG_VER" ]; then
+        red "$label: $found  (pyproject.toml says $TAG_VER)"
+        VERSION_SKEW=1
+    fi
+}
+
+check_one "src/agent_vault_proxy/__init__.py"       "$INIT_VER"
+check_one "README.md   agent-vault-proxy==<ver>"    "$README_INSTALL_VER"
+check_one "README.md   git clone -b v<ver>"         "$README_CLONE_VER"
+check_one "docker-compose.yml  image: ...:<ver>"    "$COMPOSE_VER"
+
+if [ "$VERSION_SKEW" -eq 0 ]; then
+    pass "every tracked version literal == pyproject.toml == $TAG_VER"
 else
-    red "pyproject.toml: $TAG_VER"
-    red "__init__.py:   $INIT_VER"
-    fail "version constants disagree — bump both, or bump the one that's behind"
+    fail "one or more version literals disagree with pyproject.toml — run \`scripts/bump-version.sh $TAG_VER\` to align them"
 fi
 
 # ============================================================================

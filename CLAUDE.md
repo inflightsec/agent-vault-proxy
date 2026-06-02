@@ -54,6 +54,43 @@ For composite bindings (multi-value templates), see `bindings.example.yaml` and 
 
 If you touch `pyproject.toml` deps, regenerate `requirements.lock` *and* `requirements-dev.lock` in the same commit using the snippet in [`AGENTS.md` → Dependency changes](./AGENTS.md#dependency-changes). Don't hand-edit a lockfile to "just add one package" — the hash-pinning + cooldown gate (`scripts/check-lockfile-hashes.py` + `scripts/check-lockfile-drift.sh`, mirrored in CI) will fail the commit. Operator reviews the lockfile diff alongside the code diff before merge.
 
+## Releasing — STRICT RULES
+
+Full release loop in [`CONTRIBUTING.md` "Releasing"](./CONTRIBUTING.md#releasing). The mechanical sequence:
+
+```bash
+bash scripts/bump-version.sh 0.X.Y           # mechanical bump, every location
+$EDITOR CHANGELOG.md README.md               # CHANGELOG entry + Status prose
+git add -A && bash scripts/pre-release.sh    # 12-check gauntlet, fails closed
+git commit -m "release: v0.X.Y" && git tag -a v0.X.Y -m "AVP v0.X.Y"
+git push origin main && git push origin v0.X.Y
+```
+
+Each rule below is here because we broke it.
+
+1. **`pyproject.toml` is the source of truth for the version.** Never edit version literals by hand — always `scripts/bump-version.sh <X.Y.Z>`. `pre-release.sh` section 3 validates that `__init__.py`, README install line, README clone tag, and `docker-compose.yml` image tag all agree with pyproject. If they don't, re-run `bump-version.sh`. *(v0.4.2 shipped with `__init__.py` stuck at `"0.4.1"` because the bumper only edited pyproject.)*
+
+2. **`pre-release.sh` runs AFTER `git commit`, not before.** Its first check is `git status --porcelain` — expects a clean tree. If it fails post-commit, `git reset --soft HEAD~1` restores staging without losing edits, fix, re-run. *(The v0.4.3 first handoff ran pre-release before commit and tripped the dirty-tree check.)*
+
+3. **Push `main` first, then push the tag.** The tag-push fires `release.yml`; the commit needs to be on `origin/main` first so the tag points at a published SHA. Approve the `pypi` environment when GitHub prompts — that manual reviewer gate is the second line of defense after this file's diff-review rule.
+
+4. **Inside `sh -eux -c '...'` blocks (smoke harness Dockerfile, test scripts): NO apostrophe characters anywhere — neither in code nor in comments.** A bare `'` closes the outer quote and breaks parsing with `unexpected EOF while looking for matching '''`. Use uppercase "APOSTROPHE" in comments if you need to reference the character. Run `bash -n <script>` after every edit. *(The v0.4.3 first attempt tripped on "mitmdump's argparse" in a Dockerfile comment.)*
+
+5. **`build-and-smoke-wheel.sh` exercises the `INSTALL_SOURCE=local` Dockerfile branch; `release.yml`'s post-publish smoke exercises `INSTALL_SOURCE=pypi`.** Different code paths. The local dry-run cannot fully validate the PyPI branch — that's what the daily `pypi-canary` workflow is for. If `pypi-install-smoke` flakes in CI, re-run the failed job first (likely PyPI CDN propagation race); the published wheel is unaffected. If user-facing release matters and the smoke is blocking, manually create the GitHub Release page via Releases → Draft new release → existing tag.
+
+6. **Never `--no-verify` past pre-commit hooks** (security gates). Never re-tag an existing version (PyPI is immutable per version — ship a patch release instead). Never yank for cosmetic skew (e.g., `__version__` reports wrong number but wheel installs correctly) — ship a follow-up patch instead.
+
+## Tooling map (release-relevant)
+
+| Script | Purpose |
+|---|---|
+| `scripts/bump-version.sh <X.Y.Z>` | Mechanical version bump across every tracked location |
+| `scripts/pre-release.sh` | 12-check pre-tag gauntlet (version agreement, lint, types, tests, lockfile, zizmor, wheel smoke, e2e) |
+| `scripts/smoke-test-wheel.sh` | Single source of truth for wheel-validation logic (build + install + import-only entry-point check). `test.yml`'s `wheel-smoke` job mirrors this |
+| `scripts/build-and-smoke-wheel.sh` | Pre-tag dry-run: builds local wheel + runs `tests/pypi-smoke/run.sh --local-wheel` |
+| `tests/pypi-smoke/` | Docker compose harness — exercised by `release.yml` post-publish smoke, daily `pypi-canary`, and local dry-run |
+| `tests/docker-e2e/` | Production-Dockerfile e2e harness — runs in `pre-release.sh` step 12 and in CI's `e2e-docker` job |
+
 ## What this repo will NOT do
 
 The full out-of-scope list lives in [`AGENTS.md`](AGENTS.md). Highlights: no OAuth refresh flow, no AWS SigV4 signer, no egress firewall behavior, no non-BWS backends merged without an issue first.

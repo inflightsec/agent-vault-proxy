@@ -36,9 +36,13 @@ trap 'rm -rf "$TMP"' EXIT
 # Suppress stdout (each line of the resolved tree, noisy), but let stderr
 # through — if uv fails, the operator needs to see the reason (e.g. older
 # uv missing `--exclude-newer`, or a transient network error).
-uv pip compile --generate-hashes --exclude-newer "$CUTOFF" \
+# --refresh: force a fresh PyPI metadata fetch. Without this, uv may use a
+# stale metadata cache and produce a different resolution than regen-lockfiles.sh
+# did seconds earlier (different cache state -> contradictory results). The
+# 1-5s extra latency per check is worth deterministic resolution.
+uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" \
     pyproject.toml -o "$TMP/requirements.lock.fresh" >/dev/null
-uv pip compile --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
+uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
     pyproject.toml -o "$TMP/requirements-dev.lock.fresh" >/dev/null
 
 fail=0
@@ -53,18 +57,20 @@ for lock in requirements.lock requirements-dev.lock; do
 done
 
 if [ "$fail" -ne 0 ]; then
-    cat >&2 <<EOF
+    # Emit to stdout (not stderr) so pre-commit shows the fix command next
+    # to the failure. Pre-commit reorders stderr after subsequent hooks,
+    # which buries the fix under unrelated output.
+    cat <<EOF
 
 Lockfile drift detected. Either:
   (a) pyproject.toml changed without regenerating the lockfile, or
   (b) the lockfile pins a version younger than the 7-day cooldown.
 
-Regenerate:
-  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
-  uv pip compile --generate-hashes --exclude-newer "\$CUTOFF" \\
-      pyproject.toml -o requirements.lock
-  uv pip compile --generate-hashes --exclude-newer "\$CUTOFF" --extra dev \\
-      pyproject.toml -o requirements-dev.lock
+Fix:
+
+  bash scripts/regen-lockfiles.sh   # regenerates and stages both locks
+  git commit -m "chore(deps): refresh lockfiles for 7-day cooldown rollforward"
+
 EOF
     exit 1
 fi

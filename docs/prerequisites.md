@@ -4,7 +4,7 @@ The proxy needs a Bitwarden Secrets Manager project and a machine-account access
 
 1. **Enable Secrets Manager on your Bitwarden organization**: [bitwarden.com/help/secrets-manager-overview](https://bitwarden.com/help/secrets-manager-overview/). The free tier covers personal use; team/enterprise plans cover production.
 
-2. **Create a project** for this host (e.g. `claude-laptop`, `ci-runner-prod`), then add the secrets you want to broker as project-scoped entries - one per API (`OPENAI_API_KEY`, `GITHUB_PAT_WORK`, `ANTHROPIC_API_KEY`, …). Use the same name in BWS as you'll declare in `bindings.yaml`.
+2. **Create a project** for this host (e.g. `claude-laptop`, `ci-runner-prod`), then add the secrets you want to broker as project-scoped entries - one per API (`OPENAI_API_KEY`, `GITHUB_PAT`, `ANTHROPIC_API_KEY`, …). Use the same name in BWS as you'll declare in `bindings.yaml`.
 
 3. **Create a machine account**, grant it **read** access to the project from step 2, and generate an access token. The token lives in:
    - `/etc/agent-vault-proxy/bws-token` (mode `0440 root:avp`) for the bare-metal install, or

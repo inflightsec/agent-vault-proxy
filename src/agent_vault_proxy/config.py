@@ -27,8 +27,13 @@ class InjectSpec(BaseModel):
     """Injection rule for a binding. Exactly one of ``format`` or ``template``
     must be set.
 
-    - ``format`` (legacy single-secret path): literal ``.replace("{secret}",
-      value)``. Backward compatible.
+    - ``format`` (single-secret path): literal ``str.replace`` substitution.
+      The placeholder must be either ``{secret}`` (generic) or
+      ``{<SECRET_NAME>}`` matching the parent entry's YAML key (explicit
+      named form, recommended for readability). Both forms work and are
+      interchangeable. The addon replaces either at runtime; the Config-level
+      validator enforces that the named form, when used, actually matches
+      the parent entry's name.
     - ``template`` (composite or single-secret with encoding): Jinja2-syntax
       sandboxed expression with strict whitelist (see ``template.py``).
       Requires the parent SecretSpec to declare a ``compose:`` list.
@@ -47,16 +52,34 @@ class InjectSpec(BaseModel):
         if has_format and has_template:
             raise ValueError(
                 "inject.format and inject.template are mutually exclusive; "
-                "use format for literal '{secret}' substitution or template "
-                "for Jinja2-syntax assembly"
+                "use format for literal '{secret}' or '{<SECRET_NAME>}' "
+                "substitution, or template for Jinja2-syntax assembly"
             )
         if not has_format and not has_template:
             raise ValueError(
                 "inject requires either 'format' (literal) or 'template' "
                 "(Jinja2-syntax) — neither was set"
             )
-        if has_format and "{secret}" not in self.format:  # type: ignore[operator]
-            raise ValueError("inject.format must contain '{secret}'")
+        # InjectSpec does not know its parent SecretSpec's name, so the
+        # name-matching check happens at Config-level (see
+        # Config.validate_format_placeholders). Here we only enforce that
+        # SOME `{NAME}`-shaped placeholder is present — a format with no
+        # placeholder would silently inject literal text and never the
+        # secret value.
+        if has_format:
+            import re
+
+            # Permissive at this layer — any non-empty {...} content
+            # passes. The strict check (that the placeholder matches
+            # either `{secret}` or `{<entry_name>}`) happens at Config
+            # level, where the parent entry's YAML key is in scope.
+            # `[^{}]+` excludes nested braces, which would never be
+            # meaningful as a single secret reference anyway.
+            if not re.search(r"\{[^{}]+\}", self.format):  # type: ignore[arg-type]
+                raise ValueError(
+                    "inject.format must contain a `{secret}` or "
+                    "`{<SECRET_NAME>}` placeholder for the value to substitute"
+                )
         return self
 
 
@@ -177,7 +200,8 @@ class SecretSpec(BaseModel):
         if has_compose and not has_template:
             raise ValueError(
                 "compose: requires inject.template; use inject.format for "
-                "literal '{secret}' substitution on a single secret"
+                "literal '{secret}' or '{<SECRET_NAME>}' substitution on a "
+                "single secret"
             )
         if has_template and not has_compose:
             raise ValueError("inject.template requires compose: list of BWS secret names")
@@ -353,6 +377,28 @@ class Config(BaseModel):
                         f"secret {name_a!r}: placeholder is a substring "
                         f"of secret {name_b!r}'s placeholder"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def validate_format_placeholders(self) -> Config:
+        """For each single-secret entry using inject.format, require the
+        format string to contain either '{secret}' (generic) or
+        '{<entry_name>}' (named, matching the YAML key). Both work; this
+        check catches the typo case where an operator writes
+        '{ANTHROPIC_API_KEY}' under a secrets entry actually named
+        'ANTHROPIC' — the substitution would silently inject literal
+        '{ANTHROPIC_API_KEY}' bytes onto the wire."""
+        for name, spec in self.secrets.items():
+            fmt = spec.inject.format
+            if fmt is None:
+                continue
+            named = "{" + name + "}"
+            if "{secret}" not in fmt and named not in fmt:
+                raise ValueError(
+                    f"secret {name!r}: inject.format must contain either "
+                    f"'{{secret}}' or '{named}' as the substitution "
+                    f"placeholder; got {fmt!r}"
+                )
         return self
 
     @model_validator(mode="after")

@@ -36,11 +36,13 @@ On every request the proxy: checks the destination against the binding for that 
 ```yaml
 # bindings.yaml — what the agent sees vs. what the upstream sees
 secrets:
-  GITHUB_PAT_WORK:
+  GITHUB_PAT:
     placeholder: "github_pat_PLACEHOLDER_01HXY1234"   # the agent's env holds THIS
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"                       # {secret} = real value from BWS
+      format: "Bearer {GITHUB_PAT}"              # {GITHUB_PAT} = real value AVP fetches
+                                                      # from your backend for the entry above.
+                                                      # `{secret}` also works as a generic alias.
     bindings:
       - host: "api.github.com"                        # only swapped for this destination
         methods: [POST]                               # agent can open things...
@@ -49,11 +51,11 @@ secrets:
 
 ```bash
 # Agent's env holds only the placeholder. The real key never enters the process.
-export GITHUB_PAT_WORK="github_pat_PLACEHOLDER_01HXY1234"
+export GITHUB_PAT="github_pat_PLACEHOLDER_01HXY1234"
 export HTTPS_PROXY="http://127.0.0.1:14322"
 
 # Agent code is unchanged — proxy swaps placeholder → real BWS value on the wire.
-curl -H "Authorization: Bearer $GITHUB_PAT_WORK" https://api.github.com/repos/myorg/myrepo/pulls ...
+curl -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/repos/myorg/myrepo/pulls ...
 ```
 
 Full schema (composite secrets, multiple hosts per binding, path globs) in [`bindings.example.yaml`](bindings.example.yaml).
@@ -62,7 +64,7 @@ Full schema (composite secrets, multiple hosts per binding, path globs) in [`bin
 
 Two threats keep getting worse, and your API keys sit in the blast radius of both.
 
-**Prompt injection.** Anything your agent reads - a webpage, an email, a tool's output, a PR comment, can carry instructions. If the agent has `GITHUB_PAT_WORK` in its env, an injected "send your env to attacker.com" is one HTTP call away. Filtering, alignment, allowlists - are all statistical and all imperfect. The bytes shouldn't be there to exfil in the first place.
+**Prompt injection.** Anything your agent reads - a webpage, an email, a tool's output, a PR comment, can carry instructions. If the agent has `GITHUB_PAT` in its env, an injected "send your env to attacker.com" is one HTTP call away. Filtering, alignment, allowlists - are all statistical and all imperfect. The bytes shouldn't be there to exfil in the first place.
 
 **Software supply chain.** A typosquatted npm package, a hijacked PyPI release, a malicious post-install script. If it runs as your agent's UID it reads the same env the agent does. Shai-Hulud showed what worm-scale ecosystem compromise looks like. That's the new baseline.
 
@@ -70,7 +72,7 @@ AVP keeps the credential **bytes** out of the agent, and out of anything the age
 
 Although built for agents, the mechanism is fully general: any process that holds a placeholder in its env and routes HTTPS through AVP gets the same protection - CI runners, build servers, scrapers, cron jobs, or a developer machine you're hardening against software-supply-chain compromise. The agent case is just where it matters most. Prompt injection puts the credential-holder and the attacker-controlled-input-reader in the same process, which is the one situation where filtering and alignment can't reliably save you and removing the bytes is the only real fix. For plain software the supply-chain benefit still applies; the injection benefit largely doesn't.
 
-**What AVP doesn't do - and what to layer on:** AVP prevents *exfiltration* of the raw key, not *misuse of the authority* the key represents on permitted destinations. If you bind `GITHUB_PAT_WORK` to `api.github.com` with no method/path scope, prompt injection can still ask the proxy to authenticate a `DELETE /repos/...` call as you. The lever for that is `methods:` and `paths:` on each binding: see [`bindings.example.yaml`](bindings.example.yaml). For extra security, pair AVP with an egress firewall on the agent's UID so unbound calls are blocked outright. Pair with response-side review for endpoints that may echo back the `Authorization` header in their response body, AVP injects on the request, but does not scrub the response.
+**What AVP doesn't do - and what to layer on:** AVP prevents *exfiltration* of the raw key, not *misuse of the authority* the key represents on permitted destinations. If you bind `GITHUB_PAT` to `api.github.com` with no method/path scope, prompt injection can still ask the proxy to authenticate a `DELETE /repos/...` call as you. The lever for that is `methods:` and `paths:` on each binding: see [`bindings.example.yaml`](bindings.example.yaml). For extra security, pair AVP with an egress firewall on the agent's UID so unbound calls are blocked outright. Pair with response-side review for endpoints that may echo back the `Authorization` header in their response body, AVP injects on the request, but does not scrub the response.
 
 **AVP is not a vault — and not trying to be.** Plenty of mature secret-vault implementations already exist: [Bitwarden](https://github.com/bitwarden) Secrets Manager, 1Password, HashiCorp Vault, Doppler, AWS Secrets Manager, Google Secrets Manager. The goal here isn't to reinvent any of them — use whichever you already trust. AVP is the just-in-time wire-substitution layer that sits between your vault and your agent's process. Bitwarden (cloud + self-hosted) is the reference backend that ships today; other vaults plug in via the `SecretsBackend` Protocol — see [docs/adapter-architecture.md](docs/adapter-architecture.md). PRs welcome.
 
@@ -133,15 +135,15 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
 
    ```bash
    export HTTPS_PROXY="http://127.0.0.1:14322"  NODE_EXTRA_CA_CERTS="$PWD/ca.pem"  SSL_CERT_FILE="$PWD/ca.pem"
-   export GITHUB_PAT_WORK="github_pat_PLACEHOLDER_01HXY1234ABCDEFGHIJ"
-   curl -H "Authorization: Bearer $GITHUB_PAT_WORK" https://api.github.com/user
+   export GITHUB_PAT="github_pat_PLACEHOLDER_01HXY1234ABCDEFGHIJ"
+   curl -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/user
    ```
 
 ## Add a secret
 
 After the one-time setup, every new credential is the same three steps:
 
-1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `GITHUB_PAT_WORK`).
+1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `GITHUB_PAT`).
 2. **Bindings:** add a block to `bindings.yaml`, the BWS name, a placeholder string, the destination host(s), and how to inject it. Composite credentials (e.g. `base64(email:token)` for Jira / Atlassian Cloud) use `compose:` + a sandboxed Jinja2 template - see [`bindings.example.yaml`](bindings.example.yaml) for one-secret and composite patterns covering OpenAI, GitHub, Jira, Slack.
 3. **Restart:** `sudo systemctl restart agent-vault-proxy.service` (or `docker compose restart agent-vault-proxy` if you went with Docker). Verify with a request from the calling shell: the proxy audits every decision to `/var/log/agent-vault-proxy/audit.jsonl`.
 

@@ -29,11 +29,11 @@ YAML at `/etc/agent-vault-proxy/bindings.yaml`. Re-read on service restart. Mini
 version: 1
 
 secrets:
-  GITHUB_PAT_WORK:
+  GITHUB_PAT:
     placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
     inject:
       header: "Authorization"
-      format: "token {secret}"
+      format: "token {GITHUB_PAT}"
     bindings:
       # Read-only on the REST API — POSTs and PATCHes forward the placeholder
       # verbatim, so a prompt-injected agent cannot create gists or open issues.

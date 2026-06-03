@@ -59,7 +59,7 @@ For v0.3.0 every backend can ignore `ctx` (default `None`). Adding it now while 
 
 ### Why `str` and not `bytes`
 
-Every binding format in `bindings.yaml` is a string-template substitution (`Authorization: Bearer {secret}`). The protocol returns the type the addon needs. Binary secrets aren't a current use case; if they become one, a sibling `BinarySecretsBackend` protocol can be added without breaking the existing one.
+Every binding format in `bindings.yaml` is a string-template substitution (`Authorization: Bearer {SECRET_NAME}` or the generic `{secret}` alias). The protocol returns the type the addon needs. Binary secrets aren't a current use case; if they become one, a sibling `BinarySecretsBackend` protocol can be added without breaking the existing one.
 
 ### Why no field parameter
 

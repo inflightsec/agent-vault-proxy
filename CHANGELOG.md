@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-_No changes pending._
+### Changed
+
+- **`inject.format` accepts a named placeholder matching the entry key.** Previously the format string had to contain the literal sentinel `{secret}`; now `{<SECRET_NAME>}` works too, where `<SECRET_NAME>` is the entry's YAML key (e.g. `format: "Bearer {ANTHROPIC_API_KEY}"` under a `secrets.ANTHROPIC_API_KEY:` block). The generic `{secret}` form continues to work — operators can pick whichever they prefer. `bindings.example.yaml` and the README "At a glance" snippet now use the named form for readability. Config validation rejects a named placeholder that doesn't match the parent entry's key (catches typos like `{ANTHROPIC_API_KEY}` under a `secrets.ANTHROPIC:` block, which would otherwise inject literal `{ANTHROPIC_API_KEY}` bytes onto the wire).
 
 ## [0.4.3], 2026-06-02
 
@@ -141,7 +143,7 @@ The adapter refactor (originally proposed for v0.3.0 in `docs/adapter-architectu
 
 - Secret substitution in `addon.py` now uses `str.replace()` instead of `str.format()`. `str.format()` accepts attribute access (`{secret.__class__.…}`), which a buggy or hostile `bindings.yaml` could exploit to traverse internals of the substituted string. `str.replace()` is a literal substitution, full stop.
 - Audit log: synchronous `fsync()` is now applied to **every** event (the previous documentation incorrectly suggested asynchronous batching for `upstream_response`: that path was never implemented, and we now describe what actually ships).
-- `bindings.example.yaml` placeholders generalized to `GITHUB_PAT_WORK` / `GITHUB_PAT_PERSONAL` instead of operator-specific names.
+- `bindings.example.yaml` placeholders generalized to `GITHUB_PAT` instead of operator-specific names.
 - EU and US BWS regions are now both shown in `bindings.example.yaml`, with EU URLs as commented-out overrides rather than defaults.
 - All GitHub Actions workflows pin every action to a commit SHA (not a version tag) and use `persist-credentials: false` on every checkout.
 

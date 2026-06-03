@@ -120,16 +120,16 @@ secrets:
     placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {ANTHROPIC_API_KEY}"
     bindings:
       - host: "api.anthropic.com"
       - host: "*.claude.com"
 
-  GITHUB_PAT_WORK:
+  GITHUB_PAT:
     placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
     inject:
       header: "Authorization"
-      format: "token {secret}"
+      format: "token {GITHUB_PAT}"
     bindings:
       - host: "api.github.com"
         methods: [GET]      # closes T-1.5 laundering via gist POST

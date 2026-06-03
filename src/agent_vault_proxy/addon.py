@@ -315,7 +315,16 @@ class AgentVaultProxyAddon:
             # access via {field.__class__.…}, so a hostile or buggy bindings.yaml
             # could traverse internals of the secret string. .replace() can only
             # do a literal substitution, full stop.
-            new_header_value = secret_spec.inject.format.replace("{secret}", real_secret)
+            #
+            # Two literal placeholders are recognised: the generic '{secret}'
+            # and the named '{<entry_name>}'. Both are replaced; whichever the
+            # operator wrote in inject.format wins (the other replace is a
+            # no-op). Config.validate_format_placeholders guarantees at least
+            # one is present, and that any named placeholder matches the
+            # entry's own YAML key.
+            new_header_value = secret_spec.inject.format.replace("{secret}", real_secret).replace(
+                "{" + secret_name + "}", real_secret
+            )
 
         flow.request.headers[header_name] = new_header_value
 

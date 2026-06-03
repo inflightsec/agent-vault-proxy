@@ -1,6 +1,28 @@
 version: 1
 
 secrets:
+  # ─── Schema reference ─────────────────────────────────────────────────
+  # Each entry below maps a SECRET NAME to a binding. The three moving
+  # parts are:
+  #
+  #   <SECRET_NAME>:        The YAML key. Must match the secret name in
+  #                         your backend (a BWS secret named
+  #                         `ANTHROPIC_API_KEY`, or the same key in
+  #                         secrets.yml for the static backend).
+  #     placeholder:        The fake string your agent's env holds in
+  #                         place of the real value. The proxy detects
+  #                         this byte sequence on the wire.
+  #     inject.format:      Template applied at substitution. The literal
+  #                         `{<SECRET_NAME>}` (or generic `{secret}` —
+  #                         both work) is replaced with the real value
+  #                         fetched from the backend just before the
+  #                         request reaches the upstream.
+  #
+  # The named form `{<SECRET_NAME>}` is preferred for readability — it
+  # makes the YAML key, the backend secret, and the substitution slot
+  # the same string. The generic `{secret}` form is still accepted for
+  # back-compat and one-off scripts.
+  #
   # ─── Hardening note ───────────────────────────────────────────────────
   # The examples below default to the tightest scope that's still useful for
   # the common case of each API. If your usage is narrower, tighten further;
@@ -12,7 +34,7 @@ secrets:
     placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {ANTHROPIC_API_KEY}"
     bindings:
       # Anthropic Messages API — scoped to the message-completion paths a
       # client agent actually uses. Widen if you also call /v1/files or
@@ -45,11 +67,11 @@ secrets:
   # your agent only browses one repo — e.g.
   #   paths: ["/repos/your-org/your-repo/**", "/user"]
   # closes most exfil routes through unrelated repos and search.
-  GITHUB_PAT_WORK:
+  GITHUB_PAT:
     placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
     inject:
       header: "Authorization"
-      format: "token {secret}"
+      format: "token {GITHUB_PAT}"
     bindings:
       - host: "api.github.com"
         methods: [GET]
@@ -63,24 +85,6 @@ secrets:
       # Scope to POST/PUT plus the documented upload-asset path — agents
       # that only read repos should never hit this host at all, but if your
       # workflow uploads a release artifact, keep the binding narrow.
-      - host: "uploads.github.com"
-        methods: [POST, PUT]
-        paths: ["/repos/**/releases/**"]
-
-  GITHUB_PAT_PERSONAL:
-    placeholder: "ghp_PLACEHOLDER_PERSONAL_01HXY1234"
-    inject:
-      header: "Authorization"
-      format: "token {secret}"
-    bindings:
-      - host: "api.github.com"
-        methods: [GET]
-        paths:
-          - "/repos/**"
-          - "/user"
-          - "/users/**"
-          - "/orgs/**"
-          - "/search/**"
       - host: "uploads.github.com"
         methods: [POST, PUT]
         paths: ["/repos/**/releases/**"]
@@ -102,7 +106,7 @@ secrets:
     placeholder: "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {OPENAI_API_KEY}"
     bindings:
       # Chat + embeddings — the two paths most agents actually need.
       # Widen with /v1/files, /v1/fine_tuning/**, /v1/assistants/** etc.
@@ -115,7 +119,7 @@ secrets:
     placeholder: "gsk_PLACEHOLDER_01HXY1234567890ABCDEF"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {GROQ_API_KEY}"
     bindings:
       - host: "api.groq.com"
         methods: [POST]
@@ -125,7 +129,7 @@ secrets:
     placeholder: "mst_PLACEHOLDER_01HXY1234567890ABCDEF"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {MISTRAL_API_KEY}"
     bindings:
       - host: "api.mistral.ai"
         methods: [POST]
@@ -140,7 +144,7 @@ secrets:
     placeholder: "dop_v1_PLACEHOLDER_01HXY1234567890ABC"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {DO-API-TOKEN}"
     bindings:
       - host: "api.digitalocean.com"
         methods: [GET]

@@ -506,6 +506,26 @@ def test_legacy_inject_format_still_works() -> None:
     assert spec.inject.format == "Bearer {secret}"
 
 
+def test_named_inject_format_accepted() -> None:
+    # The named form `{<entry_name>}` is accepted as an alias for `{secret}`
+    # — both produce the same on-wire result. Operators who prefer the
+    # explicit form (entry key restated in the format) get it.
+    config = Config.model_validate(_composite_secret(fmt="Bearer {FOO}"))
+    spec = config.secrets["FOO"]
+    assert spec.inject.format == "Bearer {FOO}"
+
+
+def test_named_inject_format_rejects_mismatched_name() -> None:
+    # The named placeholder must match the parent entry's YAML key. A typo
+    # like `{FOO_API_KEY}` under a secrets entry actually named `FOO` would
+    # silently inject literal `{FOO_API_KEY}` bytes onto the wire — caught
+    # at config load instead.
+    import pytest
+
+    with pytest.raises(ValueError, match=r"must contain either"):
+        Config.model_validate(_composite_secret(fmt="Bearer {WRONG_NAME}"))
+
+
 def test_nested_composition_rejected_silas_f6() -> None:
     # Silas F6: composite-of-composite must be rejected via leaf-check.
     raw = {

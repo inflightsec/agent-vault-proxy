@@ -15,21 +15,11 @@ Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden]
 
 ## How it works
 
-```
-┌──────────────┐    placeholder    ┌──────────────┐    real secret    ┌──────────┐
-│  agent (any  │ ────────────────► │ agent-vault- │ ────────────────► │ upstream │
-│  UID, never  │                   │    proxy     │                   │   API    │
-│  sees real   │ ◄──────────────── │  (UID: avp)  │ ◄──────────────── │          │
-│   secret)    │     response      │              │     response      │          │
-└──────────────┘                   └──────┬───────┘                   └──────────┘
-                                          │
-                                          ▼  fetch + cache (TTL 5 min)
-                                   ┌──────────────┐
-                                   │  Secrets Mgr │
-                                   └──────────────┘
-```
+![How agent-vault-proxy substitutes secrets on the wire](docs/how-it-works-animated.svg)
 
 On every request the proxy: checks the destination against the binding for that secret (host + optional method + optional path scope), fails closed if no binding matches (the placeholder is forwarded verbatim so the upstream's own auth-fail response surfaces), fetches the real secret from BWS (served from an in-memory TTL cache when warm), substitutes placeholder → real secret on the upstream socket only, and `fsync`s an `inject_decision` audit event before the modified bytes go on the wire.
+
+**Latency.** Steady state: 1–3 ms per request (header rewrite + audit fsync). First fetch per secret: +100–300 ms one-time, then cached for 5 minutes. Fresh TLS handshake to a new upstream: +5–20 ms one-time per connection; AVP keeps connections warm. Net: indistinguishable from a direct connection — the LLM endpoint already costs 200–2000 ms per call, AVP is noise.
 
 ## At a glance
 

@@ -9,13 +9,13 @@ Your agent (dev laptop, CI runner, cron job, etc) gets a fake placeholder string
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![CI](https://github.com/inflightsec/agent-vault-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/inflightsec/agent-vault-proxy/actions/workflows/test.yml)
 
-[![agent-vault-proxy demo: prompt injection vs. credential isolation](docs/demo.svg)](docs/demo.cast)
+![How agent-vault-proxy substitutes secrets on the wire](docs/how-it-works-animated.svg)
 
 Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden](https://github.com/bitwarden) Secrets Manager — cloud or self-hosted — just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space.
 
 ## How it works
 
-![How agent-vault-proxy substitutes secrets on the wire](docs/how-it-works-animated.svg)
+[![agent-vault-proxy demo: prompt injection vs. credential isolation](docs/demo.svg)](docs/demo.cast)
 
 On every request the proxy: checks the destination against the binding for that secret (host + optional method + optional path scope), fails closed if no binding matches (the placeholder is forwarded verbatim so the upstream's own auth-fail response surfaces), fetches the real secret from BWS (served from an in-memory TTL cache when warm), substitutes placeholder → real secret on the upstream socket only, and `fsync`s an `inject_decision` audit event before the modified bytes go on the wire.
 

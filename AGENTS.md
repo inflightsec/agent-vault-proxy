@@ -28,7 +28,7 @@ These are non-negotiable. Violating any of them turns a PR into a security incid
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --only-binary :all: -e '.[dev]'
-.venv/bin/pre-commit install   # mandatory; CI runs the same checks
+.venv/bin/pre-commit install --hook-type pre-commit --hook-type pre-push   # mandatory; CI runs the same checks
 ```
 
 ## The loop

@@ -123,6 +123,21 @@ repos:
         # isn't installed (CI is the enforcement gate).
         files: '^(pyproject\.toml|requirements(-dev)?\.lock|scripts/check-lockfile-drift\.sh)$'
 
+      - id: lockfile-drift-push
+        name: lockfile drift (pre-push, unconditional)
+        entry: bash scripts/check-lockfile-drift.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true
+        # The commit-stage hook above scopes via `files:` to skip on code/doc
+        # commits — fast feedback when deps change. But drift is calendar-based
+        # (the 7-day cooldown rolls forward at midnight UTC), so a clean commit
+        # today can hit CI tomorrow and fail. This pre-push variant runs every
+        # push regardless of touched paths, catching time-based drift before it
+        # reaches CI. Install both stages with `pre-commit install --hook-type
+        # pre-commit --hook-type pre-push`.
+
       # ─── Heavy security tools — mirror security.yml CI jobs ───────────
       # All three use Docker (gracefully skip if docker not on PATH).
       # Scoped to relevant file patterns so most commits don't pay the

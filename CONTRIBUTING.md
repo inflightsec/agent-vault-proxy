@@ -41,10 +41,12 @@ python3 -m venv .venv
 
 ```bash
 pipx install pre-commit
-pre-commit install
+pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 From then on, every `git commit` runs ruff (lint + format), bandit (Python SAST), TruffleHog (secret scan), Semgrep (pattern SAST), OSV-Scanner (CVE check on lockfiles), zizmor (workflow audit), pinact (action SHA-pinning), pytest, and a set of hygiene hooks. The three Docker-based hooks (TruffleHog, OSV, Semgrep) gracefully skip if Docker isn't running locally, CI is the authoritative gate. Passing pre-commit locally guarantees the matching CI jobs won't fail on the same things.
+
+`git push` additionally runs an unconditional lockfile-drift check — the commit-stage variant is scoped to dep-file changes for fast feedback, but the 7-day supply-chain cooldown rolls forward at midnight UTC, so a clean commit today can hit CI drift tomorrow. The pre-push hook catches that before it leaves your machine.
 
 To run the full set against the whole tree (not just staged files):
 

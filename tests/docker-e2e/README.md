@@ -15,7 +15,7 @@ What it actually tests:
 
 The harness uses the `static` backend, not real BWS. The static backend is for **dev / integration testing / this harness only**: it reads plaintext from a file and emits a clear startup warning when active. Do not point it at real credentials.
 
-`secrets.yml` is **not committed**. It's generated inside a one-shot `avp-init` busybox container from the `TEST_SECRET` env var that `run.sh` exports, written into a named volume with avp-owned (UID 65532) modes (0600). This avoids the host-UID mismatch class — on a Docker daemon with userns-remap enabled, the container's "root" maps to a non-root host UID and can't read a host-side 0600 file owned by whichever operator (or radek, or the CI runner) checked out the tree.
+`secrets.yml` is **not committed**. It's generated inside a one-shot `avp-init` busybox container from the `TEST_SECRET` env var that `run.sh` exports, written into a named volume with avp-owned (UID 65532) modes (0600). This avoids the host-UID mismatch class — on a Docker daemon with userns-remap enabled, the container's "root" maps to a non-root host UID and can't read a host-side 0600 file owned by whichever operator (or CI runner) checked out the tree.
 
 ## How to run locally
 

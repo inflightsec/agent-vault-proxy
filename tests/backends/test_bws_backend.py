@@ -123,7 +123,7 @@ def test_bws_config_type_discriminator_is_bws() -> None:
 
 
 def test_auth_failure_does_not_leak_sdk_exception_text(monkeypatch, tmp_path) -> None:
-    """Pentester H-B: the BitwardenClient SDK's auth exceptions may include
+    """the BitwardenClient SDK's auth exceptions may include
     Authorization headers, request bodies, or token bytes in their str().
     Our wrapper must NOT interpolate `{e}` and must NOT chain via `from e`
     — both would surface the sensitive content into tracebacks/logs."""
@@ -173,7 +173,7 @@ def test_auth_failure_does_not_leak_sdk_exception_text(monkeypatch, tmp_path) ->
 
 
 def test_warns_when_both_env_and_path_token_sources_set(monkeypatch, tmp_path) -> None:
-    """Pentester D-B: BWS_ACCESS_TOKEN env var silently overrides the
+    """BWS_ACCESS_TOKEN env var silently overrides the
     configured access_token_path. An operator who set the path expecting
     it to be authoritative will deploy with the env's stale token and
     never notice. Emit a warning so the divergence surfaces in logs."""

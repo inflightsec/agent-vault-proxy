@@ -10,7 +10,7 @@ secrets:
     placeholder: "test-PLACEHOLDER-01HXY1234567890ABC"
     inject:
       header: "Authorization"
-      format: "Bearer {secret}"
+      format: "Bearer {TEST_API_KEY}"
     bindings:
       - host: "upstream.test"
         methods: [GET]

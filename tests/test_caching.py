@@ -194,7 +194,7 @@ def test_flush_calls_backend_flush_name_map_when_present() -> None:
 
 def test_singleflight_dedupes_concurrent_fetches() -> None:
     """50 concurrent get('FOO') calls trigger backend.fetch exactly once.
-    Prevents re-auth stampede on token expiry (Pentester finding M2)."""
+    Prevents re-auth stampede on token expiry."""
     backend = FakeBackend({"FOO": "v"}, delay=0.1)
     cache = CachingSecretsClient(backend=backend, ttl_seconds=300)
 
@@ -213,7 +213,7 @@ def test_singleflight_dedupes_concurrent_fetches() -> None:
 
 
 def test_singleflight_leader_baseexception_clears_inflight_slot() -> None:
-    """Pentester M-A: if the leader's fetch raises a BaseException
+    """if the leader's fetch raises a BaseException
     (KeyboardInterrupt, SystemExit, GeneratorExit), the in-flight slot
     must still be cleared so the next caller can attempt a fresh fetch.
     Without this, ^C mid-fetch orphans the Future and every subsequent
@@ -244,7 +244,7 @@ def test_singleflight_leader_baseexception_clears_inflight_slot() -> None:
 
 
 def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
-    """Pentester H-A + Oracle C1: flush() while a leader fetch is in-flight
+    """flush() while a leader fetch is in-flight
     must invalidate the leader's result. The leader RAISES instead of
     returning the stale value (so the caller retries under the new
     credential), and the cache is not poisoned.
@@ -253,7 +253,7 @@ def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
       t0: thread A starts get("FOO"); cache miss; backend fetch starts (slow)
       t1: operator calls flush() — they just rotated the credential
       t2: A's slow fetch returns the OLD value
-      t3: A's get() must raise BackendUnavailableError (Oracle C1 refinement).
+      t3: A's get() must raise BackendUnavailableError.
       t4: Next get must re-fetch fresh.
     """
     from agent_vault_proxy.backends import BackendUnavailableError
@@ -302,7 +302,7 @@ def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
 
 
 def test_flush_during_inflight_propagates_retry_to_waiters() -> None:
-    """Oracle C1: not just the leader — every waiter blocked on the leader's
+    """not just the leader — every waiter blocked on the leader's
     Future must also see the retry signal, not the stale value. Otherwise
     a 10-waiter pile-up would issue 10 outbound requests with the
     rotated-away credential."""
@@ -357,7 +357,7 @@ def test_flush_during_inflight_propagates_retry_to_waiters() -> None:
 
 
 def test_flush_clears_inflight_so_concurrent_callers_dont_get_stale() -> None:
-    """Pentester H-A companion: after flush(), the _inflight slot must be
+    """after flush(), the _inflight slot must be
     cleared so a new caller arriving post-flush starts a fresh fetch rather
     than blocking on the leader's stale Future."""
     fetch_started = threading.Event()
@@ -433,7 +433,7 @@ def test_singleflight_propagates_failure_to_all_waiters() -> None:
 
 
 # ---------------------------------------------------------------------------
-# composite_fetch — Silas F2/F4 semantics
+# composite_fetch — composite-fetch semantics
 # ---------------------------------------------------------------------------
 
 
@@ -445,7 +445,7 @@ def test_composite_fetch_returns_all_values() -> None:
 
 
 def test_composite_fetch_empty_value_raises_backend_unavailable() -> None:
-    # Silas F4: empty BWS value must not compose into half-credentials.
+    # empty BWS value must not compose into half-credentials.
     backend = FakeBackend({"USER": "alice", "TOKEN": ""})
     cache = CachingSecretsClient(backend=backend)
     with pytest.raises(BackendUnavailableError, match="empty value"):
@@ -476,7 +476,7 @@ def test_composite_fetch_caches_underlying_values() -> None:
 
 
 def test_composite_fetch_flush_between_underlyings_raises_stale() -> None:
-    # Silas F2: thread A reads A from cache (gen N), then a flush bumps
+    # thread A reads A from cache (gen N), then a flush bumps
     # generation, then A reads B fresh (gen N+1). The post-check catches
     # the mismatch and raises _StaleAfterFlushError so caller restarts.
     backend = FakeBackend({"A": "first-a", "B": "first-b"})
@@ -526,7 +526,7 @@ def test_composite_fetch_post_check_detects_gen_bump_between_gets() -> None:
     # Override instance get() to externally flush after returning the
     # first value. The flush bumps the generation BETWEEN the two gets,
     # which is the exact gap composite_fetch's gen_start/post-check pair
-    # is meant to catch (Silas F2).
+    # is meant to catch.
     real_get = cache.get
     call_count = [0]
 

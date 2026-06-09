@@ -63,7 +63,7 @@
   </g>
   <text x="800" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#94a3b8" letter-spacing="1.2">DESTINATION API</text>
   <text x="800" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Upstream</text>
-  <text x="800" y="270" text-anchor="middle" font-size="12" fill="#64748b">api.openai.com, etc.</text>
+  <text x="800" y="270" text-anchor="middle" font-size="12" fill="#64748b">api.stripe.com, etc.</text>
 
   <!-- ────── BWS card (below AVP) ────── -->
   <g filter="url(#card-shadow)">

@@ -1,0 +1,596 @@
+"""Tests for P0.6 BodyInjector — streaming body substitution.
+
+The contract these tests pin:
+
+* Each placeholder occurrence in the request body bytes is replaced
+  in place via ``flow.request.stream = _BodyReplacer(...)``.
+* The replacer is boundary-correct — placeholders split across chunk
+  boundaries by mitmproxy's chunking still get detected.
+* Backend fetch failures cause a 503 + audit denial, body bytes
+  forwarded after the failure are eaten.
+* Header injection and body injection can coexist on the same host
+  for different secrets in the same request.
+* ``Content-Type`` is an optional filter — mismatch causes a
+  passthrough stream (no audit, request forwarded unmodified).
+* ``Content-Length`` is dropped and ``Transfer-Encoding: chunked``
+  added when body injection is set up — the post-replacement length
+  is not knowable until the stream finishes.
+
+See ``avp-p06-body-injector-design.md`` for the design rationale.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from mitmproxy.test import tflow
+
+from agent_vault_proxy.addon import AgentVaultProxyAddon, _BodyReplacer
+from agent_vault_proxy.audit import AuditWriter
+from agent_vault_proxy.backends import BackendUnavailableError, FetchContext
+from agent_vault_proxy.caching import CachingSecretsClient
+from agent_vault_proxy.config import load_config
+
+BODY_PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars
+BODY_REAL = "tok-real-XYZ"
+HEADER_PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
+HEADER_REAL = "sk-real-ABC"
+
+
+class _FakeBackend:
+    """In-memory backend keyed by name. Configurable per-name failure."""
+
+    def __init__(
+        self,
+        *,
+        per_name: dict[str, str] | None = None,
+        fail_names: set[str] | None = None,
+    ) -> None:
+        self._per_name = per_name or {}
+        self._fail_names = fail_names or set()
+
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+        if name in self._fail_names:
+            raise BackendUnavailableError(f"simulated outage for {name}")
+        return self._per_name[name]
+
+
+def _make_client(
+    *, per_name: dict[str, str], fail_names: set[str] | None = None
+) -> CachingSecretsClient:
+    return CachingSecretsClient(
+        _FakeBackend(per_name=per_name, fail_names=fail_names),
+        ttl_seconds=300,
+        jitter_seconds=0,
+        max_entries=100,
+    )
+
+
+def _build_addon(tmp_path: Path, config_yaml: str) -> tuple[AgentVaultProxyAddon, Path]:
+    audit_path = tmp_path / "audit.jsonl"
+    # Use sentinel replace instead of str.format() because the YAML
+    # strings contain literal ``{NAME}`` placeholders for the secret
+    # name, which would collide with ``str.format`` syntax.
+    config_yaml = config_yaml.replace("__AUDIT_PATH__", str(audit_path))
+    config_path = tmp_path / "bindings.yaml"
+    config_path.write_text(config_yaml)
+    addon = AgentVaultProxyAddon()
+    addon.config = load_config(config_path)
+    addon.audit = AuditWriter(str(audit_path))
+    return addon, audit_path
+
+
+def _read_audit(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def _make_request(
+    host: str,
+    *,
+    method: str = "POST",
+    path: str = "/v1/webhook",
+    headers: dict[str, str] | None = None,
+) -> Any:
+    flow = tflow.tflow()
+    flow.request.host = host
+    flow.request.port = 443
+    flow.request.scheme = "https"
+    flow.request.method = method
+    flow.request.path = path
+    if headers:
+        for k, v in headers.items():
+            flow.request.headers[k] = v
+    return flow
+
+
+_BODY_ONLY_CONFIG = f"""
+version: 1
+
+secrets:
+  WEBHOOK_TOKEN:
+    placeholder: "{BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      format: "{{WEBHOOK_TOKEN}}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+
+
+def _stream_through(replacer: Any, chunks: list[bytes]) -> bytes:
+    """Drive a _BodyReplacer instance through a chunk sequence, returning
+    the concatenated output. The final empty chunk signals end-of-stream
+    (mitmproxy's convention)."""
+    out = bytearray()
+    for chunk in chunks:
+        out.extend(replacer(chunk))
+    out.extend(replacer(b""))
+    return bytes(out)
+
+
+def test_body_injector_basic_single_chunk(tmp_path: Path) -> None:
+    """Placeholder fully contained in one chunk, single occurrence."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    assert callable(flow.request.stream), "expected streaming replacer attached"
+    assert "Content-Length" not in flow.request.headers
+    assert flow.request.headers["Transfer-Encoding"] == "chunked"
+
+    body_in = json.dumps({"token": BODY_PLACEHOLDER, "msg": "hi"}).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+    assert BODY_PLACEHOLDER.encode() not in body_out
+    assert BODY_REAL.encode() in body_out
+    parsed = json.loads(body_out)
+    assert parsed["token"] == BODY_REAL
+    assert parsed["msg"] == "hi"
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert len(allowed) == 1
+    assert allowed[0]["reason"] == "body_binding_matched"
+    assert allowed[0]["secret_name"] == "WEBHOOK_TOKEN"
+
+
+def test_body_injector_placeholder_spans_chunk_boundary(tmp_path: Path) -> None:
+    """The load-bearing streaming-correctness test: a placeholder split
+    arbitrarily across two (or more) chunks must still be detected and
+    substituted. This is the case where a naive per-chunk ``replace()``
+    would miss the match."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    body = f'{{"token":"{BODY_PLACEHOLDER}","msg":"hi"}}'.encode()
+    # Cut every plausible boundary across the placeholder, including
+    # 1-byte chunks (worst case for the overlap buffer).
+    placeholder_start = body.index(BODY_PLACEHOLDER.encode())
+    placeholder_end = placeholder_start + len(BODY_PLACEHOLDER)
+    for split in range(placeholder_start + 1, placeholder_end):
+        flow2 = _make_request("hooks.example.com")
+        addon.requestheaders(flow2)
+        out = _stream_through(flow2.request.stream, [body[:split], body[split:]])
+        assert BODY_PLACEHOLDER.encode() not in out, (
+            f"placeholder leaked when split at byte {split}"
+        )
+        assert BODY_REAL.encode() in out, f"replacement missing when split at byte {split}"
+
+    # One-byte chunks — the worst-case overlap stress.
+    flow3 = _make_request("hooks.example.com")
+    addon.requestheaders(flow3)
+    out = _stream_through(flow3.request.stream, [bytes([b]) for b in body])
+    assert BODY_PLACEHOLDER.encode() not in out
+    assert BODY_REAL.encode() in out
+
+
+def test_body_injector_multiple_occurrences(tmp_path: Path) -> None:
+    """Same placeholder appears N times in a body — all get replaced."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    body = (
+        f'{{"a":"{BODY_PLACEHOLDER}","b":"{BODY_PLACEHOLDER}","c":"{BODY_PLACEHOLDER}"}}'
+    ).encode()
+    out = _stream_through(flow.request.stream, [body])
+    assert BODY_PLACEHOLDER.encode() not in out
+    assert out.count(BODY_REAL.encode()) == 3
+
+
+def test_body_injector_no_placeholder_passes_through(tmp_path: Path) -> None:
+    """Body without the placeholder forwards bit-identical."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    body = b'{"hello": "world", "n": 42}'
+    out = _stream_through(flow.request.stream, [body])
+    assert out == body
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert allowed == [], "no placeholder match should produce no allowed event"
+
+
+def test_body_injector_secret_unavailable_fails_503(tmp_path: Path) -> None:
+    """Backend down ⇒ 503 + audit denial; remaining chunks eaten."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL}, fail_names={"WEBHOOK_TOKEN"})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    body = f'{{"token":"{BODY_PLACEHOLDER}"}}'.encode()
+    out = _stream_through(flow.request.stream, [body])
+    # Body MUST NOT be forwarded after fail-closed kicks in.
+    assert out == b""
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+
+    events = _read_audit(audit_path)
+    denied = [e for e in events if e.get("decision") == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["reason"].startswith("secret_unavailable:")
+    assert denied[0]["secret_name"] == "WEBHOOK_TOKEN"
+
+
+def test_body_injector_chunked_encoding_set(tmp_path: Path) -> None:
+    """Content-Length removed; Transfer-Encoding: chunked added."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com", headers={"Content-Length": "100"})
+    addon.requestheaders(flow)
+
+    assert "Content-Length" not in flow.request.headers
+    assert flow.request.headers["Transfer-Encoding"] == "chunked"
+
+
+_CONTENT_TYPE_CONFIG = f"""
+version: 1
+
+secrets:
+  WEBHOOK_TOKEN:
+    placeholder: "{BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      content_type: "application/json"
+      format: "{{WEBHOOK_TOKEN}}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+
+
+def test_body_injector_content_type_match(tmp_path: Path) -> None:
+    """Content-Type matches ⇒ substitution fires."""
+    addon, _ = _build_addon(tmp_path, _CONTENT_TYPE_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    addon.requestheaders(flow)
+
+    out = _stream_through(flow.request.stream, [f'{{"t":"{BODY_PLACEHOLDER}"}}'.encode()])
+    assert BODY_REAL.encode() in out
+    assert BODY_PLACEHOLDER.encode() not in out
+
+
+def test_body_injector_content_type_mismatch_passthrough(tmp_path: Path) -> None:
+    """Content-Type mismatch ⇒ stream=True passthrough, body unchanged."""
+    addon, audit_path = _build_addon(tmp_path, _CONTENT_TYPE_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    addon.requestheaders(flow)
+    # Passthrough is signalled via stream=True (no replacer); the body
+    # contains a placeholder but won't be touched.
+    assert flow.request.stream is True
+    # No chunked-encoding flip on passthrough — the original framing is
+    # preserved bit-for-bit.
+    assert "Transfer-Encoding" not in flow.request.headers
+    events = _read_audit(audit_path)
+    # No deny audit for content-type filter — it's a filter, not a gate.
+    denied = [e for e in events if e.get("decision") == "denied"]
+    assert denied == []
+
+
+_HEADER_AND_BODY_CONFIG = f"""
+version: 1
+
+secrets:
+  AUTH_HEADER:
+    placeholder: "{HEADER_PLACEHOLDER}"
+    inject:
+      type: header
+      header: "Authorization"
+      format: "Bearer {{AUTH_HEADER}}"
+    bindings:
+      - host: "hooks.example.com"
+  WEBHOOK_TOKEN:
+    placeholder: "{BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      format: "{{WEBHOOK_TOKEN}}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+
+
+def test_body_injector_coexists_with_header_injector(tmp_path: Path) -> None:
+    """Different secrets bound header + body on the same host both fire."""
+    addon, audit_path = _build_addon(tmp_path, _HEADER_AND_BODY_CONFIG)
+    addon.client = _make_client(per_name={"AUTH_HEADER": HEADER_REAL, "WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Authorization": f"Bearer {HEADER_PLACEHOLDER}"},
+    )
+    addon.requestheaders(flow)
+
+    # Header substitution happened.
+    assert flow.request.headers["Authorization"] == f"Bearer {HEADER_REAL}"
+    # Body streaming wired up.
+    assert callable(flow.request.stream)
+    body_out = _stream_through(flow.request.stream, [f'{{"t":"{BODY_PLACEHOLDER}"}}'.encode()])
+    assert BODY_REAL.encode() in body_out
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    # Two allowed events: one from header path, one from body path.
+    reasons = {e["reason"] for e in allowed}
+    assert "binding_matched" in reasons  # header
+    assert "body_binding_matched" in reasons  # body
+
+
+def test_body_injector_method_scope_violation_audits_and_skips(tmp_path: Path) -> None:
+    """A body binding scoped to POST should NOT fire on GET; emits a
+    scope_violation audit but doesn't deny the request (forward-unmodified)."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com", method="GET")
+    addon.requestheaders(flow)
+
+    # No streaming setup because the only candidate was scope-rejected.
+    assert flow.request.stream is False or flow.request.stream is None
+    events = _read_audit(audit_path)
+    scope_violations = [
+        e
+        for e in events
+        if e.get("reason") == "binding_scope_violation" and e.get("secret_name") == "WEBHOOK_TOKEN"
+    ]
+    assert len(scope_violations) == 1
+
+
+def test_body_injector_unbound_host_does_not_set_stream(tmp_path: Path) -> None:
+    """A host without any body binding doesn't get the streaming setup."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    # forward_unmodified policy + unbound host — no streaming.
+    flow = _make_request("other.example.com")
+    addon.requestheaders(flow)
+    assert flow.request.stream is False or flow.request.stream is None
+    assert "Transfer-Encoding" not in flow.request.headers
+
+
+def test_body_replacer_constant_memory_on_large_body(tmp_path: Path) -> None:
+    """Streaming guarantee: the overlap buffer never grows beyond
+    ``max_needle_len - 1`` bytes regardless of body size. This is a
+    structural test — we feed many small chunks and observe the
+    instance's internal buffer never exceeds the bound."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    replacer = flow.request.stream
+    assert isinstance(replacer, _BodyReplacer)
+    keep = replacer._max_needle_len - 1
+
+    # 1 MB of random body, fed as 1 KB chunks. Verify the residual buffer
+    # never exceeds ``keep`` bytes after a successful emit. (During a
+    # processing call the buffer transiently holds ``overlap + chunk``,
+    # but post-emit it returns to ≤ keep bytes.)
+    import os
+
+    chunk_size = 1024
+    total_chunks = 1024  # 1 MB
+    max_buf_seen = 0
+    for _ in range(total_chunks):
+        chunk = os.urandom(chunk_size)
+        _ = replacer(chunk)
+        max_buf_seen = max(max_buf_seen, len(replacer._buffer))
+    # Final flush
+    _ = replacer(b"")
+    assert max_buf_seen <= keep, (
+        f"residual buffer exceeded bound: saw {max_buf_seen} bytes, max allowed {keep}"
+    )
+
+
+def test_body_injector_format_with_prefix(tmp_path: Path) -> None:
+    """``format: 'sha256:{NAME}'`` should produce ``sha256:<real>`` in the
+    body, not just the raw secret."""
+    yaml = f"""
+version: 1
+secrets:
+  WEBHOOK_TOKEN:
+    placeholder: "{BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      format: "sha256:{{WEBHOOK_TOKEN}}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+unmatched_destination_policy: forward_unmodified
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+    addon, _ = _build_addon(tmp_path, yaml)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+    out = _stream_through(flow.request.stream, [f'{{"x":"{BODY_PLACEHOLDER}"}}'.encode()])
+    assert b'"x":"sha256:tok-real-XYZ"' in out
+
+
+def test_body_injector_lazy_fetch_no_call_when_placeholder_absent(tmp_path: Path) -> None:
+    """If the request body never contains the placeholder, the backend
+    is never called. Important for hosts where body binding is configured
+    but most traffic doesn't trigger it."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+
+    call_log: list[str] = []
+
+    class _RecordingBackend:
+        def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+            call_log.append(name)
+            return BODY_REAL
+
+    addon.client = CachingSecretsClient(
+        _RecordingBackend(), ttl_seconds=300, jitter_seconds=0, max_entries=100
+    )
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    _ = _stream_through(flow.request.stream, [b'{"no_placeholder_here": "value"}'])
+    assert call_log == [], (
+        "backend was called even though the placeholder was absent — lazy-fetch invariant violated"
+    )
+
+
+def test_body_injector_two_phase_commit_no_orphan_audits_on_partial_fail(
+    tmp_path: Path,
+) -> None:
+    """Adversarial-review finding: when a buffer contains placeholders
+    for multiple secrets and ONE later fetch fails, the earlier secrets'
+    ``allowed`` audits must NOT have been emitted — those substituted
+    bytes never actually reach the upstream because we return b"" on
+    failure. Two-phase commit (fetch-all then audit+replace) guarantees
+    audit history reflects exactly what the upstream sees."""
+    yaml = """
+version: 1
+
+secrets:
+  TOKEN_A:
+    placeholder: "aaa_PLACEHOLDER_01HXY1234567890ABC"
+    inject:
+      type: body
+      format: "{TOKEN_A}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+  TOKEN_B:
+    placeholder: "bbb_PLACEHOLDER_01HXY1234567890ABC"
+    inject:
+      type: body
+      format: "{TOKEN_B}"
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+    addon, audit_path = _build_addon(tmp_path, yaml)
+    # TOKEN_A available, TOKEN_B fails.
+    addon.client = _make_client(
+        per_name={"TOKEN_A": "real-A", "TOKEN_B": "real-B"},
+        fail_names={"TOKEN_B"},
+    )
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    body = b'{"a":"aaa_PLACEHOLDER_01HXY1234567890ABC","b":"bbb_PLACEHOLDER_01HXY1234567890ABC"}'
+    out = _stream_through(flow.request.stream, [body])
+    # Fail-closed: nothing emitted (real-A's bytes never reach upstream).
+    assert out == b""
+    assert flow.response is not None and flow.response.status_code == 503
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    denied = [e for e in events if e.get("decision") == "denied"]
+    # No orphan allowed audit for TOKEN_A — its substituted bytes never
+    # reached the upstream, so the audit history MUST NOT claim it did.
+    assert allowed == [], (
+        "TOKEN_A allowed audit emitted but its bytes never reached upstream "
+        "(fail-closed on TOKEN_B). Audit history is inconsistent."
+    )
+    assert len(denied) == 1
+    assert denied[0]["secret_name"] == "TOKEN_B"
+
+
+def test_body_injector_fail_closed_clears_buffer(tmp_path: Path) -> None:
+    """the streaming replacer's
+    held buffer should be released the moment fail-closed fires,
+    not held until GC. Defensive memory hygiene — subsequent chunks
+    are eaten unconditionally, no reason to keep their predecessors."""
+    addon, _ = _build_addon(tmp_path, _BODY_ONLY_CONFIG)
+    addon.client = _make_client(per_name={"WEBHOOK_TOKEN": BODY_REAL}, fail_names={"WEBHOOK_TOKEN"})
+    flow = _make_request("hooks.example.com")
+    addon.requestheaders(flow)
+
+    replacer = flow.request.stream
+    body = f'{{"token":"{BODY_PLACEHOLDER}"}}'.encode()
+    _ = replacer(body)
+    # Failure should have fired and cleared the buffer.
+    assert replacer._fetch_failed is True
+    assert len(replacer._buffer) == 0, "buffer should be cleared on fail-closed"
+
+
+def test_body_injector_rejects_template_in_p06(tmp_path: Path) -> None:
+    """Body inject.template (composite path) is not supported in P0.6.
+    Config-load should fail with a clear message pointing at the
+    follow-up."""
+    yaml = f"""
+version: 1
+secrets:
+  WEBHOOK_TOKEN:
+    placeholder: "{BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      template: "{{{{ WEBHOOK_TOKEN }}}}"
+    compose: [WEBHOOK_TOKEN]
+    bindings:
+      - host: "hooks.example.com"
+audit:
+  path: /tmp/x.jsonl
+"""
+    config_path = tmp_path / "bindings.yaml"
+    config_path.write_text(yaml)
+    with pytest.raises(Exception, match=r"body inject.template.*not yet supported"):
+        load_config(config_path)

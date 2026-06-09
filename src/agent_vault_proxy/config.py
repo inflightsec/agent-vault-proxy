@@ -1,86 +1,320 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from agent_vault_proxy.matching import path_glob_matches
+from agent_vault_proxy.matching import host_matches_pattern, path_glob_matches
 from agent_vault_proxy.template import AvpTemplate, UnsupportedTemplateError
 
-# Every config model rejects unknown fields. A `method:` typo for
-# `methods:` would otherwise silently produce an unscoped binding
-# instead of a method-scoped one — scope enforcement off, no error.
+# Known injector types — closed enumeration. Maps each type name to the
+# phase that ships it; entries whose value starts with "planned:" are in
+# the v0.5.0 taxonomy but raise a "not yet implemented" error at config
+# load until their phase lands. Single source of truth: adding a new
+# type means one line here plus the matching class + InjectorSpec union
+# extension, never a parallel edit to two tuples.
+_INJECTOR_TYPES: dict[str, str] = {
+    "header": "P0",
+    "body": "P0.6",
+    "multi": "P0.7",
+    "oauth2_refresh": "planned: P1",
+    "github_app": "planned: P1",
+    "sigv4": "planned: P2/P3",
+    "oauth2_client_credentials": "planned: P2",
+    "jwt_bearer": "planned: P2",
+    "hmac": "planned: P4",
+}
+
+
+def _validate_inject_block(name: str, inject: dict) -> None:
+    """Validate the ``type`` field of one ``inject:`` block (and, for
+    ``multi``, of each declared child). Raises ``ValueError`` with an
+    operator-friendly message on unknown / unimplemented / malformed
+    types. ``name`` is the parent secret's YAML key, interpolated into
+    error messages so operators can locate the entry.
+
+    Pre-condition: ``inject["type"]`` is set (the default-injection
+    pass upstream guarantees this for v0.4.x-shape inputs).
+    """
+    t = inject.get("type")
+    if t is None:
+        return  # already defaulted upstream; defensive
+    _check_injector_type(t, type_path=f"secret {name!r}: inject.type")
+    if t != "multi":
+        return
+    children = inject.get("injectors")
+    if not isinstance(children, list):
+        return  # let standard validator raise (wrong shape)
+    for i, child in enumerate(children):
+        if not isinstance(child, dict):
+            continue
+        ct = child.get("type")
+        if ct is None:
+            # Multi is v0.5.0 P0.7 — no backward-compat reason to default
+            # child types. Be explicit to avoid ambiguity ("which leaf
+            # did the operator mean?") and keep errors tight.
+            raise ValueError(
+                f"secret {name!r}: inject.injectors[{i}] is missing the "
+                "required ``type:`` field. Multi injector children must "
+                "specify their leaf type explicitly; valid leaf types in "
+                "v0.5.0: 'header', 'body'."
+            )
+        _check_injector_type(ct, type_path=f"secret {name!r}: inject.injectors[{i}].type")
+        # ``multi`` inside ``multi`` is rejected at the MultiInjector
+        # schema level (LeafInjectorSpec excludes "multi"), but catch
+        # it here too with a tighter message — same operator-facing UX
+        # as the other type checks.
+        if ct == "multi":
+            raise ValueError(
+                f"secret {name!r}: inject.injectors[{i}].type is 'multi'; "
+                "nested multi-injectors are not supported (use a single "
+                "multi with all leaf children flat)."
+            )
+
+
+def _check_injector_type(t: object, *, type_path: str) -> None:
+    """Validate a single ``inject.type`` value against the closed taxonomy.
+
+    Raises ``ValueError`` with an operator-friendly message on:
+
+    * type not a string / not in :data:`_INJECTOR_TYPES`
+      ("unknown type"; lists every valid alternative)
+    * type known but not yet implemented in this version
+      ("planned for phase X"; points at the CHANGELOG)
+
+    ``type_path`` is the dotted location of the offending ``type`` field —
+    e.g. ``"secret 'FOO': inject.type"`` or
+    ``"secret 'FOO': inject.injectors[2].type"``. Interpolated verbatim so
+    the operator can locate the entry without guesswork.
+    """
+    if not isinstance(t, str) or t not in _INJECTOR_TYPES:
+        raise ValueError(f"{type_path} {t!r} is unknown; valid types: {sorted(_INJECTOR_TYPES)}")
+    phase = _INJECTOR_TYPES[t]
+    if phase.startswith("planned:"):
+        implemented = sorted(k for k, v in _INJECTOR_TYPES.items() if not v.startswith("planned:"))
+        raise ValueError(
+            f"{type_path} {t!r} is in the planned v0.5.0 taxonomy ({phase}) but "
+            "not yet implemented in this version. Currently implemented: "
+            f"{implemented}. See CHANGELOG.md for the per-phase ship order."
+        )
+
+
+# `extra="forbid"` everywhere: a `method:` typo for `methods:` would
+# otherwise silently produce an unscoped binding.
 _STRICT_MODEL = ConfigDict(extra="forbid")
 
-# Placeholder hardening: long enough to avoid accidental collision with
-# real token-like content, must carry an explicit marker, must be
-# unique across all secrets, no placeholder a substring of another.
-# Substring matters because the addon detects placeholders via `in`
-# matching on the request header.
+# Placeholders must be ≥24 chars, contain the marker, be unique, and not
+# substring-overlap (addon detects via `in` matching).
 _PLACEHOLDER_MIN_LEN = 24
 _PLACEHOLDER_MARKER = "PLACEHOLDER"
 
+# Permissive at the injector layer; the strict name-match runs at Config
+# level in `validate_format_placeholders`.
+_FORMAT_PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 
-class InjectSpec(BaseModel):
-    """Injection rule for a binding. Exactly one of ``format`` or ``template``
-    must be set.
 
-    - ``format`` (single-secret path): literal ``str.replace`` substitution.
-      The placeholder must be either ``{secret}`` (generic) or
-      ``{<SECRET_NAME>}`` matching the parent entry's YAML key (explicit
-      named form, recommended for readability). Both forms work and are
-      interchangeable. The addon replaces either at runtime; the Config-level
-      validator enforces that the named form, when used, actually matches
-      the parent entry's name.
-    - ``template`` (composite or single-secret with encoding): Jinja2-syntax
-      sandboxed expression with strict whitelist (see ``template.py``).
-      Requires the parent SecretSpec to declare a ``compose:`` list.
-    """
+def _assert_format_has_placeholder(format_str: str, *, context_label: str) -> None:
+    """Require ``format_str`` to contain some ``{NAME}``-shaped placeholder."""
+    if not _FORMAT_PLACEHOLDER_RE.search(format_str):
+        raise ValueError(
+            f"{context_label} must contain a `{{<SECRET_NAME>}}` "
+            "placeholder for the value to substitute"
+        )
+
+
+def _render_substitution(format_str: str, *, real_secret: str, secret_name: str) -> str:
+    """Substitute ``{<secret_name>}`` -> ``real_secret``. Uses ``str.replace``
+    (not ``str.format``) so an operator-provided format can't traverse
+    attributes via Python's format-mini-language."""
+    return format_str.replace("{" + secret_name + "}", real_secret)
+
+
+class HeaderInjector(BaseModel):
+    """Header-injection rule. Exactly one of ``format`` (literal substitution)
+    or ``template`` (Jinja2-sandboxed, requires ``compose:`` on the parent)
+    must be set."""
 
     model_config = _STRICT_MODEL
 
+    type: Literal["header"] = "header"
     header: str
     format: str | None = None
     template: str | None = None
 
+    def render_value(self, *, real_secret: str, secret_name: str) -> str:
+        """Substituted header value for a single-secret binding. Composite
+        bindings go through ``SecretSpec.compiled_template``."""
+        assert self.format is not None, (
+            "render_value() expects inject.format; use compiled_template for composite bindings"
+        )
+        return _render_substitution(
+            self.format,
+            real_secret=real_secret,
+            secret_name=secret_name,
+        )
+
     @model_validator(mode="after")
-    def exactly_one_of_format_or_template(self) -> InjectSpec:
+    def exactly_one_of_format_or_template(self) -> HeaderInjector:
         has_format = self.format is not None
         has_template = self.template is not None
         if has_format and has_template:
             raise ValueError(
                 "inject.format and inject.template are mutually exclusive; "
-                "use format for literal '{secret}' or '{<SECRET_NAME>}' "
-                "substitution, or template for Jinja2-syntax assembly"
+                "use format for literal substitution or template for Jinja2-syntax assembly"
             )
         if not has_format and not has_template:
-            raise ValueError(
-                "inject requires either 'format' (literal) or 'template' "
-                "(Jinja2-syntax) — neither was set"
-            )
-        # InjectSpec does not know its parent SecretSpec's name, so the
-        # name-matching check happens at Config-level (see
-        # Config.validate_format_placeholders). Here we only enforce that
-        # SOME `{NAME}`-shaped placeholder is present — a format with no
-        # placeholder would silently inject literal text and never the
-        # secret value.
+            raise ValueError("inject requires either 'format' or 'template'")
         if has_format:
-            import re
-
-            # Permissive at this layer — any non-empty {...} content
-            # passes. The strict check (that the placeholder matches
-            # either `{secret}` or `{<entry_name>}`) happens at Config
-            # level, where the parent entry's YAML key is in scope.
-            # `[^{}]+` excludes nested braces, which would never be
-            # meaningful as a single secret reference anyway.
-            if not re.search(r"\{[^{}]+\}", self.format):  # type: ignore[arg-type]
-                raise ValueError(
-                    "inject.format must contain a `{secret}` or "
-                    "`{<SECRET_NAME>}` placeholder for the value to substitute"
-                )
+            assert self.format is not None
+            _assert_format_has_placeholder(self.format, context_label="inject.format")
         return self
+
+
+class BodyInjector(BaseModel):
+    """Body-injection rule. The secret's ``placeholder`` (inherited from the
+    parent :class:`SecretSpec`) is substituted in the request body via
+    streaming replacement (constant memory, chunked transfer).
+
+    ``format`` / ``template`` semantics mirror :class:`HeaderInjector` —
+    the result is the bytes each placeholder occurrence gets replaced WITH.
+
+    ``content_type`` (optional): when set, the request's Content-Type must
+    match (parameters stripped, case-insensitive) or the body forwards
+    unmodified. Default None = any content-type eligible.
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["body"] = "body"
+    content_type: str | None = None
+    format: str | None = None
+    template: str | None = None
+
+    def render_value(self, *, real_secret: str, secret_name: str) -> str:
+        """Bytes each in-body placeholder occurrence is replaced with."""
+        assert self.format is not None, (
+            "render_value() expects inject.format; composite body bindings would "
+            "use compiled_template (not yet supported for body)"
+        )
+        return _render_substitution(
+            self.format,
+            real_secret=real_secret,
+            secret_name=secret_name,
+        )
+
+    @model_validator(mode="after")
+    def exactly_one_of_format_or_template(self) -> BodyInjector:
+        has_format = self.format is not None
+        has_template = self.template is not None
+        if has_format and has_template:
+            raise ValueError("body inject.format and inject.template are mutually exclusive")
+        if not has_format and not has_template:
+            raise ValueError("body inject requires either 'format' or 'template'")
+        if has_template:
+            raise ValueError(
+                "body inject.template (composite/Jinja) is not yet supported; "
+                "use inject.format for single-secret substitution"
+            )
+        if has_format:
+            assert self.format is not None
+            _assert_format_has_placeholder(self.format, context_label="body inject.format")
+        return self
+
+    @field_validator("content_type")
+    @classmethod
+    def normalize_content_type(cls, v: str | None) -> str | None:
+        # Normalise at config-load so the runtime gate is a single
+        # case-insensitive compare against the wire's Content-Type.
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if not v:
+            raise ValueError("content_type must be a non-empty string, or omit the field")
+        if ";" in v:
+            raise ValueError(
+                f"content_type {v!r} contains parameters; specify only the media-type "
+                "(e.g. 'application/json')."
+            )
+        if "/" not in v:
+            raise ValueError(
+                f"content_type {v!r} is not a media-type (expected 'type/subtype' form)"
+            )
+        return v
+
+
+# Leaf injectors permitted inside MultiInjector. Nested multi is rejected
+# at config-load.
+LeafInjectorSpec = Annotated[HeaderInjector | BodyInjector, Field(discriminator="type")]
+
+
+_MULTI_MIN_CHILDREN = 2
+_MULTI_MAX_CHILDREN = 4  # mirrors compose: cap
+
+
+class MultiInjector(BaseModel):
+    """One secret's placeholder feeds multiple injection sites in one request
+    (e.g. an Authorization header AND a JSON body field). 2-4 leaf children.
+    Nested multi rejected; ``compose:`` cannot wrap a multi."""
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["multi"] = "multi"
+    injectors: list[LeafInjectorSpec]
+
+    @model_validator(mode="after")
+    def validate_children(self) -> MultiInjector:
+        n = len(self.injectors)
+        if n < _MULTI_MIN_CHILDREN or n > _MULTI_MAX_CHILDREN:
+            raise ValueError(
+                f"multi inject.injectors must contain "
+                f"{_MULTI_MIN_CHILDREN}-{_MULTI_MAX_CHILDREN} children; got {n}. "
+                "Single-injector secrets should use the leaf type directly."
+            )
+        # Header names compared case-insensitively per RFC 7230 §3.2 —
+        # otherwise `Authorization` + `authorization` would silently
+        # overwrite on the wire.
+        header_names_lower: set[str] = set()
+        body_count = 0
+        for child in self.injectors:
+            if isinstance(child, HeaderInjector):
+                lowered = child.header.lower()
+                if lowered in header_names_lower:
+                    raise ValueError(
+                        f"multi inject.injectors contains two header children "
+                        f"targeting the same header {child.header!r} "
+                        "(HTTP header names are case-insensitive). Pick one."
+                    )
+                header_names_lower.add(lowered)
+            elif isinstance(child, BodyInjector):
+                body_count += 1
+        # One body child per multi — multiple would race on the same
+        # placeholder occurrence in the body bytes.
+        if body_count > 1:
+            raise ValueError(
+                "multi inject.injectors contains more than one body child; "
+                "use one body child per multi (or split into separate secrets)."
+            )
+        return self
+
+
+# Discriminated union of all injector specs. Default-type injection at
+# `Config.normalize_and_validate_injector_types` keeps v0.4.x configs
+# parsing without a `type:` field.
+InjectorSpec = Annotated[
+    HeaderInjector | BodyInjector | MultiInjector,
+    Field(discriminator="type"),
+]
+
+
+def iter_leaf_injectors(spec: InjectorSpec) -> list[HeaderInjector | BodyInjector]:
+    """Flatten ``spec`` to its ordered leaf injectors. Single-leaf bindings
+    yield ``[spec]``; multi yields ``spec.injectors``."""
+    if isinstance(spec, MultiInjector):
+        return list(spec.injectors)
+    return [spec]
 
 
 _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
@@ -96,18 +330,13 @@ class BindingSpec(BaseModel):
     @field_validator("host")
     @classmethod
     def normalize_and_validate_host(cls, v: str) -> str:
-        # DNS is case-insensitive but the matcher is comparing strings;
-        # normalize at config-load so the runtime matcher only sees one
-        # canonical form. Warn (not fail) on mixed case so an operator
-        # who pasted `API.OpenAI.com` from a vendor doc gets a visible
-        # signal rather than a silent rewrite.
+        # DNS is case-insensitive; lowercase at load + warn on uppercase
+        # so silent rewrites don't lose audit value.
         if v != v.lower():
             import logging
 
             logging.getLogger("agent_vault_proxy.config").warning(
-                "binding host %r contains uppercase; normalising to %r. "
-                "DNS is case-insensitive; write hostnames lowercase to "
-                "silence this warning.",
+                "binding host %r contains uppercase; normalising to %r.",
                 v,
                 v.lower(),
             )
@@ -150,10 +379,9 @@ class BindingSpec(BaseModel):
         return v
 
     def matches_scope(self, method: str, path: str) -> bool:
-        """Return True if this binding's optional method/path scope allows
-        the request. Bindings with both fields omitted always allow (legacy
-        behavior). Caller passes the uppercased method and the
-        query-stripped path."""
+        """True if this binding's optional method/path scope allows the
+        request. Bindings with both fields omitted always allow. Caller
+        passes the uppercased method and the query-stripped path."""
         if self.methods is not None and method not in self.methods:
             return False
         if self.paths is None:
@@ -162,60 +390,52 @@ class BindingSpec(BaseModel):
 
 
 _COMPOSE_MIN = 1
-_COMPOSE_MAX = 4  # raised from 3 during grill — covers tenant_id-style patterns
+_COMPOSE_MAX = 4  # covers tenant_id-style patterns
 
 
 class SecretSpec(BaseModel):
     model_config = _STRICT_MODEL
 
     placeholder: str
-    inject: InjectSpec
+    inject: InjectorSpec
     compose: list[str] | None = None
     bindings: list[BindingSpec]
 
-    # Compiled, pre-validated template — populated by the after-validator
-    # below when inject.template is set. None for legacy inject.format bindings.
-    # Not part of the serialized model.
+    # Populated when inject.template is set; None for inject.format.
     _compiled_template: AvpTemplate | None = PrivateAttr(default=None)
 
     @field_validator("bindings")
     @classmethod
     def reject_empty_bindings(cls, v: list[BindingSpec]) -> list[BindingSpec]:
         if not v:
-            raise ValueError(
-                "empty bindings = deny-all; either add explicit bindings or remove the secret entry"
-            )
+            raise ValueError("empty bindings = deny-all; add explicit bindings or remove the entry")
         return v
 
     @model_validator(mode="after")
     def validate_compose_and_template(self) -> SecretSpec:  # noqa: C901
-        # Linear precondition chain: each branch enforces one distinct
-        # binding-spec rule from the design doc (§4.6). Refactoring into
-        # helpers would obscure the rule-per-branch one-to-one mapping.
+        # Multi-injector bindings carry format/template on each child, not
+        # the parent spec; `compose:` cannot combine with multi.
+        if isinstance(self.inject, MultiInjector):
+            if self.compose is not None:
+                raise ValueError("compose: cannot be used with inject.type: multi")
+            return self
         has_compose = self.compose is not None
         has_template = self.inject.template is not None
 
-        # 1. Compose ↔ inject.template are co-required. Single-secret
-        # bindings using legacy ``inject.format`` MUST NOT set compose.
+        # compose: ↔ inject.template are co-required.
         if has_compose and not has_template:
-            raise ValueError(
-                "compose: requires inject.template; use inject.format for "
-                "literal '{secret}' or '{<SECRET_NAME>}' substitution on a "
-                "single secret"
-            )
+            raise ValueError("compose: requires inject.template")
         if has_template and not has_compose:
             raise ValueError("inject.template requires compose: list of BWS secret names")
 
         if has_compose:
-            assert self.compose is not None  # for type narrowing
-            # 2. RAW list length cap (Silas F5 — never coalesce).
+            assert self.compose is not None
             n = len(self.compose)
             if n < _COMPOSE_MIN or n > _COMPOSE_MAX:
                 raise ValueError(
                     f"compose must contain {_COMPOSE_MIN}-{_COMPOSE_MAX} secret names; got {n}"
                 )
-            # 3. Each entry non-empty string; raw-list dedup check
-            # (reject, never silently shorten).
+            # Reject duplicates rather than silently coalesce.
             seen: set[str] = set()
             duplicates: list[str] = []
             for name in self.compose:
@@ -231,15 +451,6 @@ class SecretSpec(BaseModel):
                     f"compose secret names must be unique; got duplicates: "
                     f"{sorted(set(duplicates))}"
                 )
-            # 4. Compile the template via AvpTemplate. This catches:
-            #    - syntax errors
-            #    - unsupported AST nodes (Getattr, Subscript, control flow…)
-            #    - unknown variables (must be in compose)
-            #    - unknown filters/functions
-            #    - wrong filter/function arity
-            #    - non-string Const values
-            #    - source length > MAX_TEMPLATE_SOURCE_LEN
-            #    - allowed_vars collisions with reserved filter/function names
             assert self.inject.template is not None
             try:
                 self._compiled_template = AvpTemplate(self.inject.template, self.compose)
@@ -250,8 +461,6 @@ class SecretSpec(BaseModel):
 
     @property
     def compiled_template(self) -> AvpTemplate | None:
-        """The compiled AvpTemplate (composite/templated bindings) or None
-        (legacy inject.format bindings)."""
         return self._compiled_template
 
 
@@ -330,18 +539,59 @@ class ConfigError(Exception):
 class Config(BaseModel):
     model_config = _STRICT_MODEL
 
-    version: Literal[1]
+    # Schema version. Optional, pinned to 1; reserved for future
+    # schema-breaking changes.
+    version: Literal[1] = 1
     secrets: dict[str, SecretSpec]
-    # Default is forward_unmodified: the proxy is a credential broker, not
-    # an egress firewall. Requests to destinations without a matching binding
-    # pass through unmodified. Users who want strict allow-listing can set
-    # `unmatched_destination_policy: deny` in their bindings.yaml — that is
-    # an explicit opt-in to firewall-like behavior, not the default.
+    # Default `forward_unmodified`: AVP is a credential broker, not an
+    # egress firewall. Operators opt into allow-listing with `deny`.
     unmatched_destination_policy: Literal["deny", "forward_unmodified"] = "forward_unmodified"
     cache: CacheSpec = Field(default_factory=CacheSpec)
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
     backend: BackendBlock | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_and_validate_injector_types(cls, data: object) -> object:
+        """Before the ``InjectorSpec`` union dispatch: (1) default-inject
+        ``type: "header"`` so v0.4.x configs without a ``type:`` field still
+        parse; (2) reject unknown / unimplemented types with a one-line
+        error (instead of Pydantic's verbose ``union_tag_invalid`` dump).
+        No-ops on non-dict input."""
+        if not isinstance(data, dict):
+            return data
+        secrets = data.get("secrets")
+        if not isinstance(secrets, dict):
+            return data
+
+        # Shallow-copy only if some inject block actually needs a default.
+        needs_default_injection = any(
+            isinstance(spec, dict)
+            and isinstance(spec.get("inject"), dict)
+            and "type" not in spec["inject"]
+            for spec in secrets.values()
+        )
+
+        if needs_default_injection:
+            new_secrets: dict[str, object] = {}
+            for name, spec in secrets.items():
+                if isinstance(spec, dict):
+                    inject = spec.get("inject")
+                    if isinstance(inject, dict) and "type" not in inject:
+                        new_secrets[name] = {**spec, "inject": {**inject, "type": "header"}}
+                        continue
+                new_secrets[name] = spec
+            data = {**data, "secrets": new_secrets}
+            secrets = new_secrets
+
+        for name, spec in secrets.items():
+            if not isinstance(spec, dict):
+                continue
+            inject = spec.get("inject")
+            if isinstance(inject, dict):
+                _validate_inject_block(name, inject)
+        return data
 
     @model_validator(mode="after")
     def validate_placeholders(self) -> Config:
@@ -367,9 +617,8 @@ class Config(BaseModel):
                     f"secret {name!r}: placeholder is identical to secret {seen[ph]!r}"
                 )
             seen[ph] = name
-        # Pairwise substring check: a placeholder that is a substring of
-        # another would let the addon's `in` matching route the wrong
-        # secret onto the wire. n is small so O(n²) is fine.
+        # Pairwise substring check — a placeholder that's a substring of
+        # another would let the addon's `in` matching pick the wrong secret.
         for ph_a, name_a in seen.items():
             for ph_b, name_b in seen.items():
                 if name_a != name_b and ph_a in ph_b:
@@ -381,37 +630,67 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_format_placeholders(self) -> Config:
-        """For each single-secret entry using inject.format, require the
-        format string to contain either '{secret}' (generic) or
-        '{<entry_name>}' (named, matching the YAML key). Both work; this
-        check catches the typo case where an operator writes
-        '{ANTHROPIC_API_KEY}' under a secrets entry actually named
-        'ANTHROPIC' — the substitution would silently inject literal
-        '{ANTHROPIC_API_KEY}' bytes onto the wire."""
+        """Every leaf ``inject.format`` must contain ``{<entry_name>}``
+        matching the parent secret's YAML key. Catches typos and the
+        legacy ``{secret}`` alias."""
         for name, spec in self.secrets.items():
-            fmt = spec.inject.format
-            if fmt is None:
-                continue
-            named = "{" + name + "}"
-            if "{secret}" not in fmt and named not in fmt:
-                raise ValueError(
-                    f"secret {name!r}: inject.format must contain either "
-                    f"'{{secret}}' or '{named}' as the substitution "
-                    f"placeholder; got {fmt!r}"
-                )
+            for child in iter_leaf_injectors(spec.inject):
+                fmt = child.format
+                if fmt is None:
+                    continue
+                named = "{" + name + "}"
+                if named not in fmt:
+                    raise ValueError(
+                        f"secret {name!r}: inject.format must contain "
+                        f"'{named}' as the substitution placeholder; got {fmt!r}"
+                    )
         return self
+
+    # Host-keyed indices: exact-host dict + linear wildcard list.
+    _exact_host_index: dict[str, list[tuple[str, SecretSpec]]] = PrivateAttr(default_factory=dict)
+    _wildcard_host_entries: list[tuple[str, str, SecretSpec]] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="after")
+    def build_host_index(self) -> Config:
+        """Populate the host-keyed indices used by ``secrets_for_host``.
+        O(total bindings) at load; O(1) exact + O(wildcards) per request.
+        Body and Aho-Corasick injectors need the narrowing so the body
+        scan stays bounded.
+        """
+        for name, spec in self.secrets.items():
+            for binding in spec.bindings:
+                if binding.host.startswith("*."):
+                    self._wildcard_host_entries.append((binding.host, name, spec))
+                else:
+                    self._exact_host_index.setdefault(binding.host, []).append((name, spec))
+        return self
+
+    def secrets_for_host(self, host: str) -> list[tuple[str, SecretSpec]]:
+        """``(secret_name, spec)`` pairs whose bindings include ``host``.
+        Exact matches first, then ``*.suffix`` wildcards. Each secret
+        appears at most once; config-load order preserved within each class.
+        """
+        host = host.lower()
+        seen_names: set[str] = set()
+        result: list[tuple[str, SecretSpec]] = []
+        for name, spec in self._exact_host_index.get(host, ()):
+            if name not in seen_names:
+                seen_names.add(name)
+                result.append((name, spec))
+        for pattern, name, spec in self._wildcard_host_entries:
+            if name in seen_names:
+                continue
+            if host_matches_pattern(host, pattern):
+                seen_names.add(name)
+                result.append((name, spec))
+        return result
 
     @model_validator(mode="after")
     def reject_nested_composition(self) -> Config:
-        """Silas F6: a composite binding's ``compose:`` entries must reference
-        LEAF BWS secret names, never another binding that itself has
-        ``compose:`` set. Composite-of-composite is structurally banned —
-        but the test must be a leaf-check ("does the named binding itself
-        have compose?"), NOT a name-blacklist ("is this name a binding
-        key?"). The latter would over-block legitimate sharing where the
-        same name is both a standalone single-secret binding AND used as
-        an underlying value inside a composite.
-        """
+        """``compose:`` entries must point at leaf BWS secret names, never
+        at another binding that itself has ``compose:`` set. Leaf-check
+        only — same name may legitimately be both a standalone binding
+        AND a compose entry."""
         for binding_name, spec in self.secrets.items():
             if spec.compose is None:
                 continue
@@ -419,13 +698,15 @@ class Config(BaseModel):
                 referenced = self.secrets.get(entry)
                 if referenced is not None and referenced.compose is not None:
                     raise ValueError(
-                        f"binding {binding_name!r}: compose entry "
-                        f"{entry!r} is itself a composite binding "
-                        f"(has its own compose: list). Nested composition "
-                        f"is not supported — point compose at leaf BWS "
-                        f"secret names only."
+                        f"binding {binding_name!r}: compose entry {entry!r} "
+                        "is itself a composite binding; point compose at "
+                        "leaf BWS secret names only."
                     )
         return self
+
+
+# Back-compat alias for v0.4.x importers. Removed in v0.6.0.
+InjectSpec = HeaderInjector
 
 
 def load_config(path: str | Path) -> Config:

@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 class BwsConfig(BaseModel):
     """`backend.config` schema for `type: bws`.
 
-    Access token precedence (Pentester finding D-B): if BWS_ACCESS_TOKEN
+    Access token precedence: if BWS_ACCESS_TOKEN
     is set in the process environment, it wins over `access_token_path`
     unconditionally. Documented footgun — an operator who sets the path
     expecting it to be authoritative will get a silent override. When
@@ -109,7 +109,7 @@ class BitwardenBackend:
 
         access_token = os.environ.get("BWS_ACCESS_TOKEN")
         if access_token is not None and self._config.access_token_path:
-            # Pentester D-B: surface the env-vs-path divergence. The env
+            # surface the env-vs-path divergence. The env
             # var wins, but the operator who set the path expected it to
             # be authoritative.
             import warnings
@@ -145,13 +145,13 @@ class BitwardenBackend:
         try:
             sdk_client.auth().login_access_token(access_token, self._config.state_path)
         except Exception as e:
-            # Pentester H-B: SDK exception bodies may include the
+            # SDK exception bodies may include the
             # Authorization header, request body, or token bytes. Emit
             # only the exception type, and use `from None` to drop the
             # cause chain so the original exception (still containing the
             # token) doesn't surface in tracebacks/logs.
             #
-            # Oracle C10: this DOES lose diagnostic detail. If you need
+            # this DOES lose diagnostic detail. If you need
             # to debug auth failures, the addon's audit log
             # (`agent_vault_proxy.addon`) records the backend type +
             # operation + outcome with no PII. Combine that with the

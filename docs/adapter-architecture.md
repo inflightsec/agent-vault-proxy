@@ -59,7 +59,7 @@ For v0.3.0 every backend can ignore `ctx` (default `None`). Adding it now while 
 
 ### Why `str` and not `bytes`
 
-Every binding format in `bindings.yaml` is a string-template substitution (`Authorization: Bearer {SECRET_NAME}` or the generic `{secret}` alias). The protocol returns the type the addon needs. Binary secrets aren't a current use case; if they become one, a sibling `BinarySecretsBackend` protocol can be added without breaking the existing one.
+Every binding format in `bindings.yaml` is a string-template substitution (`Authorization: Bearer {SECRET_NAME}`). The protocol returns the type the addon needs. (The legacy generic `{secret}` alias was removed in v0.5.0 — only the named form `{<SECRET_NAME>}` matching each entry's YAML key is accepted.) Binary secrets aren't a current use case; if they become one, a sibling `BinarySecretsBackend` protocol can be added without breaking the existing one.
 
 ### Why no field parameter
 
@@ -298,11 +298,11 @@ No. The deprecation shim translates your `bws:` top-level block to the new `back
 
 ## Adversarial review applied
 
-This design has been through TWO review passes:
-1. An opus-model Pentester agent red-teaming the abstraction itself
-2. Three parallel research agents validating the design against current 1Password, LastPass, and HashiCorp Vault documentation
+This design has been through two review passes:
+1. Adversarial review of the abstraction itself
+2. Vendor-docs verification against current 1Password, LastPass, and HashiCorp Vault documentation
 
-### Round 1 (Pentester) findings - incorporated:
+### Round 1 findings - incorporated:
 
 - **CRITICAL** dual-block `bws:` + `backend:` precedence is undefined → now an explicit startup error (§Config schema)
 - **HIGH** per-secret address remapping has no operator-side allowlist → added §Operator security model
@@ -315,8 +315,6 @@ This design has been through TWO review passes:
 - **FOOTGUN** request-context would be a breaking-change to add post-hoc → added `FetchContext | None` second arg in v0.3.0 (§Interface)
 
 Findings deferred or accepted as residual risk: backend lifecycle hooks (start/stop), recorded-fixture rot (operational, not architectural), binary secrets out of scope.
-
-A cross-model Oracle review was attempted; the OpenAI provider returned shell-command-shaped `suggested_check` fields that failed the Oracle skill's JSON schema validation (twice). Substantive cross-model review is deferred until either (a) the Oracle skill's schema tolerates command-style suggestions, or (b) an alternate provider is wired.
 
 ### Round 2 (vendor-docs verification) - incorporated:
 

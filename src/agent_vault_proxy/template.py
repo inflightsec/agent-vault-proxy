@@ -139,10 +139,10 @@ def _func_hmac_sha512(key: Any, msg: Any) -> str:
     return hmac.new(k.encode("utf-8"), m.encode("utf-8"), "sha512").hexdigest()
 
 
-# Whitelists are immutable read-only views (Oracle C8). Each entry maps to
+# Whitelists are immutable read-only views. Each entry maps to
 # (callable, expected_positional_arg_count). Arity is enforced at AST-walk
 # time so a wrong-arg-count template fails AT CONFIG-LOAD, not at the first
-# request that hits it (Oracle C3 + C4).
+# request that hits it.
 #
 # Filters: positional-arg count EXCLUDES the implicit `value` (the input to
 # the | operator). E.g. ``X | sha256`` is arity 0; ``X | foo(a, b)`` is
@@ -286,7 +286,7 @@ class _AstValidator(NodeVisitor):
         # ``{{ | sha256 }}``); the assert documents the invariant.
         assert node.node is not None
         self.visit(node.node)
-        # Arity check (Oracle C3): wrong positional arg count must fail
+        # Arity check: wrong positional arg count must fail
         # at config-load, not silently pass to render where Python raises
         # TypeError. Today every filter is arity 0.
         if len(node.args) != expected_arity:
@@ -318,7 +318,7 @@ class _AstValidator(NodeVisitor):
             raise UnsupportedTemplateError(
                 f"function {node.node.name!r}: keyword or dynamic args not allowed"
             )
-        # Arity check (Oracle C4): operator writing hmac_sha256(K) or
+        # Arity check: operator writing hmac_sha256(K) or
         # hmac_sha256(K, M, EXTRA) must fail at config-load. Without this
         # the template compiles and only fails when an actual request
         # tries to render it — turning an operator typo into a runtime
@@ -357,19 +357,19 @@ class AvpTemplate:
     def __init__(self, source: str, allowed_vars: list[str] | tuple[str, ...]) -> None:  # noqa: C901
         # Linear precondition chain: source-type, length cap, allowed_vars
         # shape, collision check, AST walk, compile. One rule per branch
-        # (Oracle C2/C5/C6); helper extraction would obscure rule provenance.
+        # ; helper extraction would obscure rule provenance.
         if not isinstance(source, str):
             raise UnsupportedTemplateError(
                 f"template source must be str, got {type(source).__name__}"
             )
-        # Oracle C2: resource bound on operator-supplied source. 4 KiB is far
+        # resource bound on operator-supplied source. 4 KiB is far
         # above any realistic auth header template; catches pathological depth
         # (e.g., 10k Add nodes) at the cheapest possible check.
         if len(source) > MAX_TEMPLATE_SOURCE_LEN:
             raise UnsupportedTemplateError(
                 f"template source is {len(source)} bytes; max allowed is {MAX_TEMPLATE_SOURCE_LEN}"
             )
-        # Oracle C5: allowed_vars must be a sequence of non-empty strings.
+        # allowed_vars must be a sequence of non-empty strings.
         # Accepting a bare string would make frozenset() split it into
         # characters (`"X"` → `{'X'}` is fine but `"XY"` → `{'X','Y'}` —
         # silent multi-variable scope).
@@ -387,7 +387,7 @@ class AvpTemplate:
             if not entry:
                 raise UnsupportedTemplateError("allowed_vars entries must be non-empty strings")
             names.append(entry)
-        # Oracle C6: forbid compose-variable names that collide with
+        # forbid compose-variable names that collide with
         # whitelist filter/function names. The AST validator binds
         # ``{{ hmac_sha256(K, M) }}`` to the function unconditionally,
         # but ``{{ hmac_sha256 }}`` standalone would try to look up a
@@ -440,7 +440,7 @@ class AvpTemplate:
         of the boundary and avoids leaking Jinja2 UndefinedError messages
         through audit lines.
 
-        NOTE for callers (addon.py audit code, Oracle C7): render errors
+        NOTE for callers (addon.py audit code, ): render errors
         include compose variable names and value type names. Those are
         operationally useful for the operator who reads the proxy log,
         but the addon MUST NOT pass these messages verbatim into the
@@ -467,7 +467,7 @@ class AvpTemplate:
         try:
             return self._template.render(**variables)
         except UnsupportedTemplateError as e:
-            # Oracle C1: filter/function impls raise UnsupportedTemplateError
+            # filter/function impls raise UnsupportedTemplateError
             # for type/shape violations at render time. Convert here so the
             # addon catches exactly ONE exception type at the render
             # boundary (TemplateRenderError). Without this conversion the

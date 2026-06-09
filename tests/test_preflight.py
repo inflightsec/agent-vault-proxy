@@ -34,7 +34,7 @@ def _make_minimal_config(
             "secrets": {
                 "FOO": {
                     "placeholder": "test_PLACEHOLDER_01HXY1234567890",
-                    "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                    "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                     "bindings": [
                         b.model_dump() for b in (bindings or [BindingSpec(host="x.example.com")])
                     ],
@@ -271,7 +271,7 @@ def test_run_preflight_returns_all_warnings(monkeypatch, tmp_path) -> None:
 
 
 def test_sensitive_host_check_is_case_insensitive() -> None:
-    """Oracle C8: a misconfigured binding with `Api.GitHub.com` (mixed
+    """a misconfigured binding with `Api.GitHub.com` (mixed
     case) must still trip the warning — case-fold the comparison."""
     cfg = _make_minimal_config(bindings=[BindingSpec(host="Api.GitHub.com")])
     msgs = check_loose_bindings_on_sensitive_hosts(cfg)
@@ -279,7 +279,7 @@ def test_sensitive_host_check_is_case_insensitive() -> None:
 
 
 def test_sensitive_host_check_flags_write_verbs() -> None:
-    """Oracle C9: a binding with methods=[POST] on a known-laundering
+    """a binding with methods=[POST] on a known-laundering
     target silenced the previous loose-binding check even though POST is
     the actual exfil vector. New behavior: warn separately."""
     cfg = _make_minimal_config(bindings=[BindingSpec(host="api.github.com", methods=["POST"])])
@@ -296,7 +296,7 @@ def test_sensitive_host_check_read_verbs_silent() -> None:
 
 
 def test_audit_check_resolves_symlinks(tmp_path) -> None:
-    """Oracle C7: a symlink from audit_path to a mutable file shouldn't
+    """a symlink from audit_path to a mutable file shouldn't
     let an attacker silence the check. We resolve symlinks before lsattr."""
     real_file = tmp_path / "real-audit.jsonl"
     real_file.touch()
@@ -310,7 +310,7 @@ def test_audit_check_resolves_symlinks(tmp_path) -> None:
 
 
 def test_emit_preflight_only_runs_once(monkeypatch, tmp_path, capsys) -> None:
-    """Oracle C11: mitmproxy may call running() multiple times. The
+    """mitmproxy may call running() multiple times. The
     banner should appear once per process to avoid burying real changes
     in log spam."""
     from agent_vault_proxy._preflight import _reset_for_tests, emit_preflight
@@ -346,7 +346,7 @@ def test_emit_preflight_force_overrides_once_flag(monkeypatch, tmp_path, capsys)
 
 
 def test_strict_mode_aborts_on_warning(monkeypatch, tmp_path) -> None:
-    """Oracle C2: when preflight.fail_on_warning is true, any warning
+    """when preflight.fail_on_warning is true, any warning
     raises PreflightFailedError so mitmproxy aborts startup before
     serving traffic."""
     from agent_vault_proxy._preflight import (

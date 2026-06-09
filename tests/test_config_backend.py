@@ -16,7 +16,7 @@ def _minimal_raw(extra: dict) -> dict:
         "secrets": {
             "FOO": {
                 "placeholder": "test_PLACEHOLDER_01HXY1234567890",
-                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                 "bindings": [{"host": "api.example.com"}],
             }
         },

@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-indigo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6366f1"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="540" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="480" y="44" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">
+    How agent-vault-proxy substitutes secrets on the wire
+  </text>
+  <text x="480" y="70" text-anchor="middle" font-size="13" fill="#64748b">
+    The real secret never enters your agent's process. It exists only on the AVP → upstream segment.
+  </text>
+
+  <!-- ────── Agent card ────── -->
+  <g filter="url(#card-shadow)">
+    <rect x="60" y="180" width="200" height="120" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  </g>
+  <text x="160" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#94a3b8" letter-spacing="1.2">YOUR PROCESS</text>
+  <text x="160" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Agent</text>
+  <text x="160" y="270" text-anchor="middle" font-size="12" fill="#64748b">env holds placeholder only</text>
+
+  <!-- ────── AVP card (highlighted) ────── -->
+  <g filter="url(#card-shadow)">
+    <rect x="380" y="180" width="200" height="120" rx="14" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
+  </g>
+  <text x="480" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#6366f1" letter-spacing="1.2">LOCAL PROXY · UID avp</text>
+  <text x="480" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">agent-vault-proxy</text>
+  <text x="480" y="270" text-anchor="middle" font-size="12" fill="#64748b">substitutes on the wire</text>
+
+  <!-- ────── Upstream card ────── -->
+  <g filter="url(#card-shadow)">
+    <rect x="700" y="180" width="200" height="120" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  </g>
+  <text x="800" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#94a3b8" letter-spacing="1.2">DESTINATION API</text>
+  <text x="800" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Upstream</text>
+  <text x="800" y="270" text-anchor="middle" font-size="12" fill="#64748b">api.stripe.com, etc.</text>
+
+  <!-- ────── BWS card (below AVP) ────── -->
+  <g filter="url(#card-shadow)">
+    <rect x="370" y="400" width="220" height="74" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  </g>
+  <text x="480" y="428" text-anchor="middle" font-size="10.5" font-weight="600" fill="#94a3b8" letter-spacing="1.2">SECRETS BACKEND</text>
+  <text x="480" y="454" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Bitwarden · Vault · 1Password</text>
+
+  <!-- ────── Arrow 1: Agent → AVP (placeholder, amber, top) ────── -->
+  <line x1="260" y1="216" x2="375" y2="216" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text x="317" y="206" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b45309">placeholder</text>
+  <text x="317" y="158" text-anchor="middle" font-size="11" fill="#94a3b8">① request out</text>
+
+  <!-- ────── Arrow 2: AVP → Upstream (real secret, red, top) ────── -->
+  <line x1="585" y1="216" x2="697" y2="216" stroke="#dc2626" stroke-width="2.5" marker-end="url(#arrow-red)"/>
+  <text x="641" y="206" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b91c1c">real secret</text>
+  <text x="641" y="158" text-anchor="middle" font-size="11" fill="#94a3b8">② substituted on the wire</text>
+
+  <!-- ────── Arrow 3: Upstream → AVP (response, slate, bottom) ────── -->
+  <line x1="697" y1="264" x2="585" y2="264" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow-slate)"/>
+  <text x="641" y="285" text-anchor="middle" font-size="12.5" font-weight="500" fill="#64748b">response</text>
+  <text x="641" y="333" text-anchor="middle" font-size="11" fill="#94a3b8">③ response in</text>
+
+  <!-- ────── Arrow 4: AVP → Agent (response, slate, bottom) ────── -->
+  <line x1="375" y1="264" x2="263" y2="264" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow-slate)"/>
+  <text x="319" y="285" text-anchor="middle" font-size="12.5" font-weight="500" fill="#64748b">response</text>
+  <text x="319" y="333" text-anchor="middle" font-size="11" fill="#94a3b8">④ delivered unchanged</text>
+
+  <!-- ────── BWS link (dashed indigo, bidirectional) ────── -->
+  <line x1="480" y1="302" x2="480" y2="398" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 5" marker-end="url(#arrow-indigo)" marker-start="url(#arrow-indigo)"/>
+  <text x="498" y="346" font-size="11" font-weight="500" fill="#6366f1">fetch + cache</text>
+  <text x="498" y="362" font-size="11" fill="#64748b">5-min TTL · one BWS call per</text>
+  <text x="498" y="378" font-size="11" fill="#64748b">secret per window</text>
+
+  <!-- ────── Legend ────── -->
+  <g transform="translate(60, 506)">
+    <line x1="0" y1="0" x2="24" y2="0" stroke="#f59e0b" stroke-width="2.5"/>
+    <text x="32" y="4" font-size="11.5" fill="#475569"><tspan font-weight="600">placeholder</tspan> — visible everywhere, safe to leak</text>
+    <line x1="370" y1="0" x2="394" y2="0" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="402" y="4" font-size="11.5" fill="#475569"><tspan font-weight="600">real secret</tspan> — one wire segment, default-deny everywhere else</text>
+  </g>
+</svg>

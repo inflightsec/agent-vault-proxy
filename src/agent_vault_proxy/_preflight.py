@@ -18,7 +18,7 @@ Checks are scoped to the documented happy paths (docs/install-systemd.md
 + docs/docker.md); a quiet preflight on those paths is a feature — we
 don't want to train operators to ignore the output.
 
-Known limitations (documented rather than fixed — Oracle C3/C4/C6/C10):
+Known limitations (documented rather than fixed — ):
 
 - Container detection uses /.dockerenv, /run/.containerenv, and cgroup
   substring markers. cgroup v2 sparse paths and exotic runtimes may not
@@ -65,12 +65,12 @@ _SENSITIVE_HOSTS_WITHOUT_SCOPE = {
 }
 
 # HTTP verbs that almost always indicate write/laundering surface on the
-# above hosts (Oracle C9). A binding with methods=[POST] would otherwise
+# above hosts. A binding with methods=[POST] would otherwise
 # silence the loose-binding warning even though POST is the actual
 # exfil vector.
 _WRITE_VERBS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# Module-level once-per-process flag (Oracle C11). mitmproxy may call
+# Module-level once-per-process flag. mitmproxy may call
 # running() multiple times on reload; the banner should appear once per
 # process to avoid spamming logs and burying the actual change signal.
 _PREFLIGHT_EMITTED = False
@@ -127,7 +127,7 @@ def check_bws_token_via_env_in_container() -> list[str]:
 
 def _resolve_lsattr() -> str | None:
     """Find lsattr, preferring well-known absolute paths over PATH
-    resolution (Oracle C5). PATH-resolved binaries depend on whatever
+    resolution. PATH-resolved binaries depend on whatever
     PATH the proxy process was started with — fine under our systemd
     unit and Dockerfile, but anyone running the daemon from a shell
     inherits operator PATH. Pinning the trusted locations first keeps
@@ -151,7 +151,7 @@ def check_audit_log_append_only(audit_path: str) -> list[str]:
     if not raw_path.exists():
         return []
     # Resolve symlinks so an attacker can't swap a +a file with a symlink
-    # to a mutable target and silence the check (Oracle C7).
+    # to a mutable target and silence the check.
     try:
         path = raw_path.resolve(strict=True)
     except OSError:
@@ -211,13 +211,13 @@ def check_loose_bindings_on_sensitive_hosts(config: Config) -> list[str]:
     agent POST a public gist using the GitHub PAT. The defense is per-binding
     method/path scope (R2 mitigation in docs/architecture.md). Warn if a
     binding to a known-risky host has neither `methods` nor `paths` set,
-    OR if its declared methods include any write verb (Oracle C9 — the
+    OR if its declared methods include any write verb (— the
     actual laundering surface is POST/PUT/PATCH/DELETE; a binding that
     declares those is scoped-but-still-permissive)."""
     msgs: list[str] = []
     for secret_name, spec in config.secrets.items():
         for binding in spec.bindings:
-            # Case-fold for the lookup (Oracle C8). BindingSpec doesn't
+            # Case-fold for the lookup. BindingSpec doesn't
             # currently normalize host case at load — defensive here.
             if binding.host.lower() not in _SENSITIVE_HOSTS_WITHOUT_SCOPE:
                 continue
@@ -258,7 +258,7 @@ def emit_preflight(config: Config, *, force: bool = False) -> None:
     so they appear in BOTH container logs and journalctl. Silent on the
     documented happy paths.
 
-    Module-level once-per-process guard (Oracle C11) prevents banner spam
+    Module-level once-per-process guard prevents banner spam
     on mitmproxy hot-reload — pass `force=True` to override (tests).
 
     If `config.preflight.fail_on_warning` is True AND there are warnings,
@@ -282,7 +282,7 @@ def emit_preflight(config: Config, *, force: bool = False) -> None:
     print(banner, file=sys.stderr)
 
     if getattr(config.preflight, "fail_on_warning", False):
-        # Hardened-environment opt-in (Oracle C2): convert advisory to
+        # Hardened-environment opt-in: convert advisory to
         # fatal. The exception propagates out of running() and mitmproxy
         # aborts startup before any traffic is served.
         raise PreflightFailedError(

@@ -6,7 +6,7 @@ semantics without re-implementing.
 Singleflight: concurrent get(name) calls for the same name trigger
 backend.fetch exactly once; other waiters block on the same Future.
 Prevents re-auth stampede when many threads observe token expiry
-simultaneously (Pentester finding M2 — see docs/adapter-architecture.md).
+simultaneously.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class _StaleAfterFlushError(BackendUnavailableError):
     the operator just rotated, so neither the cache nor any caller should
     use it. Inherits from BackendUnavailableError so existing caller
     `except BackendUnavailableError` handlers treat it as a transient,
-    retriable failure (Oracle C1)."""
+    retriable failure."""
 
 
 @dataclass
@@ -67,7 +67,7 @@ class CachingSecretsClient:
         # Bumped on every flush(). Leaders capture this under lock at fetch
         # start; if it differs at write-back time, an operator flush happened
         # mid-fetch and our value is stale relative to the rotated credential
-        # — skip the cache write (Pentester finding H-A). Waiters that
+        # — skip the cache write. Waiters that
         # already captured the Future still receive the value (one stale
         # read flows; the sticky stale cache entry is what would be the bug).
         self._generation = 0
@@ -75,8 +75,7 @@ class CachingSecretsClient:
     def get(self, name: str, ctx: FetchContext | None = None) -> str:  # noqa: C901
         # Complexity inherent: singleflight + generation-counter + LRU + race
         # handling in one critical path. Splitting into helpers would obscure
-        # the lock-discipline invariants. See Pentester finding M-A / H-A for
-        # why each branch exists.
+        # the lock-discipline invariants.
         now = time.time()
         waiting_on: Future[str] | None = None
         new_fut: Future[str] | None = None
@@ -113,9 +112,9 @@ class CachingSecretsClient:
         # _inflight slot is cleared and waiters are notified even on
         # BaseException (KeyboardInterrupt/SystemExit) — without this,
         # ^C mid-fetch would orphan the Future and hang every subsequent
-        # get(name) caller forever (Pentester finding M-A).
+        # get(name) caller forever.
         #
-        # Oracle C4 note: catching BaseException means a SIGINT/SystemExit
+        # catching BaseException means a SIGINT/SystemExit
         # raised by backend.fetch propagates not only to OUR thread but
         # also (via the Future) to every other thread blocked on this name.
         # Acceptable: the alternative is hanging those waiters forever.
@@ -157,7 +156,7 @@ class CachingSecretsClient:
                 # are notified below.
 
             # Notify waiters OUTSIDE the lock so their .result() callbacks
-            # don't run while we hold it. Oracle C5: a stray InvalidStateError
+            # don't run while we hold it. a stray InvalidStateError
             # here (someone cancelled new_fut — today not possible, but
             # defensive against future instrumentation) must not mask the
             # leader's own raise. Waiter notification is best-effort.
@@ -165,7 +164,7 @@ class CachingSecretsClient:
                 if leader_exception is not None:
                     new_fut.set_exception(leader_exception)
                 elif not cache_writable:
-                    # Oracle C1: flush bumped the generation while we were
+                    # flush bumped the generation while we were
                     # fetching. Tell waiters the value is stale so they
                     # retry under the new credential, rather than receive
                     # the value the operator just rotated away from.
@@ -179,7 +178,7 @@ class CachingSecretsClient:
                     new_fut.set_result(value)
 
         if not cache_writable:
-            # Oracle C1: symmetric behavior — the leader's own caller also
+            # symmetric behavior — the leader's own caller also
             # raises rather than receiving the stale value. Without this,
             # waiters retry but the leader silently returns the rotated-out
             # secret to its caller.
@@ -201,13 +200,13 @@ class CachingSecretsClient:
 
          5. Capture ``gen_start = self._generation`` BEFORE the first fetch.
          6. Fetch each name in order. Empty value triggers
-            BackendUnavailableError (Silas F4 — never compose partial
-            credentials). Per-fetch failures propagate as-is.
+            BackendUnavailableError — never compose partial credentials.
+            Per-fetch failures propagate as-is.
          8. Re-check ``self._generation == gen_start``. Mismatch raises
             ``_StaleAfterFlushError`` so the caller restarts the whole
             assembly under the new credential — covers the race where one
             underlying value was served from cache, then flushed before
-            the next underlying value was fetched (Silas F2).
+            the next underlying value was fetched.
 
         The single-secret ``get`` already protects the case where a flush
         happens DURING a backend fetch (existing H-A). The post-check here
@@ -244,7 +243,7 @@ class CachingSecretsClient:
         with self._lock:
             # Bump generation so any leader currently mid-fetch detects the
             # flush at write-back time and skips caching its now-stale value
-            # (Pentester finding H-A). Clearing _inflight also frees new
+            # . Clearing _inflight also frees new
             # callers to start a fresh fetch rather than blocking on the
             # stale leader's Future.
             self._generation += 1

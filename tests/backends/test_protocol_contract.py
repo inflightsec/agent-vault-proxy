@@ -32,7 +32,7 @@ def test_backend_auth_lost_is_unavailable_subclass() -> None:
 
 @pytest.fixture
 def isolated_registry():
-    """Pentester D-A: snapshot the registry at fixture entry, reset for the
+    """snapshot the registry at fixture entry, reset for the
     test body, and ALWAYS restore the canonical state on teardown — even
     if the test body raises mid-way. Without this, a failed assertion
     between `register_backend(fake)` and a manual `_reset_registry_for_tests()`
@@ -49,7 +49,7 @@ def isolated_registry():
 
 def test_register_backend_rejects_duplicate() -> None:
     """Registering the same name twice raises — prevents silent
-    registry-collision attacks (Pentester finding H3)."""
+    registry-collision attacks."""
     from agent_vault_proxy.backends import register_backend
 
     # The 'bws' backend is already registered at module import time.
@@ -80,7 +80,7 @@ def test_register_backend_normalizes_case(isolated_registry) -> None:
 
 
 def test_register_backend_nfkc_normalizes_unicode(isolated_registry) -> None:
-    """Pentester L-A: bare .lower() lets full-width Unicode (e.g., ＢＷＳ)
+    """bare .lower() lets full-width Unicode (e.g., ＢＷＳ)
     and other compatibility variants bypass the case-folding dedup check.
     Use NFKC normalization + casefold so visually-identical names collide
     in the registry."""
@@ -100,7 +100,7 @@ def test_register_backend_nfkc_normalizes_unicode(isolated_registry) -> None:
 
 
 def test_backend_registry_is_read_only_externally() -> None:
-    """Pentester L-B: BACKEND_REGISTRY exposes a read-only Mapping view.
+    """BACKEND_REGISTRY exposes a read-only Mapping view.
     External code MUST go through register_backend() (which enforces the
     duplicate check) rather than mutating the dict directly."""
     with pytest.raises(TypeError):
@@ -114,7 +114,7 @@ def test_backend_registry_is_read_only_externally() -> None:
 
 
 def test_register_backend_rejects_empty_name(isolated_registry) -> None:
-    """Oracle C8: empty / whitespace-only names silently register an
+    """empty / whitespace-only names silently register an
     unreachable backend. Reject explicitly."""
     from agent_vault_proxy.backends import register_backend
 
@@ -132,7 +132,7 @@ def test_register_backend_rejects_empty_name(isolated_registry) -> None:
 
 
 def test_register_backend_rejects_non_string_name(isolated_registry) -> None:
-    """Oracle C8 companion: non-string names (a TypeError-prone footgun
+    """non-string names (a TypeError-prone footgun
     for plugin authors that might pass an enum or path) must surface
     immediately, not crash later in build_backend."""
     from agent_vault_proxy.backends import register_backend

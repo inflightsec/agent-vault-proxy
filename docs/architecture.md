@@ -253,7 +253,7 @@ Whitelisted callables (anything else is rejected at config-load):
 JSONL, append-only via `chattr +a`. One event per line.
 
 ```json
-{"ts":"2026-05-17T14:32:11.123456+00:00","type":"inject_decision","request_id":"01HXY...","decision":"allowed","secret_name":"ANTHROPIC_API_KEY","destination":{"host":"api.anthropic.com","port":443}}
+{"ts":"2026-05-17T14:32:11.123456+00:00","type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
 {"ts":"2026-05-17T14:32:11.234567+00:00","type":"upstream_response","request_id":"01HXY...","status":200}
 ```
 
@@ -263,6 +263,25 @@ Rules:
 - Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
 - **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
 - Future direction: off-host shipping (rsyslog TLS or similar)
+
+**Reason taxonomy on `inject_decision` events** (use these to filter and alert from the audit stream):
+
+| `decision` | `reason` | Meaning |
+|---|---|---|
+| `allowed` | `binding_matched` | Header injector substituted the placeholder; substitution is on the wire |
+| `allowed` | `body_binding_matched` | Body injector substituted a placeholder occurrence in the streaming body. Per-secret event; emitted on first match per request, **before** the substituted bytes return to mitmproxy (same G6 ordering as the header path) |
+| `denied` | `unmatched_destination` | Host not in any binding, `unmatched_destination_policy: deny` |
+| `denied` | `sni_host_mismatch` | CONNECT host disagrees with request host (TLS-level deception attempt) |
+| `denied` | `ambiguous_placeholder_match` | Two distinct configured placeholders appeared in the same target header — refusal to guess |
+| `denied` | `destination_not_in_binding` | Header placeholder matched a secret, but the destination isn't in that secret's bindings |
+| `denied` | `binding_scope_violation` | Method or path scope on the binding rejected this request |
+| `denied` | `secret_unavailable:<ExcName>` | Backend returned `BackendUnavailableError` / `SecretNotFoundError` |
+| `denied` | `secret_fetch_error:<ExcName>` | Backend raised an uncaught exception (G6 fail-closed catch-all) |
+| `denied` | `composite_unavailable:<ExcName>` | One or more compose entries failed to fetch |
+| `denied` | `composite_fetch_error:<ExcName>` | Compose-path catch-all |
+| `denied` | `render_failed` | Composite template render raised (template-internal detail logged separately, not audited) |
+
+For multi-injector secrets (`inject.type: multi`), each substituted leaf emits its own event (one `binding_matched` per header leaf that fires, one `body_binding_matched` per body leaf that fires). `secret_name` is the parent secret's name; consumers parsing the stream see one substitution event per (request, leaf-that-fired).
 
 ### 4.5 BWS integration
 
@@ -474,12 +493,3 @@ Things that turned out non-obvious in real deploys. Recorded for whoever picks t
 10. **`systemctl enable --now` is a no-op when the service is already running.** Re-runs that change the unit file need an explicit `systemctl restart` to pick up the new unit.
 
 11. **`chattr +a` blocks `chown` / `chmod`.** First-run sequence is `touch; chown; chmod; chattr +a`. Re-run sequence is `chattr -a; chown; chmod; chattr +a`. Idempotent scripts must strip `+a` before modifying.
-
-## 14. License posture & clean-room methodology
-
-The architectural pattern (a credential broker that injects on the wire) was inspired by [getKloak](https://www.getkloak.com), which is AGPL-3.0. To avoid AGPL contamination, a strict two-phase clean-room workflow was used:
-
-- **Phase A:** read getKloak's source and produce only a behavioral specification in natural language. No source quotes, no algorithm transcription, no implementation-level vocabulary. The Phase A artifact was checked with a banned-term grep before Phase B began.
-- **Phase B:** design the architecture from (a) the Phase A behavioral spec, (b) MIT-licensed pattern study (the mitmproxy addon API, Infisical Agent Vault), and (c) first-principles atomic guarantees. Phase B did not reference getKloak source.
-
-This document and the implementation are released under **MIT**. Counsel review of the clean-room artifacts is recommended before commercial use; the combination of `{bindings, placeholders, fail-closed}` parallels getKloak's distinctive signature and is worth confirming on a per-jurisdiction basis. Individual elements are universal (Vault has bindings, Infisical has placeholders, fail-closed is universal); the combination plus *placeholder-as-data-plane-marker* is the parallelism worth flagging.

@@ -66,7 +66,7 @@ secrets:
     placeholder: "{PLACEHOLDER}"
     inject:
       header: "Authorization"
-      format: "Bearer {{secret}}"
+      format: "Bearer {{ANTHROPIC_API_KEY}}"
     bindings:
       - host: "api.anthropic.com"
       - host: "*.anthropic.com"
@@ -74,7 +74,7 @@ secrets:
     placeholder: "{OPENAI_PLACEHOLDER}"
     inject:
       header: "Authorization"
-      format: "Bearer {{secret}}"
+      format: "Bearer {{OPENAI_API_KEY}}"
     bindings:
       - host: "api.openai.com"
 
@@ -306,7 +306,7 @@ secrets:
     placeholder: "{placeholder}"
     inject:
       header: "Authorization"
-      format: "token {{secret}}"
+      format: "token {{GH_TOKEN}}"
     bindings:
       - host: "api.github.com"
 {methods_line}{paths_line}
@@ -358,7 +358,7 @@ secrets:
     placeholder: "{gh_placeholder}"
     inject:
       header: "Authorization"
-      format: "token {{secret}}"
+      format: "token {{GH_TOKEN}}"
     bindings:
       - host: "api.github.com"
         methods: ["GET"]
@@ -564,7 +564,7 @@ def test_composite_503_on_missing_underlying(tmp_path: Path) -> None:
     assert denied[0]["reason"].startswith("composite_unavailable:")
 
 
-def test_composite_503_on_empty_underlying_silas_f4(tmp_path: Path) -> None:
+def test_composite_503_on_empty_underlying(tmp_path: Path) -> None:
     addon, audit_path, _backend = _build_composite_addon(
         tmp_path,
         {"JIRA_EMAIL": "alice", "JIRA_API_TOKEN": ""},
@@ -585,7 +585,7 @@ def test_composite_503_on_empty_underlying_silas_f4(tmp_path: Path) -> None:
 def test_composite_same_uuid_warning_logged_once(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Silas F4 corollary: two compose entries → equal values → WARN once.
+    # two compose entries → equal values → WARN once.
     # Use a value distinctive enough to detect leakage by substring.
     leaked_value = "ZZZ-DISTINCT-VALUE-998877"
     addon, _audit_path, _backend = _build_composite_addon(
@@ -650,7 +650,7 @@ secrets:
     placeholder: "{PLACEHOLDER}"
     inject:
       header: "Authorization"
-      format: "Bearer {{secret}}"
+      format: "Bearer {{ANTHROPIC_API_KEY}}"
     bindings:
       - host: "api.anthropic.com"
   JIRA_API_BASIC:

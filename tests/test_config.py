@@ -30,7 +30,7 @@ def test_unmatched_destination_policy_code_default_is_forward_unmodified() -> No
         "secrets": {
             "FOO": {
                 "placeholder": _FOO_PH,
-                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                 "bindings": [{"host": "api.example.com"}],
             }
         },
@@ -55,7 +55,7 @@ def test_empty_bindings_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [],
                     }
                 },
@@ -72,7 +72,7 @@ def test_overbroad_wildcard_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "*.com"}],
                     }
                 },
@@ -94,7 +94,7 @@ def test_mixed_case_host_is_lowercased_with_warning(caplog) -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "API.OpenAI.com"}],
                     }
                 },
@@ -115,7 +115,7 @@ def test_lowercase_host_does_not_warn(caplog) -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "api.openai.com"}],
                     }
                 },
@@ -131,7 +131,7 @@ def _minimal_secret(extra_binding: dict) -> dict:
         "secrets": {
             "FOO": {
                 "placeholder": _FOO_PH,
-                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                 "bindings": [{"host": "api.example.com", **extra_binding}],
             }
         },
@@ -154,7 +154,7 @@ def test_binding_unknown_field_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [
                             {"host": "api.example.com", "method": ["GET"]},  # typo
                         ],
@@ -175,7 +175,7 @@ def test_inject_unknown_field_rejected() -> None:
                         "placeholder": _FOO_PH,
                         "inject": {
                             "header": "Authorization",
-                            "format": "Bearer {secret}",
+                            "format": "Bearer {FOO}",
                             "headers": "Authorization",
                         },
                         "bindings": [{"host": "api.example.com"}],
@@ -194,7 +194,7 @@ def test_config_unknown_top_level_field_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": _FOO_PH,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "api.example.com"}],
                     }
                 },
@@ -215,12 +215,12 @@ def _two_secrets(ph_a: str, ph_b: str) -> dict:
         "secrets": {
             "FOO": {
                 "placeholder": ph_a,
-                "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                 "bindings": [{"host": "api.example.com"}],
             },
             "BAR": {
                 "placeholder": ph_b,
-                "inject": {"header": "X-Other", "format": "{secret}"},
+                "inject": {"header": "X-Other", "format": "{BAR}"},
                 "bindings": [{"host": "other.example.com"}],
             },
         },
@@ -236,7 +236,7 @@ def test_placeholder_too_short_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": "short_PLACEHOLDER",
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "api.example.com"}],
                     }
                 },
@@ -253,7 +253,7 @@ def test_placeholder_missing_marker_rejected() -> None:
                 "secrets": {
                     "FOO": {
                         "placeholder": "x" * 40,
-                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
                         "bindings": [{"host": "api.example.com"}],
                     }
                 },
@@ -309,7 +309,13 @@ def test_path_without_leading_slash_rejected() -> None:
 
 
 def test_inject_format_must_contain_secret_placeholder() -> None:
-    with pytest.raises(ValidationError, match=r"\{secret\}"):
+    # The HeaderInjector-level validator fires when inject.format has no
+    # `{...}`-shaped placeholder at all. The message is generic — it doesn't
+    # know the parent SecretSpec's name, so it can only point at the shape.
+    # (The Config-level validator catches the name-mismatch case where a
+    # `{...}` is present but doesn't match the YAML key — see
+    # test_named_inject_format_rejects_mismatched_name.)
+    with pytest.raises(ValidationError, match=r"must contain a"):
         Config.model_validate(
             {
                 "version": 1,
@@ -373,7 +379,7 @@ def test_inject_format_and_template_both_set_rejected() -> None:
     with pytest.raises(ValidationError, match="mutually exclusive"):
         Config.model_validate(
             _composite_secret(
-                fmt="Bearer {secret}",
+                fmt="Bearer {FOO}",
                 template="Bearer {{ X }}",
                 compose=["X"],
             )
@@ -381,13 +387,13 @@ def test_inject_format_and_template_both_set_rejected() -> None:
 
 
 def test_inject_neither_format_nor_template_rejected() -> None:
-    with pytest.raises(ValidationError, match="either 'format' .* or 'template'"):
+    with pytest.raises(ValidationError, match=r"either 'format'.*'template'"):
         Config.model_validate(_composite_secret())
 
 
 def test_compose_without_template_rejected() -> None:
     with pytest.raises(ValidationError, match="compose: requires inject.template"):
-        Config.model_validate(_composite_secret(fmt="Bearer {secret}", compose=["X"]))
+        Config.model_validate(_composite_secret(fmt="Bearer {FOO}", compose=["X"]))
 
 
 def test_template_without_compose_rejected() -> None:
@@ -411,7 +417,7 @@ def test_compose_zero_entries_rejected() -> None:
 
 
 def test_compose_duplicate_entries_rejected() -> None:
-    # Silas F5: raw-list dedupe rejection, never silently coalesce.
+    # raw-list dedupe rejection, never silently coalesce.
     with pytest.raises(ValidationError, match="duplicates"):
         Config.model_validate(
             _composite_secret(
@@ -422,7 +428,7 @@ def test_compose_duplicate_entries_rejected() -> None:
 
 
 def test_compose_yaml_alias_duplicate_rejected() -> None:
-    # Silas F5 (anchor variant): YAML aliases produce the same parsed
+    # anchor variant: YAML aliases produce the same parsed
     # list as repeated entries — must still reject.
     raw_yaml = """
 version: 1
@@ -498,18 +504,17 @@ def test_single_secret_with_inject_template_legal() -> None:
 
 def test_legacy_inject_format_still_works() -> None:
     # Backward compatibility: existing single-secret bindings with the
-    # original inject.format flow are untouched.
-    config = Config.model_validate(_composite_secret(fmt="Bearer {secret}"))
+    # named-form inject.format flow are untouched.
+    config = Config.model_validate(_composite_secret(fmt="Bearer {FOO}"))
     spec = config.secrets["FOO"]
     assert spec.compose is None
     assert spec.compiled_template is None
-    assert spec.inject.format == "Bearer {secret}"
+    assert spec.inject.format == "Bearer {FOO}"
 
 
 def test_named_inject_format_accepted() -> None:
-    # The named form `{<entry_name>}` is accepted as an alias for `{secret}`
-    # — both produce the same on-wire result. Operators who prefer the
-    # explicit form (entry key restated in the format) get it.
+    # The named form `{<entry_name>}` is the canonical (and only) placeholder
+    # accepted from v0.5.0 onward — see test_generic_secret_placeholder_rejected.
     config = Config.model_validate(_composite_secret(fmt="Bearer {FOO}"))
     spec = config.secrets["FOO"]
     assert spec.inject.format == "Bearer {FOO}"
@@ -520,14 +525,12 @@ def test_named_inject_format_rejects_mismatched_name() -> None:
     # like `{FOO_API_KEY}` under a secrets entry actually named `FOO` would
     # silently inject literal `{FOO_API_KEY}` bytes onto the wire — caught
     # at config load instead.
-    import pytest
-
-    with pytest.raises(ValueError, match=r"must contain either"):
+    with pytest.raises(ValidationError, match=r"must contain"):
         Config.model_validate(_composite_secret(fmt="Bearer {WRONG_NAME}"))
 
 
-def test_nested_composition_rejected_silas_f6() -> None:
-    # Silas F6: composite-of-composite must be rejected via leaf-check.
+def test_nested_composition_rejected() -> None:
+    # composite-of-composite must be rejected via leaf-check.
     raw = {
         "version": 1,
         "secrets": {
@@ -552,12 +555,12 @@ def test_nested_composition_rejected_silas_f6() -> None:
         },
         "audit": {"path": "/tmp/x.jsonl"},
     }
-    with pytest.raises(ValidationError, match="[Nn]ested composition is not supported"):
+    with pytest.raises(ValidationError, match="is itself a composite binding"):
         Config.model_validate(raw)
 
 
-def test_compose_can_share_name_with_single_secret_binding_silas_f6() -> None:
-    # Silas F6 corollary: it's legal for a compose entry to share its name
+def test_compose_can_share_name_with_single_secret_binding() -> None:
+    # it's legal for a compose entry to share its name
     # with a SINGLE-secret binding. Only nesting (composite-in-composite)
     # is banned. ``JIRA_API_TOKEN`` can be both a standalone single-secret
     # binding AND used inside a JIRA_API_BASIC composite.
@@ -566,7 +569,7 @@ def test_compose_can_share_name_with_single_secret_binding_silas_f6() -> None:
         "secrets": {
             "JIRA_API_TOKEN": {
                 "placeholder": "jira_tok_PLACEHOLDER_01HXY12345",
-                "inject": {"header": "X-Jira-Token", "format": "{secret}"},
+                "inject": {"header": "X-Jira-Token", "format": "{JIRA_API_TOKEN}"},
                 "bindings": [{"host": "jira.example.com"}],
             },
             "JIRA_API_BASIC": {
@@ -594,3 +597,214 @@ def test_4_secret_composite_at_cap_accepted() -> None:
         )
     )
     assert config.secrets["FOO"].compose == ["A", "B", "C", "D"]
+
+
+# ---------------------------------------------------------------------------
+# v0.5.0 injector-strategy port: discriminator + named-placeholder rules
+# (P0.1 of the superfly-tokenizer-inspired refactor — see ISA.md at repo
+# root, decisions Q1+Q12+Q14)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_inject_type_clean_error() -> None:
+    # Operator typos `type: oauth_refresh_` (note the underscore) instead
+    # of `oauth2_refresh`. The pre-discriminator short-circuit catches it
+    # with a single-line error listing the valid types, rather than
+    # spilling Pydantic-internal-repr across hundreds of lines.
+    with pytest.raises(ValidationError, match=r"inject\.type 'oauth_refresh_' is unknown"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {
+                            "type": "oauth_refresh_",
+                            "header": "Authorization",
+                            "format": "Bearer {FOO}",
+                        },
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_known_but_unimplemented_inject_type_clean_error() -> None:
+    # `oauth2_refresh` is in the v0.5.0 planned taxonomy but ships in
+    # phase P1, not P0. An operator writing it under a P0-only install
+    # gets a clear "not yet implemented" error pointing at the CHANGELOG,
+    # rather than a Pydantic validation error about missing fields.
+    with pytest.raises(ValidationError, match=r"not yet implemented in this version"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {
+                            "type": "oauth2_refresh",
+                            "header": "Authorization",
+                            "format": "Bearer {FOO}",
+                        },
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_generic_secret_placeholder_rejected() -> None:
+    # The legacy `{secret}` alias was removed in v0.5.0 — only the named
+    # form `{<SECRET_NAME>}` is accepted. A binding still using the
+    # generic alias fails the named-form check at config load.
+    with pytest.raises(ValidationError, match=r"must contain '\{FOO\}'"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "FOO": {
+                        "placeholder": _FOO_PH,
+                        "inject": {"header": "Authorization", "format": "Bearer {secret}"},
+                        "bindings": [{"host": "api.example.com"}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_version_field_is_optional_and_defaults_to_one() -> None:
+    # `version:` may be omitted from bindings.yaml; the schema defaults
+    # to 1. Operators can write it for explicitness or drop it.
+    config = Config.model_validate(
+        {
+            "secrets": {
+                "FOO": {
+                    "placeholder": _FOO_PH,
+                    "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
+                    "bindings": [{"host": "api.example.com"}],
+                }
+            },
+            "audit": {"path": "/tmp/x.jsonl"},
+        }
+    )
+    assert config.version == 1
+
+
+def test_implicit_inject_type_defaults_to_header() -> None:
+    # An `inject:` block omitting `type:` parses as HeaderInjector by
+    # default — this is the backward-compat path for every v0.4.x
+    # bindings.yaml in existence.
+    config = Config.model_validate(
+        {
+            "version": 1,
+            "secrets": {
+                "FOO": {
+                    "placeholder": _FOO_PH,
+                    "inject": {"header": "Authorization", "format": "Bearer {FOO}"},
+                    "bindings": [{"host": "api.example.com"}],
+                }
+            },
+            "audit": {"path": "/tmp/x.jsonl"},
+        }
+    )
+    assert config.secrets["FOO"].inject.type == "header"
+
+
+def test_explicit_inject_type_header_accepted() -> None:
+    # Operators may opt to write `type: header` explicitly. The
+    # discriminator round-trips cleanly.
+    config = Config.model_validate(
+        {
+            "version": 1,
+            "secrets": {
+                "FOO": {
+                    "placeholder": _FOO_PH,
+                    "inject": {
+                        "type": "header",
+                        "header": "Authorization",
+                        "format": "Bearer {FOO}",
+                    },
+                    "bindings": [{"host": "api.example.com"}],
+                }
+            },
+            "audit": {"path": "/tmp/x.jsonl"},
+        }
+    )
+    assert config.secrets["FOO"].inject.type == "header"
+
+
+def test_inject_spec_backcompat_alias() -> None:
+    # Third-party code (and AVP's own pre-v0.5.0 tests) imports `InjectSpec`
+    # directly. The alias keeps `InjectSpec` valid through v0.6.0; new code
+    # should use `HeaderInjector`.
+    from agent_vault_proxy.config import HeaderInjector, InjectSpec
+
+    assert InjectSpec is HeaderInjector
+
+
+def test_discriminator_default_injection_with_real_multi_variant_union() -> None:
+    # Pydantic 2 does NOT apply per-model field defaults before reading the
+    # discriminator tag. The moment ``InjectorSpec`` gains a second variant
+    # (P0.6 adds BodyInjector), an input lacking ``type:`` would fail with
+    # ``union_tag_not_found`` unless the parent default-injects ``type:
+    # "header"`` first. This test simulates that future state by building a
+    # programmatic two-variant union and verifying both the default-injection
+    # and the union dispatch behave correctly.
+    from typing import Annotated, Literal
+
+    from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+    class _Header(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        type: Literal["header"] = "header"
+        value: str
+
+    class _Body(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        type: Literal["body"]
+        value: str
+
+    _Spec = Annotated[_Header | _Body, Field(discriminator="type")]  # noqa: N806
+
+    class _Parent(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        items: dict[str, _Spec]
+
+        @model_validator(mode="before")
+        @classmethod
+        def default_type(cls, data: object) -> object:
+            if not isinstance(data, dict):
+                return data
+            items = data.get("items")
+            if not isinstance(items, dict):
+                return data
+            new_items: dict[str, object] = {}
+            mutated = False
+            for k, v in items.items():
+                if isinstance(v, dict) and "type" not in v:
+                    new_items[k] = {**v, "type": "header"}
+                    mutated = True
+                else:
+                    new_items[k] = v
+            if mutated:
+                return {**data, "items": new_items}
+            return data
+
+    # Implicit type: defaults to header.
+    p1 = _Parent.model_validate({"items": {"a": {"value": "x"}}})
+    assert isinstance(p1.items["a"], _Header)
+
+    # Explicit type=body dispatches to the body variant.
+    p2 = _Parent.model_validate({"items": {"a": {"type": "body", "value": "y"}}})
+    assert isinstance(p2.items["a"], _Body)
+
+    # Mixed: defaulted + explicit non-default coexist.
+    p3 = _Parent.model_validate(
+        {"items": {"a": {"value": "x"}, "b": {"type": "body", "value": "y"}}}
+    )
+    assert isinstance(p3.items["a"], _Header)
+    assert isinstance(p3.items["b"], _Body)

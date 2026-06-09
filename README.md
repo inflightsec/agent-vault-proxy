@@ -30,9 +30,8 @@ secrets:
     placeholder: "github_pat_PLACEHOLDER_01HXY1234"   # the agent's env holds THIS
     inject:
       header: "Authorization"
-      format: "Bearer {GITHUB_PAT}"              # {GITHUB_PAT} = real value AVP fetches
-                                                      # from your backend for the entry above.
-                                                      # `{secret}` also works as a generic alias.
+      format: "Bearer {GITHUB_PAT}"                   # {GITHUB_PAT} = real value AVP fetches
+                                                      # from your backend for the entry above
     bindings:
       - host: "api.github.com"                        # only swapped for this destination
         methods: [POST]                               # agent can open things...
@@ -48,7 +47,7 @@ export HTTPS_PROXY="http://127.0.0.1:14322"
 curl -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/repos/myorg/myrepo/pulls ...
 ```
 
-Full schema (composite secrets, multiple hosts per binding, path globs) in [`bindings.example.yaml`](bindings.example.yaml).
+Full schema in [`bindings.example.yaml`](bindings.example.yaml) — header injection (shown above), **streaming body injection** for upstreams that want the credential in the request body (Slack webhooks, OAuth POSTs, HMAC payloads), **multi-target injectors** for credentials that land in more than one place per request, composite secrets, multiple hosts per binding, and method/path globs.
 
 ## Why
 
@@ -66,7 +65,7 @@ Although built for agents, the mechanism is fully general: any process that hold
 
 **AVP is not a vault — and not trying to be.** Plenty of mature secret-vault implementations already exist: [Bitwarden](https://github.com/bitwarden) Secrets Manager, 1Password, HashiCorp Vault, Doppler, AWS Secrets Manager, Google Secrets Manager. The goal here isn't to reinvent any of them — use whichever you already trust. AVP is the just-in-time wire-substitution layer that sits between your vault and your agent's process. Bitwarden (cloud + self-hosted) is the reference backend that ships today; other vaults plug in via the `SecretsBackend` Protocol — see [docs/adapter-architecture.md](docs/adapter-architecture.md). PRs welcome.
 
-How this compares to HashiCorp Vault Agent, Doppler, `op run`, `superfly/tokenizer`, and Kloak: [docs/comparison.md](docs/comparison.md).
+How this compares to HashiCorp Vault Agent, Doppler, `op run`, and `superfly/tokenizer`: [docs/comparison.md](docs/comparison.md).
 
 ## Setup (one-time)
 
@@ -82,7 +81,7 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
    Full walkthrough: [docs/install-systemd.md](docs/install-systemd.md). ~10 minutes the first time. The doc:
 
    - creates a dedicated `avp` UNIX user with no shell, no home directory,
-   - **pip-installs the published wheel from PyPI** (`pip install --only-binary :all: agent-vault-proxy==0.4.3`) into a system-wide venv at `/opt/agent-vault-proxy/.venv` — `--only-binary :all:` refuses source distributions, so a compromised transitive dep can't run code at install time,
+   - **pip-installs the published wheel from PyPI** (`pip install --only-binary :all: agent-vault-proxy==0.5.0`) into a system-wide venv at `/opt/agent-vault-proxy/.venv` — `--only-binary :all:` refuses source distributions, so a compromised transitive dep can't run code at install time,
    - drops your BWS token at `/etc/agent-vault-proxy/bws-token` (root-owned, `avp`-readable) and your bindings at `/etc/agent-vault-proxy/bindings.yaml`,
    - installs a locked-down systemd unit (`ProtectSystem=strict`, `RestrictAddressFamilies`, syscall filter, `chattr +a` append-only audit log) — sandbox controls Docker can't offer.
 
@@ -96,7 +95,7 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
    # Pick a tagged release, not `main` — tags are how you opt into a vetted
    # version. Tracking `main` exposes you to a window where a compromised
    # maintainer account could push a malicious commit before anyone notices.
-   git clone -b v0.4.3 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
+   git clone -b v0.5.0 --depth 1 https://github.com/inflightsec/agent-vault-proxy && cd agent-vault-proxy
    mkdir -p secrets && bash -c '( umask 077 && read -rsp "BWS access token: " T && printf "%s" "$T" > secrets/bws-token && echo )'
    cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
    docker compose up -d
@@ -169,11 +168,15 @@ Vulnerability reports: [SECURITY.md](SECURITY.md).
 
 **v0.4.3**, single-line follow-up to v0.4.2 — fixes a `__version__` skew in the published v0.4.2 wheel (`pyproject.toml` was bumped to 0.4.2 but `src/agent_vault_proxy/__init__.py` still reported `"0.4.1"`). Cosmetic only; the v0.4.2 proxy code was byte-for-byte identical to v0.4.1, so substitution and audit behavior were correct. v0.4.3 makes `agent_vault_proxy.__version__` agree with the wheel metadata. **v0.4.2**, release-tooling patch on top of v0.4.1 — fixes a grep in the PyPI install-smoke harness that mis-classified the `unmatched_destination_policy: deny` audit event (the proxy itself was always returning 403 + auditing correctly). No proxy code changes; v0.4.1's guarantees are unchanged. **v0.4.1**, security + review-followup release on top of v0.4.0. Closes a G6 fail-open path (any uncaught backend exception now returns 503 + audits rather than forwarding the placeholder), tightens config validation (`extra="forbid"` everywhere, placeholder structural checks, eager backend.config validation, case-insensitive host matching, cgroup v2 container detection in preflight), hardens the Dockerfile to install from the hash-pinned lockfile, and ships a Docker E2E harness exercised in CI. v0.4.0 introduced composite secret bindings (`compose:` + sandboxed Jinja2 templates), the `SecretsBackend` Protocol adapter architecture, and hash-pinned dev lockfiles. v0.3 was skipped. Full entries in [CHANGELOG.md](./CHANGELOG.md).
 
-The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 289+ automated tests passing, two rounds of adversarial review per feature (pentest + cross-model Oracle), and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
+The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 289+ automated tests passing, adversarial review per feature, and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
 
 Not yet supported: OAuth refresh-token flows, AWS SigV4, multi-tenant routing, off-host BWS broker, admin Unix socket / MCP interface. The [`avp bindings diff`](docs/architecture.md) semantic-review CLI, cosign-signed `ghcr.io` container images, SBOMs at build time, and a published Ansible role are planned for v0.5.0+.
 
 Other vault backends (1Password, HashiCorp Vault as a source, etc.) plug in via the `SecretsBackend` Protocol - see [docs/adapter-architecture.md](docs/adapter-architecture.md) for the design. PRs that add an adapter for an additional vault are welcome.
+
+A **macOS Keychain backend is rejected for now**: a process running as the same user can read the Keychain, so the real secret bytes would be reachable by the very UID AVP exists to keep them away from — it defeats the point. Use a vault that gates access behind a separate trust boundary (Bitwarden Secrets Manager is the reference).
+
+A **LastPass backend is parked, not planned**: the 2022 vault breach is still producing credential-theft losses in 2026, and LastPass has no scoped-access (machine-account) model — the choice is full-vault access or a paid seat per scope. Migrate to Bitwarden or self-hosted Vaultwarden instead.
 
 ## Contributing
 
@@ -181,4 +184,4 @@ Bug reports and PRs welcome. New here? Check the [good first issues](https://git
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE). Prior art that influenced the design is acknowledged in [`CREDITS.md`](./CREDITS.md).

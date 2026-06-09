@@ -33,7 +33,7 @@ REAL_SECRET="REAL-SECRET-VALUE-only-for-the-e2e-harness"
 # container's heredoc, which generates /etc/agent-vault-proxy/secrets.yml
 # in-container. Generation (rather than a host bind mount) sidesteps the
 # Docker userns-remap case where container "root" maps to a non-root
-# host UID that can't read host-radek's 0600 secrets.yml.
+# host UID that can't read the operator's 0600 secrets.yml.
 #
 # Input-validate REAL_SECRET against a narrow charset before exporting:
 # the avp-init heredoc embeds the value into a YAML string literal, and

@@ -9,7 +9,7 @@ secrets:
     placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
     inject:
       header: "x-api-key"
-      format: "{secret}"
+      format: "{ANTHROPIC_API_KEY}"
     bindings:
       - host: "api.anthropic.com"
 

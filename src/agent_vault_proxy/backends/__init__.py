@@ -87,7 +87,7 @@ class SecretsBackend(Protocol):
 # Registry: maps backend.type discriminator string → (BackendCls, ConfigCls).
 # Populated by register_backend() calls at import time.
 #
-# Pentester L-B: external code reads through BACKEND_REGISTRY (a read-only
+# external code reads through BACKEND_REGISTRY (a read-only
 # MappingProxyType view) but cannot mutate it — registration MUST go through
 # register_backend() so the duplicate check fires. The private dict is the
 # mutable backing store.
@@ -98,7 +98,7 @@ BACKEND_REGISTRY: Mapping[str, tuple[type[SecretsBackend], type[BaseModel]]] = M
 
 
 def _normalize_name(name: str) -> str:
-    """Pentester L-A: bare .lower() doesn't fold compatibility variants
+    """bare .lower() doesn't fold compatibility variants
     (e.g., full-width "ＢＷＳ" survives .lower() as a different string from
     "bws", letting an attacker register a visually-identical duplicate).
     NFKC normalization + casefold collapses compat variants to their
@@ -116,9 +116,9 @@ def register_backend(
     Name is NFKC-normalized + casefolded + checked for duplicates at
     registration time. Duplicate registration raises ValueError loudly —
     silent override would be a registry-collision attack vector (see
-    Pentester finding H3 in docs/adapter-architecture.md).
+    design-doc reference in docs/adapter-architecture.md).
 
-    Concurrency (Oracle C9): registration is expected at module-import
+    Concurrency: registration is expected at module-import
     time (single-threaded). Reading via BACKEND_REGISTRY at runtime is
     safe (the MappingProxyType wraps a dict whose contents don't change
     after startup). Calling register_backend() from multiple threads or
@@ -127,7 +127,7 @@ def register_backend(
     if not isinstance(name, str):
         raise TypeError(f"backend name must be str, got {type(name).__name__}")
     normalized = _normalize_name(name).strip()
-    # Oracle C8: reject empty/whitespace-only names. Without this,
+    # reject empty/whitespace-only names. Without this,
     # register_backend("", ...) or register_backend("   ", ...) silently
     # registers an unreachable backend (no one can write `type: ""` in YAML).
     if not normalized:
@@ -152,7 +152,7 @@ def _reset_registry_for_tests() -> None:
     Prefer the `isolated_registry` pytest fixture (in
     tests/backends/test_protocol_contract.py) over calling this directly —
     the fixture ensures the registry is restored even if the test body
-    raises mid-way (Pentester finding D-A).
+    raises mid-way.
     """
     _registry.clear()
     from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig

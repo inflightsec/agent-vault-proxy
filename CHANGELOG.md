@@ -6,9 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0], 2026-06-05
+
+The injector port: `inject.type:` becomes a discriminated union. v0.4.x bindings parse byte-identically. Taxonomy inspired by `superfly/tokenizer`; implementations are original Python from the underlying public specs. See `CREDITS.md`.
+
+### Added
+
+- `inject.type: header` (default) + discriminated-union `InjectorSpec`. v0.4.x omits `type:` and parses as `header`. Unknown / planned types fail with a one-line error instead of Pydantic's `union_tag_invalid` dump; recurses into `multi.injectors`.
+- `inject.type: body` — streaming substitution via `flow.request.stream`, constant memory, `Transfer-Encoding: chunked` framing. Chunk-boundary placeholders handled via `(max_placeholder_len - 1)`-byte overlap. Optional `content_type:` filter. Backend failure → 503 + denied audit, remaining chunks dropped. Two-phase commit in `_apply_replacements` keeps audit history consistent with what the upstream sees.
+- `inject.type: multi` — one secret, 2-4 leaf children (header / body in v0.5.0). Rejects nested multi, duplicate header targets (case-insensitive), >1 body child, `compose: + multi`.
+- `Config.secrets_for_host` host-keyed index — replaces the per-request linear scan; bounds the body scan surface.
+- `tests/test_backend_parity.py` — pins YAML ↔ BWS-notes parity for ADR-0011.
+- `CREDITS.md` + `license-grep-superfly` pre-commit hook.
+- Audit reason taxonomy in `docs/architecture.md` §4.4.
+
 ### Changed
 
-- **`inject.format` accepts a named placeholder matching the entry key.** Previously the format string had to contain the literal sentinel `{secret}`; now `{<SECRET_NAME>}` works too, where `<SECRET_NAME>` is the entry's YAML key (e.g. `format: "Bearer {ANTHROPIC_API_KEY}"` under a `secrets.ANTHROPIC_API_KEY:` block). The generic `{secret}` form continues to work — operators can pick whichever they prefer. `bindings.example.yaml` and the README "At a glance" snippet now use the named form for readability. Config validation rejects a named placeholder that doesn't match the parent entry's key (catches typos like `{ANTHROPIC_API_KEY}` under a `secrets.ANTHROPIC:` block, which would otherwise inject literal `{ANTHROPIC_API_KEY}` bytes onto the wire).
+- `inject.format` requires the named placeholder `{<SECRET_NAME>}` matching the parent entry's YAML key. `Config.version` is optional, defaults to `1`.
+- `bindings.example.yaml` — named form throughout; adds `SLACK_WEBHOOK_TOKEN` + `WEBHOOK_DUAL` examples.
+- `addon.requestheaders` is now a 3-stage pipeline: deny gates → header injection → body streaming setup.
+
+### Removed
+
+- Legacy `{secret}` placeholder. Bindings still using it fail at config load.
+
+### Audit-stream consumers
+
+- New `reason: "body_binding_matched"` on body-injector allows.
+- Multi-injector leaves emit one event each under the parent `secret_name`; dedup if counting "substitutions per request."
+- `destination.path_prefix` (≤64 bytes) appears on body events too.
 
 ## [0.4.3], 2026-06-02
 
@@ -110,7 +136,7 @@ The adapter refactor (originally proposed for v0.3.0 in `docs/adapter-architectu
 ### Changed
 
 - Config: `InjectSpec.format` is now `Optional[str]` and a peer of the new `InjectSpec.template: Optional[str]`. Exactly one of the two must be set per binding (validator-enforced). Existing `inject.format` bindings continue to work unchanged.
-- Addon: request handlers now capture `(config, client, audit)` at handler entry, preventing a mid-request `configure()` reload from producing a torn state (Silas F3).
+- Addon: request handlers now capture `(config, client, audit)` at handler entry, preventing a mid-request `configure()` reload from producing a torn state.
 - Dependency advances captured by the 7-day-cooldown regen: `bitwarden-sdk` 2.0.0 → 2.1.0, `certifi` 2026.4.22 → 2026.5.20, `click` 8.4.0 → 8.4.1, `ruff` 0.15.13 → 0.15.14.
 - **Security CI stack refactored to drop GitHub Advanced Security dependency.** CodeQL (Python SAST) replaced with **Bandit + Semgrep** (community rulesets: `p/security-audit` + `p/python` + `p/secrets`). Gitleaks (which required a paid license for org-owned repos as of Aug 2022) replaced with **TruffleHog** (AGPL-3, free for everyone). OSV-Scanner switched from the action wrapper to direct binary install (the wrapper passes `scan-args` as a single positional arg, breaking multi-flag invocation). All security jobs now gate the merge via job-fail instead of SARIF-upload to the Security tab, workflows portable to any git host, no GHAS settings to babysit. The same three Docker-based scanners (TruffleHog, OSV-Scanner, Semgrep) also run in pre-commit so most commits hit the same gates locally before push.
 

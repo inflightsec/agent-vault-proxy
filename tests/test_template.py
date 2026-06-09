@@ -257,7 +257,7 @@ def test_render_non_string_value_raises() -> None:
 
 def test_render_empty_string_value() -> None:
     # Empty strings ARE valid str. AVP's addon will refuse-to-render with
-    # empty BWS values upstream (Silas F4), but the template module
+    # empty BWS values upstream, but the template module
     # itself accepts them as valid input.
     tpl = AvpTemplate("{{ X }}", ["X"])
     assert tpl.render({"X": ""}) == ""
@@ -300,7 +300,7 @@ def test_whitelisted_functions_exactly_matches_spec() -> None:
 
 
 def test_whitelisted_filters_is_immutable() -> None:
-    # Oracle C8: MappingProxyType prevents tests or future code from
+    # MappingProxyType prevents tests or future code from
     # mutating the whitelist after env init — which would otherwise
     # let validator and runtime diverge.
     with pytest.raises(TypeError):
@@ -330,12 +330,12 @@ def test_func_hmac_sha256_non_string_key_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Oracle-driven hardening tests
+# Review-driven hardening tests
 # ---------------------------------------------------------------------------
 
 
 def test_source_length_cap_enforced() -> None:
-    # Oracle C2: pathological-size guard at config-load.
+    # pathological-size guard at config-load.
     from agent_vault_proxy.template import MAX_TEMPLATE_SOURCE_LEN
 
     over = "X" * (MAX_TEMPLATE_SOURCE_LEN + 1)
@@ -352,13 +352,13 @@ def test_source_length_at_cap_accepted() -> None:
 
 
 def test_filter_extra_positional_arg_rejected() -> None:
-    # Oracle C3: ``X | sha256(Y)`` must fail at config-load, not at render.
+    # ``X | sha256(Y)`` must fail at config-load, not at render.
     with pytest.raises(UnsupportedTemplateError, match="filter 'sha256' takes 0"):
         AvpTemplate("{{ X | sha256('extra') }}", ["X"])
 
 
 def test_function_wrong_arity_rejected_too_few() -> None:
-    # Oracle C4: ``hmac_sha256(K)`` is missing the message arg.
+    # ``hmac_sha256(K)`` is missing the message arg.
     with pytest.raises(UnsupportedTemplateError, match="function 'hmac_sha256' takes 2"):
         AvpTemplate("{{ hmac_sha256(K) }}", ["K"])
 
@@ -369,7 +369,7 @@ def test_function_wrong_arity_rejected_too_many() -> None:
 
 
 def test_allowed_vars_as_bare_string_rejected() -> None:
-    # Oracle C5: prevent the silent character-split footgun.
+    # prevent the silent character-split footgun.
     with pytest.raises(UnsupportedTemplateError, match="not a bare string"):
         AvpTemplate("{{ X }}", "X")  # type: ignore[arg-type]
 
@@ -385,7 +385,7 @@ def test_allowed_vars_empty_string_entry_rejected() -> None:
 
 
 def test_compose_var_colliding_with_filter_name_rejected() -> None:
-    # Oracle C6: compose name `b64encode` would create ambiguous parse
+    # compose name `b64encode` would create ambiguous parse
     # behavior — reject at construction.
     with pytest.raises(UnsupportedTemplateError, match="reserved filter or function"):
         AvpTemplate("{{ b64encode }}", ["b64encode"])
@@ -397,7 +397,7 @@ def test_compose_var_colliding_with_function_name_rejected() -> None:
 
 
 def test_render_filter_runtime_error_becomes_render_error() -> None:
-    # Oracle C1: filter-raised UnsupportedTemplateError (e.g., b64decode
+    # filter-raised UnsupportedTemplateError (e.g., b64decode
     # on non-ASCII) is wrapped as TemplateRenderError so the addon catches
     # exactly one type at the render boundary.
     tpl = AvpTemplate("{{ X | b64decode }}", ["X"])

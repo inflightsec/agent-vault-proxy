@@ -62,15 +62,7 @@ WantedBy=multi-user.target
 
 ## First-boot CA generation
 
-On first proxied request, mitmproxy generates a self-signed CA at `$HOME/.mitmproxy/mitmproxy-ca-cert.pem`. With the unit above, that's `/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem`. Install it where callers can trust it:
-
-```bash
-sudo install -m 0644 -o root -g root \
-  /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem \
-  /etc/agent-vault-proxy/ca.pem
-```
-
-Do not regenerate the CA on subsequent deploys - any caller that pinned `NODE_EXTRA_CA_CERTS=/etc/agent-vault-proxy/ca.pem` would break.
+The CA is generated and installed during the install procedure: see [install-systemd.md](install-systemd.md#5-trust-the-ca) step 5. Unit-specific detail: with `HOME=/var/lib/agent-vault-proxy` (set above), mitmproxy writes the CA under `/var/lib/agent-vault-proxy/.mitmproxy/`. Do not regenerate it on later deploys, any caller that pinned the old `ca.pem` would break. To rotate it deliberately, see below.
 
 ## CA rotation
 
@@ -99,14 +91,7 @@ Audit the rotation in the operator log (this is a manual ritual, not yet a runbo
 
 ## Append-only audit log
 
-```bash
-sudo touch /var/log/agent-vault-proxy/audit.jsonl
-sudo chown avp:avp /var/log/agent-vault-proxy/audit.jsonl
-sudo chmod 0640 /var/log/agent-vault-proxy/audit.jsonl
-sudo chattr +a /var/log/agent-vault-proxy/audit.jsonl
-```
-
-`chattr +a` makes the file append-only at the filesystem level - root itself cannot rewrite history without first stripping the attribute. The proxy will refuse to start if the audit log is unwritable (`fail_on_unwritable: true`).
+Created during install: see [install-systemd.md](install-systemd.md#1-create-the-user-directories-and-append-only-audit-log) step 1. `chattr +a` makes the file append-only at the filesystem level, so root itself cannot rewrite history without first stripping the attribute (a visible, auditable event). The proxy refuses to start if the audit log is unwritable (`fail_on_unwritable: true`).
 
 ## Verifying the install
 

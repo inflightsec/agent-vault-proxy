@@ -13,6 +13,8 @@ Your agent (dev laptop, CI runner, cron job, etc) gets a fake placeholder string
 
 Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden](https://github.com/bitwarden) Secrets Manager — cloud or self-hosted — just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space.
 
+**New here?** Run the [Quickstart](docs/quickstart.md) (it points you to the ~10-minute Bitwarden setup first) to see a real substitution land in the audit log, or read [Concepts](docs/concepts.md) for the core ideas (placeholder, binding, the CA) in plain terms before you install.
+
 ## How it works
 
 [![agent-vault-proxy demo: prompt injection vs. credential isolation](docs/demo.svg)](docs/demo.cast)
@@ -69,7 +71,7 @@ How this compares to HashiCorp Vault Agent, Doppler, `op run`, and `superfly/tok
 
 ## Setup (one-time)
 
-Three steps. Once you've done this, every new API key is just "add to Bitwarden + a few lines of YAML + restart": see [Add a secret](#add-a-secret) below.
+Three steps. Once you've done this, every new API key is just "add to Bitwarden + a few lines of YAML + restart": see [Add a secret](#add-a-secret) below. For a guided first run against a throwaway key before you commit to the hardened setup, follow the [Quickstart](docs/quickstart.md).
 
 1. **Bitwarden Secrets Manager**, enable it on your org, create a project for this host, create a machine account with **read** access to the project, generate a token. ~10 minutes the first time. [Walkthrough](docs/prerequisites.md).
 
@@ -105,7 +107,7 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
 
    > ⚠️  **Two hard prerequisites for the Docker path:** (1) your AI agent's UID must NOT have docker daemon access — docker-group membership ≈ host root, which lets the agent `docker exec` the CA private key + BWS token out of the proxy. (2) Do NOT add other containers to the proxy's `avp-net` network. If either is hard to guarantee on your host, use the systemd install path instead.
 
-   A pre-built, cosign-signed container image at `ghcr.io/inflightsec/agent-vault-proxy:<tag>` is planned for v0.5.0 — `cosign verify` + `docker pull` will replace the clone-and-build step. Until then, build locally from the cloned tag.
+   A pre-built, cosign-signed container image at `ghcr.io/inflightsec/agent-vault-proxy:<tag>` is planned — `cosign verify` + `docker pull` will replace the clone-and-build step. Until then, build locally from the cloned tag.
    </details>
 
 3. **Point your agent at the proxy:**
@@ -128,6 +130,8 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
    curl -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/user
    ```
 
+   `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` cover Node and OpenSSL-based clients. Different HTTPS clients read different CA vars: the full per-client block (Node, OpenSSL, Python requests, curl) plus the `NO_PROXY` bypass is in [docs/usage.md](docs/usage.md).
+
 ## Add a secret
 
 After the one-time setup, every new credential is the same three steps:
@@ -140,11 +144,22 @@ That's it. Your agent uses the placeholder; the proxy swaps it for the real valu
 
 ## Deeper docs
 
-- [docs/prerequisites.md](docs/prerequisites.md) — Bitwarden Secrets Manager setup (10 minutes, do this first)
+**Start here**
+- [docs/quickstart.md](docs/quickstart.md) — 10-minute guided first run, ending in a visible substitution
+- [docs/concepts.md](docs/concepts.md) — the core ideas (placeholder, binding, the CA, fail-closed) in plain terms, plus a glossary
+- [docs/prerequisites.md](docs/prerequisites.md) — Bitwarden Secrets Manager setup (do this first)
+
+**Install and use**
 - [docs/install-systemd.md](docs/install-systemd.md) — full bare-metal Linux + systemd walkthrough (the recommended install path on Linux)
 - [docs/docker.md](docs/docker.md) — full Docker walkthrough (threat model, troubleshooting, rootless option) for the cross-platform / dev-box install path
-- [docs/usage.md](docs/usage.md) — env-var setup for the calling shell, configuration reference
+- [docs/usage.md](docs/usage.md) — point your agent at the proxy: calling-shell env vars + configuration
 - [bindings.example.yaml](bindings.example.yaml) — full config schema with reference patterns for Anthropic, OpenAI, GitHub, Groq, Mistral, DigitalOcean
+
+**Design and reference** (contributor-facing)
+- [docs/architecture.md](docs/architecture.md) — threat model, the G1–G9 invariants, request lifecycle, hardening, residual risks
+- [docs/adapter-architecture.md](docs/adapter-architecture.md) — the `SecretsBackend` protocol and how to add a new vault backend
+- [docs/comparison.md](docs/comparison.md) — how AVP compares to Vault Agent, Doppler, `op run`, `superfly/tokenizer`
+- [docs/branch-protection.md](docs/branch-protection.md) — maintainer/fork repo-hardening settings
 
 Alternative install for the embed / library case:
 
@@ -168,9 +183,9 @@ Vulnerability reports: [SECURITY.md](SECURITY.md).
 
 Release history in [CHANGELOG.md](./CHANGELOG.md).
 
-The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, and DigitalOcean APIs. Validation: 289+ automated tests passing, adversarial review per feature, and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
+The wire-format invariants (G1–G9) are stable and exercised regularly against live Anthropic, OpenAI, GitHub, Groq, Mistral, etc APIs. Validation: 300+ automated tests passing, adversarial review per feature, and the hardening checklist from [`docs/architecture.md`](docs/architecture.md) walked end-to-end. The wire invariants will not change before 1.0; the configuration schema may.
 
-Not yet supported: OAuth refresh-token flows, AWS SigV4, multi-tenant routing, off-host BWS broker, admin Unix socket / MCP interface. The [`avp bindings diff`](docs/architecture.md) semantic-review CLI, cosign-signed `ghcr.io` container images, SBOMs at build time, and a published Ansible role are planned for v0.5.0+.
+Injector types implemented in v0.5.0: `header`, `body`, `multi`. Planned but not yet implemented (schema knows them, config-load fails with a one-line "not yet implemented" error): `oauth2_refresh`, `oauth2_client_credentials`, `jwt_bearer`, `github_app`, `sigv4`, `hmac`. Also not yet supported: multi-tenant routing, off-host BWS broker, admin Unix socket / MCP interface. The `avp bindings diff` semantic-review CLI, cosign-signed `ghcr.io` container images, SBOMs at build time, and a published Ansible role are planned.
 
 Other vault backends (1Password, HashiCorp Vault as a source, etc.) plug in via the `SecretsBackend` Protocol - see [docs/adapter-architecture.md](docs/adapter-architecture.md) for the design. PRs that add an adapter for an additional vault are welcome.
 
@@ -181,6 +196,8 @@ A **LastPass backend is parked, not planned**: the 2022 vault breach is still pr
 ## Contributing
 
 Bug reports and PRs welcome. New here? Check the [good first issues](https://github.com/inflightsec/agent-vault-proxy/labels/good%20first%20issue) for starter-sized contributions. For changes that touch the G1–G9 invariants, please open an issue first, [docs/architecture.md](docs/architecture.md) describes what we're trying to preserve. Setup, testing, and pre-commit hooks in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Built with AI assistance (Claude Code), with every feature gated behind unit, integration and full suite of manual tests and two rounds of adversarial review: a pentest pass and a cross-model design review.
 
 ## License
 

@@ -17,7 +17,7 @@ The injector port: `inject.type:` becomes a discriminated union. v0.4.x bindings
 - `inject.type: multi` — one secret, 2-4 leaf children (header / body in v0.5.0). Rejects nested multi, duplicate header targets (case-insensitive), >1 body child, `compose: + multi`.
 - `Config.secrets_for_host` host-keyed index — replaces the per-request linear scan; bounds the body scan surface.
 - `tests/test_backend_parity.py` — pins YAML ↔ BWS-notes parity for ADR-0011.
-- `CREDITS.md` + `license-grep-superfly` pre-commit hook.
+- `CREDITS.md` — Acknowledgments for prior art (Kloak, `superfly/tokenizer`, mitmproxy, Bitwarden).
 - Audit reason taxonomy in `docs/architecture.md` §4.4.
 
 ### Changed

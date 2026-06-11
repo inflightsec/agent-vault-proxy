@@ -9,7 +9,7 @@ Cross-platform install path that runs on Linux, macOS (Docker Desktop), and Wind
 > 1. **Your AI agent's UID has docker daemon access** (member of `docker` group, or can reach `/var/run/docker.sock`). The agent can then extract the BWS token + CA private key directly via `docker exec` / `docker cp` - full detail in [§ Hard prerequisite: docker access boundary](#hard-prerequisite-docker-access-boundary).
 > 2. **Another container is on the `avp-net` network.** It can reach the proxy directly via container DNS, bypassing the host's loopback constraint: full detail in [§ Hard prerequisite: do NOT add other containers to avp-net](#hard-prerequisite-do-not-add-other-containers-to-avp-net).
 >
-> If either applies, stop and use the [bare-metal systemd install](../README.md#installation) instead. The setup below assumes neither does.
+> If either applies, stop and use the [bare-metal systemd install](install-systemd.md) instead. The setup below assumes neither does.
 
 ---
 
@@ -110,18 +110,11 @@ rm ca.pem
 
 ### 6. Point your agent at the proxy
 
-Same as the bare-metal install. In the calling shell:
+Same as the bare-metal install: set the calling-shell env vars (route through the proxy, trust the CA, `NO_PROXY` bypass, and the placeholder). The full canonical block is in [usage.md](usage.md); use the CA path you extracted in step 5. A one-line smoke test:
 
 ```bash
-export HTTPS_PROXY="http://127.0.0.1:14322"
-export HTTP_PROXY="http://127.0.0.1:14322"
-export NODE_EXTRA_CA_CERTS="/etc/agent-vault-proxy/ca.pem"
-export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
-export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
-export CURL_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
-
+export HTTPS_PROXY="http://127.0.0.1:14322" CURL_CA_BUNDLE="./ca.pem"
 export OPENAI_API_KEY="sk-PLACEHOLDER-..."
-
 curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
 
@@ -196,7 +189,7 @@ docker cp agent-vault-proxy:/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca.p
 
 **If the agent runs on the same host as the docker daemon and shares any user with docker access, use one of:**
 
-- The bare-metal systemd install ([main README](../README.md#installation)), separate UNIX users with no shared privilege escalation path.
+- The bare-metal systemd install ([main README](install-systemd.md)), separate UNIX users with no shared privilege escalation path.
 - Rootless docker (see [§ Rootless docker](#rootless-docker-optional)) running under a UID the agent doesn't have.
 - A separate VM dedicated to the proxy, with no agent process on it.
 
@@ -241,9 +234,9 @@ vs the bare-metal systemd install: systemd's `SystemCallFilter=@system-service` 
 | Not done | Why |
 |---|---|
 | **Egress restriction** | The proxy MUST forward to arbitrary upstream APIs. The binding-scope check in `bindings.yaml` is what controls which destinations get the real secret vs the placeholder; Docker-level egress controls would either be no-ops or break the proxy. |
-| **Image signature verification** | The image isn't published to a registry yet. v0.5.0 will ship cosign-signed images via `cosign verify ghcr.io/inflightsec/agent-vault-proxy@<digest>`. For now, build locally from the pinned-base Dockerfile. |
-| **SBOM at build time** | Deferred to v0.5.0 (syft / CycloneDX in `release.yml`). |
-| **Auto-applied `chattr +a`** | The proxy can't apply it itself (no `LINUX_IMMUTABLE`). Auto-init via depends_on/init container being evaluated for v0.5.0; in v0.4.1 it's a documented manual step. |
+| **Image signature verification** | The image isn't published to a registry yet. Planned: cosign-signed images via `cosign verify ghcr.io/inflightsec/agent-vault-proxy@<digest>`. For now, build locally from the pinned-base Dockerfile. |
+| **SBOM at build time** | Planned (syft / CycloneDX in `release.yml`). |
+| **Auto-applied `chattr +a`** | The proxy can't apply it itself (no `LINUX_IMMUTABLE`). Auto-init via depends_on/init container is being evaluated; for now it's a documented manual step. |
 | **Hash-pinned pip install** | **Landed in v0.4.1.** The Dockerfile now installs runtime deps from `requirements.lock` with `--require-hashes --only-binary :all:`, then installs the project wheel with `--no-deps`. Matches the CI install posture. |
 | **Rootless docker as default** | Works (see below) but adds setup friction. Documented as an option, not the default. |
 | **Replicas / horizontal scaling** | Not applicable. Each container generates its own CA; replicas would break host trust. Single-instance only. |

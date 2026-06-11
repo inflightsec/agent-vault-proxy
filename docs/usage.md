@@ -11,6 +11,11 @@ export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
 export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
 export CURL_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
 
+# Bypass the proxy for loopback and any internal mesh (Tailscale, VPN, LAN peers).
+# Without this, local-service calls get routed at the proxy pointlessly and the
+# legitimate caller breaks. NO_PROXY semantics differ by tool; tailor to your env.
+export NO_PROXY="localhost,127.0.0.1,::1,*.ts.net,*.local,10.0.0.0/8,192.168.0.0/16"
+
 # 2. Export the PLACEHOLDER — never the real value
 export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 
@@ -18,6 +23,8 @@ export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 #    secret on the way out, matching by binding scope (host + method + path).
 curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
+
+Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses; setting all of them is harmless. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
 
 The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/agent-vault-proxy/audit.jsonl`.
 

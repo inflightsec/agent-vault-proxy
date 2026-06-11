@@ -27,7 +27,7 @@ Once you have the token and organization UUID, pick an install path:
 
 ## Self-hosted Bitwarden
 
-The proxy works against any deployment that exposes the BWS Secrets Manager API. Defaults assume Bitwarden cloud (US region). To point at a different deployment, set `api_url` and `identity_url` under `bws:` in `bindings.yaml`:
+The proxy works against any deployment that exposes the BWS Secrets Manager API. Defaults assume Bitwarden cloud (US region). To point at a different deployment, set `api_url` and `identity_url` under `backend.config` in `bindings.yaml`:
 
 | Deployment | `api_url` | `identity_url` |
 |---|---|---|

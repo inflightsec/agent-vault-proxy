@@ -293,7 +293,7 @@ For multi-injector secrets (`inject.type: multi`), each substituted leaf emits i
 
 ### 4.6 Calling-shell environment
 
-The calling shell needs four things:
+The canonical, copy-paste version of this block lives in [usage.md](usage.md); the version here is annotated for the threat model. The calling shell needs four things:
 
 ```bash
 # Route HTTPS through the proxy

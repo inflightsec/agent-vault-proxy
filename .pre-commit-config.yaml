@@ -37,6 +37,10 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=500']
       - id: detect-private-key
+        # test_cli_doctor writes obviously-fake PEM strings ("SECRET" /
+        # "DEADBEEF" bodies) at test runtime; the literals in the source
+        # trip the scanner. Real keys are still caught everywhere else.
+        exclude: '^tests/test_cli_doctor\.py$'
 
   # ─── Ruff: lint + format. Single source of truth, mirrors CI. ─────────
   - repo: https://github.com/astral-sh/ruff-pre-commit

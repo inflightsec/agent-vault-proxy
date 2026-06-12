@@ -63,6 +63,7 @@ dev = [
 
 [project.scripts]
 agent-vault-proxy = "agent_vault_proxy.__main__:main"
+avp = "agent_vault_proxy.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]

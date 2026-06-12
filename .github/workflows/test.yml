@@ -114,6 +114,41 @@ jobs:
           docker compose -f tests/docker-e2e/docker-compose.yml logs avp || true
           docker compose -f tests/docker-e2e/docker-compose.yml logs upstream || true
 
+  e2e-setup:
+    # Integration test for `avp setup --no-service`: build the wheel,
+    # then provision a disposable Ubuntu container for real (useradd,
+    # modes, chattr +a) and assert the end state with bats. Service
+    # activation is out of scope by design — the unit FILE is asserted,
+    # systemd is never started. See tests/setup-e2e/README.md.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: 'pip install --no-cache-dir --only-binary :all: build'
+
+      - name: Run setup E2E harness
+        run: bash tests/setup-e2e/run.sh
+
+      - name: Dump container state on failure
+        if: failure()
+        run: docker logs avp-setup-e2e || true
+
   verify-lockfile:
     # Detect when pyproject.toml dependencies drift from either lockfile
     # without anyone re-running pip-compile. Cheap, runs in parallel.

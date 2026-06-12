@@ -116,6 +116,48 @@ _PLACEHOLDER_MARKER = "PLACEHOLDER"
 _FORMAT_PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 
 
+def validate_placeholder_invariants(placeholders: dict[str, str]) -> None:
+    """Assert the placeholder invariants over a ``{secret_name: placeholder}``
+    map: each is non-empty, >= the min length, contains the PLACEHOLDER
+    marker, printable, unique, and no placeholder is a substring of another
+    (the addon's ``in`` matching would otherwise pick the wrong secret).
+
+    Raised as ``ValueError`` so it surfaces identically whether invoked by
+    the Config load-time validator or by the daemon's BWS-notes activation
+    (which merges file + derived placeholders into one set that must ALSO
+    satisfy these invariants — a derived placeholder colliding/overlapping
+    with a file one is a hard, fail-closed startup error).
+    """
+    seen: dict[str, str] = {}
+    for name, ph in placeholders.items():
+        if not ph:
+            raise ValueError(f"secret {name!r}: placeholder is empty")
+        if len(ph) < _PLACEHOLDER_MIN_LEN:
+            raise ValueError(
+                f"secret {name!r}: placeholder must be at least "
+                f"{_PLACEHOLDER_MIN_LEN} characters (got {len(ph)})"
+            )
+        if _PLACEHOLDER_MARKER not in ph:
+            raise ValueError(
+                f"secret {name!r}: placeholder must contain the "
+                f"literal marker {_PLACEHOLDER_MARKER!r}"
+            )
+        if not ph.isprintable():
+            raise ValueError(f"secret {name!r}: placeholder must be printable")
+        if ph in seen:
+            raise ValueError(f"secret {name!r}: placeholder is identical to secret {seen[ph]!r}")
+        seen[ph] = name
+    # Pairwise substring check — a placeholder that's a substring of another
+    # would let the addon's `in` matching pick the wrong secret.
+    for ph_a, name_a in seen.items():
+        for ph_b, name_b in seen.items():
+            if name_a != name_b and ph_a in ph_b:
+                raise ValueError(
+                    f"secret {name_a!r}: placeholder is a substring "
+                    f"of secret {name_b!r}'s placeholder"
+                )
+
+
 def _assert_format_has_placeholder(format_str: str, *, context_label: str) -> None:
     """Require ``format_str`` to contain some ``{NAME}``-shaped placeholder."""
     if not _FORMAT_PLACEHOLDER_RE.search(format_str):
@@ -403,6 +445,14 @@ class SecretSpec(BaseModel):
 
     # Populated when inject.template is set; None for inject.format.
     _compiled_template: AvpTemplate | None = PrivateAttr(default=None)
+    # Which source produced this spec (ADR-0011 item 6). Defaults to "file":
+    # a spec loaded from bindings.yaml is file-sourced. The BindingsResolver
+    # sets "bws_notes" on specs built from a BWS secret's notes. The addon
+    # reads this onto the inject_decision audit event's `binding_source`.
+    # exclude=True keeps it OUT of model_dump()/JSON so the file-loaded
+    # schema and the parity dumps are byte-unchanged; it's a settable runtime
+    # attribute, not part of the serialised contract.
+    binding_source: str = Field(default="file", exclude=True)
 
     @field_validator("bindings")
     @classmethod
@@ -546,6 +596,16 @@ class Config(BaseModel):
     # Default `forward_unmodified`: AVP is a credential broker, not an
     # egress firewall. Operators opt into allow-listing with `deny`.
     unmatched_destination_policy: Literal["deny", "forward_unmodified"] = "forward_unmodified"
+    # Where binding policy comes from (ADR-0011). Default `both`: bindings
+    # resolve from BWS secret notes AND `secrets:` in this file, BWS-notes
+    # winning for the same secret. `bws_notes` = notes only; `file` = the
+    # pre-ADR-0011 file-only behaviour. Anything other than `file` requires
+    # a listable backend (bws/static).
+    binding_source: Literal["file", "bws_notes", "both"] = "both"
+    # Path to the per-install salt used to derive placeholders in
+    # bws_notes/both mode. Defaults to install-salt next to this file's
+    # directory; overridable for non-systemd layouts. Ignored in file mode.
+    install_salt_path: str | None = None
     cache: CacheSpec = Field(default_factory=CacheSpec)
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
@@ -595,37 +655,9 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_placeholders(self) -> Config:
-        seen: dict[str, str] = {}
-        for name, spec in self.secrets.items():
-            ph = spec.placeholder
-            if not ph:
-                raise ValueError(f"secret {name!r}: placeholder is empty")
-            if len(ph) < _PLACEHOLDER_MIN_LEN:
-                raise ValueError(
-                    f"secret {name!r}: placeholder must be at least "
-                    f"{_PLACEHOLDER_MIN_LEN} characters (got {len(ph)})"
-                )
-            if _PLACEHOLDER_MARKER not in ph:
-                raise ValueError(
-                    f"secret {name!r}: placeholder must contain the "
-                    f"literal marker {_PLACEHOLDER_MARKER!r}"
-                )
-            if not ph.isprintable():
-                raise ValueError(f"secret {name!r}: placeholder must be printable")
-            if ph in seen:
-                raise ValueError(
-                    f"secret {name!r}: placeholder is identical to secret {seen[ph]!r}"
-                )
-            seen[ph] = name
-        # Pairwise substring check — a placeholder that's a substring of
-        # another would let the addon's `in` matching pick the wrong secret.
-        for ph_a, name_a in seen.items():
-            for ph_b, name_b in seen.items():
-                if name_a != name_b and ph_a in ph_b:
-                    raise ValueError(
-                        f"secret {name_a!r}: placeholder is a substring "
-                        f"of secret {name_b!r}'s placeholder"
-                    )
+        validate_placeholder_invariants(
+            {name: spec.placeholder for name, spec in self.secrets.items()}
+        )
         return self
 
     @model_validator(mode="after")
@@ -657,13 +689,27 @@ class Config(BaseModel):
         Body and Aho-Corasick injectors need the narrowing so the body
         scan stays bounded.
         """
+        self.rebuild_host_index()
+        return self
+
+    def rebuild_host_index(self) -> None:
+        """(Re)build the host-keyed indices from the current ``secrets`` map.
+
+        Idempotent: clears then repopulates, so it is safe to call again
+        after ``secrets`` is mutated at runtime (the BWS-notes activation
+        merges resolved specs into ``secrets`` at configure() time and must
+        rebuild the index for the merged set). Separate from the load-time
+        ``build_host_index`` validator because pydantic wraps validators in a
+        descriptor that isn't directly callable post-construction.
+        """
+        self._exact_host_index = {}
+        self._wildcard_host_entries = []
         for name, spec in self.secrets.items():
             for binding in spec.bindings:
                 if binding.host.startswith("*."):
                     self._wildcard_host_entries.append((binding.host, name, spec))
                 else:
                     self._exact_host_index.setdefault(binding.host, []).append((name, spec))
-        return self
 
     def secrets_for_host(self, host: str) -> list[tuple[str, SecretSpec]]:
         """``(secret_name, spec)`` pairs whose bindings include ``host``.

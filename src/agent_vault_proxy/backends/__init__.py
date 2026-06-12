@@ -79,9 +79,76 @@ class SecretsBackend(Protocol):
         - repr() does NOT include token bytes (use SecretStr in config).
         - May be called from multiple threads; backend must be thread-safe
           OR documented as single-threaded (caching layer serializes).
+
+    ``fetch_with_meta`` (ADR-0011) is OPTIONAL. A backend that carries
+    per-secret binding metadata (BWS in its ``notes`` field) implements it
+    to return ``(value, note)``; backends with no notes concept omit it and
+    callers use the module-level :func:`fetch_with_meta` helper, which
+    falls back to ``(fetch(...), None)``. Keeping it off the required
+    surface means static.py and every third-party adapter stay working
+    unchanged under the Protocol change.
     """
 
     def fetch(self, name: str, ctx: FetchContext | None = None) -> str: ...
+
+
+def fetch_with_meta(
+    backend: SecretsBackend,
+    name: str,
+    ctx: FetchContext | None = None,
+) -> tuple[str, str | None]:
+    """Return ``(value, note)`` for ``name``.
+
+    Dispatch: if ``backend`` implements its own ``fetch_with_meta`` (bws
+    does, reading the secret's notes field), use it. Otherwise fall back to
+    ``(backend.fetch(name, ctx), None)`` — the safe default for backends
+    with no notes concept. This is the single call site the BWS-notes
+    binding loader uses, so adding a notes-aware backend never requires
+    touching the loader, and a non-notes backend never breaks it.
+
+    Note normalisation (empty/whitespace -> None) is the backend's
+    responsibility (see BitwardenBackend.fetch_with_meta); the fallback
+    path has no note to normalise.
+    """
+    own = getattr(type(backend), "fetch_with_meta", None)
+    # Guard against this very function being picked up if a backend aliases
+    # the name to the module helper — compare against this function object.
+    if callable(own) and own is not fetch_with_meta:
+        # bitwarden-sdk-backed backend has no type stubs for this method;
+        # the cast keeps the helper's (str, str | None) contract at the
+        # boundary rather than leaking Any to every caller.
+        result: tuple[str, str | None] = backend.fetch_with_meta(name, ctx)  # type: ignore[attr-defined]
+        return result
+    return backend.fetch(name, ctx), None
+
+
+class BackendCannotListError(Exception):
+    """Raised by :func:`list_secret_names` when the backend has no way to
+    enumerate secret names. ``avp env`` and the daemon's BWS-notes placeholder
+    map both REQUIRE enumeration; a backend that can't list can't drive either,
+    and we fail loud rather than silently producing an empty env file (which
+    would look like "no secrets" instead of "this backend can't list")."""
+
+
+def list_secret_names(backend: SecretsBackend) -> list[str]:
+    """Return every secret name the backend can enumerate.
+
+    Like :func:`fetch_with_meta`, this dispatches to the backend's own
+    ``list_secret_names`` when present (bws + static implement it) and
+    raises :class:`BackendCannotListError` otherwise. Kept as a single
+    helper so the ``avp env`` projection and the daemon's placeholder-map
+    builder share one enumeration contract — adding a listable backend never
+    requires touching either caller.
+    """
+    own = getattr(type(backend), "list_secret_names", None)
+    if callable(own) and own is not list_secret_names:
+        result: list[str] = backend.list_secret_names()  # type: ignore[attr-defined]
+        return result
+    raise BackendCannotListError(
+        f"backend {type(backend).__name__} cannot enumerate secret names; "
+        "`avp env` and BWS-notes binding mode require a listable backend "
+        "(bws, static)."
+    )
 
 
 # Registry: maps backend.type discriminator string → (BackendCls, ConfigCls).
@@ -170,9 +237,12 @@ from agent_vault_proxy.backends import static as _static_module  # noqa: E402, F
 __all__ = [
     "BACKEND_REGISTRY",
     "BackendAuthLostError",
+    "BackendCannotListError",
     "BackendUnavailableError",
     "FetchContext",
     "SecretNotFoundError",
     "SecretsBackend",
+    "fetch_with_meta",
+    "list_secret_names",
     "register_backend",
 ]

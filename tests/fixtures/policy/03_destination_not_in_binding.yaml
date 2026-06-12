@@ -1,0 +1,25 @@
+pins: [G5]
+secrets:
+  GITHUB_PAT: "ghp_FAKE_TESTVALUE"
+config: |
+  version: 1
+  secrets:
+    GITHUB_PAT:
+      placeholder: "ghp_PLACEHOLDER_WORK_01HXY1234567890"
+      inject:
+        header: "Authorization"
+        format: "token {GITHUB_PAT}"
+      bindings:
+        - host: "api.github.com"
+  unmatched_destination_policy: forward_unmodified
+request:
+  host: "api.example.com"
+  headers:
+    Authorization: "token ghp_PLACEHOLDER_WORK_01HXY1234567890"
+expect:
+  decision: denied
+  reason: destination_not_in_binding
+  secret_name: GITHUB_PAT
+  injected: false
+  status: null
+  header: "token ghp_PLACEHOLDER_WORK_01HXY1234567890"

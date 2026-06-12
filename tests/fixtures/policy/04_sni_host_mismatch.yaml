@@ -1,0 +1,26 @@
+pins: [G3]
+secrets:
+  ANTHROPIC_API_KEY: "sk-ant-FAKE-TESTVALUE"
+config: |
+  version: 1
+  secrets:
+    ANTHROPIC_API_KEY:
+      placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+      inject:
+        header: "Authorization"
+        format: "Bearer {ANTHROPIC_API_KEY}"
+      bindings:
+        - host: "api.anthropic.com"
+        - host: "api.openai.com"
+  unmatched_destination_policy: deny
+request:
+  connect: "api.openai.com"
+  host: "api.anthropic.com"
+  method: POST
+  path: /v1/messages
+  headers:
+    Authorization: "Bearer sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+expect:
+  decision: denied
+  reason: sni_host_mismatch
+  status: 403

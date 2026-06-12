@@ -69,6 +69,11 @@ class StaticSecretsBackend:
             raise SecretNotFoundError(f"secret {name!r} not in static file")
         return secrets[name]
 
+    def list_secret_names(self) -> list[str]:
+        """Return every secret name in the static file (drives ``avp env``
+        in dev/e2e). Reuses the same load+validate path as fetch()."""
+        return list(self._load_secrets().keys())
+
     def flush_name_map(self) -> None:
         """Invalidate the in-memory cache. Next fetch re-reads the file."""
         if self._config is not None:

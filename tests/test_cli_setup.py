@@ -237,10 +237,8 @@ def test_plan_ca_and_salt_run_as_user_no_regen() -> None:
 
 
 def test_plan_salt_in_statedir_pinned_in_bindings() -> None:
-    # The salt step runs as the service user, which cannot write the
-    # root-owned 0750 confdir; it must live in the statedir (= daemon HOME,
-    # the resolver fallback) and be pinned in the generated bindings so
-    # daemon and tooling derive identical placeholders.
+    # Service user cannot write the root-owned confdir; statedir = daemon
+    # HOME, and the bindings pin keeps placeholder derivation in sync.
     for os_name, user in (("linux", "avp"), ("macos", "_avp")):
         paths, steps = _plan(os_name, user=user, uid=250, gid=250)
         assert paths.salt_path == f"{paths.statedir}/install-salt"

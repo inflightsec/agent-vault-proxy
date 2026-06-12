@@ -1,10 +1,8 @@
-# OSV-Scanner per-directory config (auto-discovered by the pre-commit
-# docker hook and the CI osv-scan job — both scan the root lockfiles).
+# Auto-discovered by the pre-commit docker hook and the CI osv-scan job.
 
 [[IgnoredVulns]]
 id = "GHSA-cx3h-4qpv-8hc9"
-# tornado 6.5.5 OOB memory access via C extension, CVSS 3.7, transitive
-# via mitmproxy. Fixed in 6.5.6 (published 2026-06-12) — blocked by the
-# 7-day dependency cooldown until ~2026-06-19. Remove this entry at the
-# next lockfile regen after that date; the compile will pick 6.5.6.
-reason = "low-severity; fix is inside the supply-chain cooldown window, revisit after 2026-06-19"
+# tornado OOB read, CVSS 3.7, transitive. Fix (6.5.6, published
+# 2026-06-12) is inside the 7-day cooldown; drop this entry at the
+# first lockfile regen after 2026-06-19.
+reason = "low-severity; fix blocked by supply-chain cooldown until 2026-06-19"

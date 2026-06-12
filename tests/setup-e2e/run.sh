@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
 #
-# Integration harness for `avp setup --no-service`.
+# Integration harness for `avp setup --no-service`: build the wheel,
+# provision a disposable Ubuntu container for real, assert the end state
+# with setup.bats. Mirrors tests/docker-e2e (idempotent, teardown trap,
+# --keep to debug). Service ACTIVATION is out of scope by design — the
+# unit FILE is asserted, systemd never started. See README.md for the
+# real-Mac leg.
 #
-# Builds the wheel, then provisions a disposable Ubuntu container for
-# real — real useradd, real install(1) modes, real chattr +a — and
-# asserts the security end state with bats (setup.bats). Mirrors the
-# tests/docker-e2e harness: idempotent, teardown trap, --keep to debug.
-#
-# Service ACTIVATION is deliberately out of scope here (no systemd in
-# the container): the unit FILE content and the absence of enablement
-# are asserted instead. The same setup.bats validates the macOS
-# executor on a real Mac:
-#
-#   brew install bats-core && sudo bats tests/setup-e2e/setup.bats
-#
-# Usage:
-#   bash tests/setup-e2e/run.sh
-#   bash tests/setup-e2e/run.sh --keep   # leave the container running
+# Usage: bash tests/setup-e2e/run.sh [--keep]
 
 set -euo pipefail
 
@@ -56,9 +47,8 @@ if command -v uv >/dev/null 2>&1; then
 else
     (cd "$REPO_ROOT" && python3 -m build --wheel --outdir "$WHEEL_DIR" >/dev/null)
 fi
-# Ship the hash-pinned runtime lockfile alongside the wheel: deps are
-# installed --require-hashes/--only-binary in the container, never
-# resolved live from open ranges as root.
+# Deps install --require-hashes in the container — never resolved live
+# from open ranges as root.
 cp "$REPO_ROOT/requirements.lock" "$WHEEL_DIR/"
 
 green "[3/4] Starting container, installing wheel + bats..."

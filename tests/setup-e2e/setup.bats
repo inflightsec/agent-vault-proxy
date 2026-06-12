@@ -1,15 +1,8 @@
 #!/usr/bin/env bats
-# End-state assertions for `avp setup --no-service` (ADR-0011/0012).
-#
-# Provisions THE CURRENT HOST for real — run it only inside the disposable
-# container (tests/setup-e2e/run.sh) or on a Mac you actually intend to
-# provision:
-#
-#   brew install bats-core && sudo bats tests/setup-e2e/setup.bats
-#
-# On macOS the BWS token prompt is interactive (getpass reads /dev/tty):
-# paste any throwaway value. On Linux the harness feeds a fake token via
-# stdin. Tests run in file order and build on each other's state.
+# End-state assertions for `avp setup --no-service`. Provisions THE
+# CURRENT HOST for real — run only in the run.sh container or on a Mac
+# you intend to provision (see README.md; the macOS token prompt is
+# interactive). Tests run in file order and build on each other's state.
 
 setup_file() {
     if [ "$(id -u)" -ne 0 ]; then

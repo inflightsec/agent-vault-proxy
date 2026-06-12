@@ -109,9 +109,8 @@ def default_paths(os_name: str, prefix: str | None) -> SetupPaths:
         ca_pem=str(confdir / "ca.pem"),
         token_path=str(confdir / "bws-token"),
         bindings_path=str(confdir / "bindings.yaml"),
-        # Salt lives in the avp-writable statedir (= the daemon's HOME, the
-        # resolver's documented fallback) — the root-owned 0750 confdir is
-        # not writable by the run_as=<service-user> creation step.
+        # Statedir (= daemon HOME, the resolver fallback): the run_as
+        # service user cannot write the root-owned 0750 confdir.
         salt_path=str(statedir / "install-salt"),
         audit_path=str(logdir / "audit.jsonl"),
         service_file=str(service_file),
@@ -518,8 +517,7 @@ def _render_bindings(paths: SetupPaths) -> str:
         # this file only configures the backend + audit sink.
         version: 1
         binding_source: both
-        # Pin the salt so daemon + tooling derive identical placeholders
-        # regardless of HOME/AVP_CONFDIR.
+        # Pinned so daemon + tooling derive identical placeholders.
         install_salt_path: {paths.salt_path}
         secrets: {{}}            # bindings come from BWS notes; add file bindings here if needed
         backend:

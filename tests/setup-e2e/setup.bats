@@ -24,6 +24,9 @@ setup_file() {
     fi
     # Clearly fake — never put real credential material in this suite.
     export AVP_FAKE_TOKEN="avp-setup-e2e-FAKE-TOKEN-not-a-secret"
+    # bws (default) provisions a BWS token; static provisions a file-backed
+    # secrets file and no token. Set AVP_BACKEND=static to exercise it.
+    export AVP_BACKEND="${AVP_BACKEND:-bws}"
 }
 
 # mode owner group of a path, GNU/BSD portable.
@@ -56,10 +59,13 @@ assert_owner_only() {
 }
 
 run_setup() {
-    if [ "$AVP_OS" = linux ]; then
-        printf '%s\n' "$AVP_FAKE_TOKEN" | avp setup --no-service "$@"
+    local flags="--no-service"
+    [ "$AVP_BACKEND" = static ] && flags="$flags --static"
+    # Only the bws path needs a token; static skips the prompt entirely.
+    if [ "$AVP_OS" = linux ] && [ "$AVP_BACKEND" = bws ]; then
+        printf '%s\n' "$AVP_FAKE_TOKEN" | avp setup $flags "$@"
     else
-        avp setup --no-service "$@"
+        avp setup $flags "$@"
     fi
 }
 
@@ -110,10 +116,20 @@ run_setup() {
     [ "$(mog "$AVP_STATE/.mitmproxy")" = "700 $AVP_USER $AVP_USER" ]
 }
 
-@test "BWS token 0440 root:$AVP_USER, fake value landed" {
-    [ "$(mog "$AVP_CONF/bws-token")" = "440 root $AVP_USER" ]
-    if [ "$AVP_OS" = linux ]; then
-        grep -qF "$AVP_FAKE_TOKEN" "$AVP_CONF/bws-token"
+@test "secret source provisioned for the selected backend" {
+    if [ "$AVP_BACKEND" = static ]; then
+        # Static: no BWS token, a 0640 file-backed secrets file instead,
+        # and file-mode bindings pointing at the static backend.
+        [ ! -e "$AVP_CONF/bws-token" ]
+        [ "$(mog "$AVP_CONF/static-secrets.yaml")" = "640 root $AVP_USER" ]
+        grep -q "EXAMPLE_API_KEY" "$AVP_CONF/static-secrets.yaml"
+        grep -q "^binding_source: file$" "$AVP_CONF/bindings.yaml"
+        grep -q "type: static" "$AVP_CONF/bindings.yaml"
+    else
+        [ "$(mog "$AVP_CONF/bws-token")" = "440 root $AVP_USER" ]
+        if [ "$AVP_OS" = linux ]; then
+            grep -qF "$AVP_FAKE_TOKEN" "$AVP_CONF/bws-token"
+        fi
     fi
 }
 
@@ -125,7 +141,10 @@ run_setup() {
 
 @test "install salt 0600 $AVP_USER in the statedir (daemon-HOME parity)" {
     [ "$(mog "$AVP_STATE/install-salt" | cut -d' ' -f1-2)" = "600 $AVP_USER" ]
-    grep -q "^install_salt_path: $AVP_STATE/install-salt$" "$AVP_CONF/bindings.yaml"
+    # The bindings pin only applies to the salt-derived (bws) path.
+    if [ "$AVP_BACKEND" = bws ]; then
+        grep -q "^install_salt_path: $AVP_STATE/install-salt$" "$AVP_CONF/bindings.yaml"
+    fi
 }
 
 @test "bindings.yaml 0640 root:$AVP_USER" {

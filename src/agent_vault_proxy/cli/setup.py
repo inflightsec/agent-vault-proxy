@@ -24,7 +24,10 @@ from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
 
+import yaml
+
 from agent_vault_proxy.cli.doctor import run_doctor
+from agent_vault_proxy.config import Config
 
 _LINUX_SERVICE_NAME = "agent-vault-proxy.service"
 _MACOS_PLIST_NAME = "io.inflightsec.agent-vault-proxy.plist"
@@ -75,6 +78,7 @@ class SetupPaths:
     ca_pem: str
     token_path: str
     bindings_path: str
+    static_secrets_path: str
     salt_path: str
     audit_path: str
     service_file: str
@@ -109,6 +113,7 @@ def default_paths(os_name: str, prefix: str | None) -> SetupPaths:
         ca_pem=str(confdir / "ca.pem"),
         token_path=str(confdir / "bws-token"),
         bindings_path=str(confdir / "bindings.yaml"),
+        static_secrets_path=str(confdir / "static-secrets.yaml"),
         # Statedir (= daemon HOME, the resolver fallback): the run_as
         # service user cannot write the root-owned 0750 confdir.
         salt_path=str(statedir / "install-salt"),
@@ -129,6 +134,7 @@ def plan_setup(
     gid: int | None = None,
     allow_mutable_audit: bool = False,
     no_service: bool = False,
+    static: bool = False,
 ) -> list[Step]:
     """Render the ``avp setup`` install plan without touching the host."""
     if os_name not in {"linux", "macos"}:
@@ -183,18 +189,10 @@ def plan_setup(
                     allow_mutable_audit=allow_mutable_audit,
                 ),
             ),
-            PromptStep(
-                description="Capture the Bitwarden Secrets Manager machine-account token.",
-                dest_path=paths.token_path,
-                owner="root",
-                group=group,
-                mode=0o440,
-                skip_if_exists=True,
-            ),
             FileStep(
                 description="Write starter bindings.yaml.",
                 path=paths.bindings_path,
-                content=_render_bindings(paths),
+                content=_render_bindings(paths, static=static),
                 owner="root",
                 group=group,
                 mode=0o640,
@@ -239,6 +237,31 @@ def plan_setup(
             ),
         ]
     )
+    if not static:
+        steps.insert(
+            -4,
+            PromptStep(
+                description="Capture the Bitwarden Secrets Manager machine-account token.",
+                dest_path=paths.token_path,
+                owner="root",
+                group=group,
+                mode=0o440,
+                skip_if_exists=True,
+            ),
+        )
+    else:
+        steps.insert(
+            -4,
+            FileStep(
+                description="Write starter static secrets file.",
+                path=paths.static_secrets_path,
+                content='secrets:\n  EXAMPLE_API_KEY: "change-me-not-a-real-secret"\n',
+                owner="root",
+                group=group,
+                mode=0o640,
+                skip_if_exists=True,
+            ),
+        )
 
     if os_name == "linux":
         steps.append(
@@ -306,6 +329,7 @@ def run_setup(
     prefix: str | None,
     allow_mutable_audit: bool = False,
     no_service: bool = False,
+    static: bool = False,
 ) -> int:
     """CLI entry point for ``avp setup``."""
     system_name = platform.system()
@@ -338,6 +362,7 @@ def run_setup(
         gid=gid,
         allow_mutable_audit=allow_mutable_audit,
         no_service=no_service,
+        static=static,
     )
     execute_plan(plan, dry_run=dry_run)
     if no_service:
@@ -509,30 +534,58 @@ def _audit_post_actions(
     )
 
 
-def _render_bindings(paths: SetupPaths) -> str:
-    return textwrap.dedent(
+def _render_bindings(paths: SetupPaths, *, static: bool = False) -> str:
+    if not static:
+        file_bindings_comment = "# bindings come from BWS notes; add file bindings here if needed"
+        return textwrap.dedent(
+            f"""\
+            # agent-vault-proxy starter config written by `avp setup`.
+            # Edit your real bindings in Bitwarden secret notes (binding_source: both);
+            # this file only configures the backend + audit sink.
+            version: 1
+            binding_source: both
+            # Pinned so daemon + tooling derive identical placeholders.
+            install_salt_path: {paths.salt_path}
+            secrets: {{}}            {file_bindings_comment}
+            backend:
+              type: bws
+              config:
+                organization_id: "REPLACE-WITH-YOUR-BWS-ORG-UUID"   # <- you MUST set this
+                access_token_path: {paths.token_path}
+                state_path: {paths.statedir}/bws-state.json
+                # EU defaults; change to api.bitwarden.com / identity.bitwarden.com for US.
+                api_url: https://api.bitwarden.eu
+                identity_url: https://identity.bitwarden.eu
+            audit:
+              path: {paths.audit_path}
+            """
+        )
+
+    content = textwrap.dedent(
         f"""\
         # agent-vault-proxy starter config written by `avp setup`.
-        # Edit your real bindings in Bitwarden secret notes (binding_source: both);
-        # this file only configures the backend + audit sink.
+        # Static backend for development/testing only; replace this example before real use.
         version: 1
-        binding_source: both
-        # Pinned so daemon + tooling derive identical placeholders.
-        install_salt_path: {paths.salt_path}
-        secrets: {{}}            # bindings come from BWS notes; add file bindings here if needed
+        binding_source: file
+        secrets:
+          EXAMPLE_API_KEY:
+            placeholder: "avp-PLACEHOLDER-EXAMPLE-0001"
+            inject:
+              header: "Authorization"
+              format: "Bearer {{EXAMPLE_API_KEY}}"
+            bindings:
+              - host: "example.com"
         backend:
-          type: bws
+          type: static
           config:
-            organization_id: "REPLACE-WITH-YOUR-BWS-ORG-UUID"   # <- you MUST set this
-            access_token_path: {paths.token_path}
-            state_path: {paths.statedir}/bws-state.json
-            # EU defaults; change to api.bitwarden.com / identity.bitwarden.com for US.
-            api_url: https://api.bitwarden.eu
-            identity_url: https://identity.bitwarden.eu
+            type: static
+            path: {paths.static_secrets_path}
         audit:
           path: {paths.audit_path}
         """
     )
+    Config.model_validate(yaml.safe_load(content))
+    return content
 
 
 def _render_systemd_unit(*, user: str, group: str, paths: SetupPaths) -> str:

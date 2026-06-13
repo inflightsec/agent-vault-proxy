@@ -15,12 +15,18 @@
 # Override with VENV=... only if you know the path is world-traversable.
 #
 # Usage:
-#   bash tests/setup-e2e/run-macos.sh          # provision, test, teardown
-#   bash tests/setup-e2e/run-macos.sh --keep   # leave provisioned state + venv
-#   bash tests/setup-e2e/run-macos.sh --yes    # skip the confirmation prompt
+#   bash tests/setup-e2e/run-macos.sh             # provision, test, teardown (bws)
+#   bash tests/setup-e2e/run-macos.sh --static    # real install, file-based static
+#                                                 #   secrets, no Bitwarden, no token
+#   bash tests/setup-e2e/run-macos.sh --dry-run   # plan only: no sudo, no Bitwarden
+#   bash tests/setup-e2e/run-macos.sh --keep      # leave provisioned state + venv
+#   bash tests/setup-e2e/run-macos.sh --yes       # skip the confirmation prompt
 #
-# You are prompted ONCE for the BWS token (macOS getpass reads /dev/tty, not
-# stdin); paste any throwaway value.
+# Full provisioning needs admin (creates a service user, writes /usr/local,
+# installs a LaunchDaemon), so macOS shows an "administer your computer"
+# prompt. The default (bws) path also asks ONCE for a throwaway token; --static
+# does the same real install backed by a static secrets file — no Bitwarden,
+# no token. --dry-run skips admin entirely.
 
 set -euo pipefail
 
@@ -31,23 +37,65 @@ PY="${PY:-python3}"
 
 KEEP=0
 ASSUME_YES=0
+DRY_RUN=0
+STATIC=0
 for arg in "$@"; do
     case "$arg" in
-        --keep) KEEP=1 ;;
-        --yes)  ASSUME_YES=1 ;;
+        --keep)    KEEP=1 ;;
+        --yes)     ASSUME_YES=1 ;;
+        --dry-run) DRY_RUN=1 ;;
+        --static)  STATIC=1 ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
     esac
 done
+BACKEND=bws
+[ "$STATIC" -eq 1 ] && BACKEND=static
 
 green()  { printf '\033[1;32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 red()    { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
 
 [ "$(uname -s)" = "Darwin" ] || { red "macOS only — on Linux use run.sh."; exit 1; }
-command -v bats >/dev/null || { red "bats not found — brew install bats-core."; exit 1; }
 command -v "$PY" >/dev/null || { red "$PY not found."; exit 1; }
 "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 12) else 1)' \
     || { red "$PY is older than 3.12 (project floor). Retry with PY=python3.12 ..."; exit 1; }
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    # Plan-only smoke: no sudo (so no "administer your computer" prompt), no
+    # token, no Bitwarden, no host changes. `avp setup --dry-run` renders the
+    # full plan and mutates nothing, running entirely as you.
+    DRYVENV="/tmp/avp-dryrun-venv"
+    green "[1/2] Building local venv at $DRYVENV and installing avp (no sudo)..."
+    rm -rf "$DRYVENV"
+    "$PY" -m venv "$DRYVENV"
+    "$DRYVENV/bin/pip" install --quiet "$REPO_ROOT"
+
+    setup_flags="--no-service"
+    [ "$STATIC" -eq 1 ] && setup_flags="$setup_flags --static"
+    green "[2/2] Planning 'avp setup $setup_flags' (no sudo, no token, no Bitwarden)..."
+    # The doctor pass at the tail reports the not-yet-generated CA, so a
+    # non-zero exit is expected; assert on the rendered plan, not the status.
+    plan="$("$DRYVENV/bin/avp" setup $setup_flags --dry-run 2>&1 || true)"
+    printf '%s\n' "$plan"
+
+    fail=0
+    for needle in "Create the dedicated launchd user" "0750" "Install the launchd plist"; do
+        printf '%s' "$plan" | grep -qF "$needle" || { red "plan missing: $needle"; fail=1; }
+    done
+    if printf '%s' "$plan" | grep -q "launchctl"; then
+        red "plan included launchctl activation under --no-service"; fail=1
+    fi
+    if [ -e /usr/local/etc/agent-vault-proxy ]; then
+        red "dry-run mutated the host"; fail=1
+    fi
+
+    rm -rf "$DRYVENV"
+    [ "$fail" -eq 0 ] || { red "dry-run smoke FAILED."; exit 1; }
+    green "macOS dry-run smoke passed — plan renders, no Bitwarden, nothing provisioned."
+    exit 0
+fi
+
+command -v bats >/dev/null || { red "bats not found — brew install bats-core."; exit 1; }
 
 teardown_host() {
     # Clear the append-only flag before removing the audit log, then drop
@@ -90,11 +138,16 @@ green "[2/4] Building throwaway venv at $VENV and installing avp..."
 sudo "$PY" -m venv "$VENV"
 sudo "$VENV/bin/pip" install --quiet "$REPO_ROOT"
 
-green "[3/4] Running setup.bats (you'll be prompted once for a throwaway token)..."
+if [ "$BACKEND" = bws ]; then
+    green "[3/4] Running setup.bats (bws — you'll be prompted once for a throwaway token)..."
+else
+    green "[3/4] Running setup.bats (static secrets — no Bitwarden, no token)..."
+fi
 # Force a known TERM so the bats formatter doesn't trip on exotic terminfo
-# (e.g. xterm-ghostty missing from root's database). PATH carries the venv
-# so the suite's bare `avp` resolves to the _avp-reachable interpreter.
-sudo env TERM=xterm-256color PATH="$VENV/bin:$PATH" \
+# (e.g. xterm-ghostty missing from root's database). PATH carries the venv so
+# the suite's bare `avp` resolves to the _avp-reachable interpreter; AVP_BACKEND
+# drives run_setup's --static and the secret-source assertions.
+sudo env TERM=xterm-256color AVP_BACKEND="$BACKEND" PATH="$VENV/bin:$PATH" \
     bats "$SCRIPT_DIR/setup.bats"
 
 green "macOS setup smoke passed."

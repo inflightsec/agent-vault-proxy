@@ -124,6 +124,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "for Ansible / managed supervision and container tests."
         ),
     )
+    setup_p.add_argument(
+        "--static",
+        action="store_true",
+        help=(
+            "Provision with the file-based static secrets backend instead of "
+            "Bitwarden — no BWS token needed (development/testing only)."
+        ),
+    )
     return parser
 
 
@@ -148,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             prefix=args.prefix,
             allow_mutable_audit=args.allow_mutable_audit,
             no_service=args.no_service,
+            static=args.static,
         )
 
     # No subcommand — print help and signal misuse.

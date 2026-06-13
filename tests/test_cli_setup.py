@@ -29,6 +29,7 @@ def _plan(
     uid: int | None = None,
     gid: int | None = None,
     no_service: bool = False,
+    static: bool = False,
 ):
     paths = default_paths(os_name, None)
     steps = plan_setup(
@@ -39,6 +40,7 @@ def _plan(
         uid=uid,
         gid=gid,
         no_service=no_service,
+        static=static,
     )
     return paths, steps
 
@@ -222,7 +224,45 @@ def test_plan_starter_bindings_validates_both() -> None:
         raw = yaml.safe_load(bindings.content)
         cfg = Config.model_validate(raw)
         assert cfg.binding_source == "both"
+        assert cfg.backend is not None
+        assert cfg.backend.type == "bws"
         assert audit_path in bindings.content
+
+
+@pytest.mark.parametrize(("os_name", "user"), [("linux", "avp"), ("macos", "_avp")])
+def test_plan_static_skips_token_prompt_and_validates_bindings(os_name, user) -> None:
+    paths, steps = _plan(os_name, user=user, uid=250, gid=250, static=True)
+    assert all(not isinstance(step, PromptStep) for step in steps)
+    bindings = _file_step(steps, paths.bindings_path)
+    raw = yaml.safe_load(bindings.content)
+    cfg = Config.model_validate(raw)
+    assert cfg.binding_source == "file"
+    assert cfg.backend is not None
+    assert cfg.backend.type == "static"
+
+
+@pytest.mark.parametrize(
+    ("os_name", "user", "expected_path"),
+    [
+        ("linux", "avp", "/etc/agent-vault-proxy/static-secrets.yaml"),
+        ("macos", "_avp", "/usr/local/etc/agent-vault-proxy/static-secrets.yaml"),
+    ],
+)
+def test_plan_static_secrets_file_matches_bindings_secret_key(
+    os_name,
+    user,
+    expected_path,
+) -> None:
+    paths, steps = _plan(os_name, user=user, uid=250, gid=250, static=True)
+    assert paths.static_secrets_path == expected_path
+    bindings = _file_step(steps, paths.bindings_path)
+    bindings_raw = yaml.safe_load(bindings.content)
+    static_secrets = _file_step(steps, paths.static_secrets_path)
+    assert static_secrets.mode == 0o640
+    static_raw = yaml.safe_load(static_secrets.content)
+    [binding_secret_name] = bindings_raw["secrets"].keys()
+    assert binding_secret_name == "EXAMPLE_API_KEY"
+    assert static_raw["secrets"] == {binding_secret_name: "change-me-not-a-real-secret"}
 
 
 def test_plan_ca_and_salt_run_as_user_no_regen() -> None:
@@ -359,27 +399,40 @@ def test_run_setup_requires_root_unless_dry_run(monkeypatch, capsys) -> None:
 def test_main_setup_dispatch(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service):
-        seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service)
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+        seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
         return 23
 
     monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
     rc = main(["setup", "--dry-run", "--no-service"])
     assert rc == 23
-    assert seen["args"] == (None, True, None, False, True)
+    assert seen["args"] == (None, True, None, False, True, False)
+
+
+def test_main_setup_static_dispatch(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+        seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
+        return 29
+
+    monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
+    rc = main(["setup", "--dry-run", "--static"])
+    assert rc == 29
+    assert seen["args"] == (None, True, None, False, False, True)
 
 
 def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service):
-        seen["args"] = (allow_mutable_audit, no_service)
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+        seen["args"] = (allow_mutable_audit, no_service, static)
         return 0
 
     monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
     rc = main(["setup", "--dry-run", "--allow-mutable-audit"])
     assert rc == 0
-    assert seen["args"] == (True, False)
+    assert seen["args"] == (True, False, False)
 
 
 def test_render_env_block_sources_file() -> None:

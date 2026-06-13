@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- BWS-notes bindings (ADR-0011): bindings resolve from each secret's `notes` field (`host:` required; optional `header` / `format` / `methods` / `paths`, defaulting to `Authorization: Bearer`). Bundled host-keyed exception table for known providers ships tight defaults (GitHub read-only — no `POST /gists`). Fail-closed, with distinct audit reasons `no_binding_in_notes` vs `invalid_binding_metadata`.
+- `avp` operator CLI: `avp env` projects salted placeholders to `~/.config/avp/env` (sourced, never `eval`'d); `avp doctor` checks the CA is not in any OS trust store and the CA key is `0600` (ADR-0012).
+- Deterministic salted placeholders (`avp-PLACEHOLDER-…`, HMAC keyed by a per-install salt) and `binding_source: file | bws_notes | both`.
+- `avp setup` cross-platform installer (systemd/launchd, isolated service user, append-only audit log); `--no-service` provisions without activating. `tests/setup-e2e/` bats suite + `e2e-setup` CI job assert the installed state in a disposable container.
+
+### Changed
+
+- Default `binding_source: both` — BWS-notes resolve alongside `bindings.yaml`, notes winning per secret. `file` mode is byte-identical to prior behaviour.
+- Audit contract v2: adds `binding_source`; the audit log still records no header values, bodies, or query strings.
+
 ## [0.5.0], 2026-06-05
 
 The injector port: `inject.type:` becomes a discriminated union. v0.4.x bindings parse byte-identically. Taxonomy inspired by `superfly/tokenizer`; implementations are original Python from the underlying public specs. See `CREDITS.md`.

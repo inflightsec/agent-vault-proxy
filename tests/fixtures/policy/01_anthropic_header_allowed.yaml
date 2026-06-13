@@ -1,0 +1,26 @@
+pins: [G2]
+secrets:
+  ANTHROPIC_API_KEY: "sk-ant-FAKE-TESTVALUE"
+config: |
+  version: 1
+  secrets:
+    ANTHROPIC_API_KEY:
+      placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+      inject:
+        header: "Authorization"
+        format: "Bearer {ANTHROPIC_API_KEY}"
+      bindings:
+        - host: "api.anthropic.com"
+  unmatched_destination_policy: forward_unmodified
+request:
+  host: "api.anthropic.com"
+  method: POST
+  path: /v1/messages
+  headers:
+    Authorization: "Bearer sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+expect:
+  decision: allowed
+  reason: binding_matched
+  secret_name: ANTHROPIC_API_KEY
+  injected: true
+  header: "Bearer sk-ant-FAKE-TESTVALUE"

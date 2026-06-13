@@ -114,6 +114,41 @@ jobs:
           docker compose -f tests/docker-e2e/docker-compose.yml logs avp || true
           docker compose -f tests/docker-e2e/docker-compose.yml logs upstream || true
 
+  e2e-setup:
+    # Integration test for `avp setup --no-service`: build the wheel,
+    # then provision a disposable Ubuntu container for real (useradd,
+    # modes, chattr +a) and assert the end state with bats. Service
+    # activation is out of scope by design — the unit FILE is asserted,
+    # systemd is never started. See tests/setup-e2e/README.md.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: 'pip install --no-cache-dir --only-binary :all: build'
+
+      - name: Run setup E2E harness
+        run: bash tests/setup-e2e/run.sh
+
+      - name: Dump container state on failure
+        if: failure()
+        run: docker logs avp-setup-e2e || true
+
   verify-lockfile:
     # Detect when pyproject.toml dependencies drift from either lockfile
     # without anyone re-running pip-compile. Cheap, runs in parallel.
@@ -227,18 +262,24 @@ jobs:
         run: pip install 'pip-audit==2.9.0'
 
       - name: Audit production lockfile
-        # --strict so any vulnerability is a non-zero exit. --disable-pip
-        # skips a pip self-version check that would otherwise need network.
-        # Waivers, if ever needed, go in pyproject.toml via [tool.pip-audit]
-        # ignore-vulns — never inline `--ignore-vuln` here.
-        run: pip-audit --strict --requirement requirements.lock
+        # --strict so any vulnerability is a non-zero exit.
+        # Waivers are inline --ignore-vuln with a dated removal note
+        # (pip-audit has no config-file support — verified v2.9.0).
+        # GHSA-cx3h-4qpv-8hc9: tornado OOB read, CVSS 3.7, transitive;
+        # fix 6.5.6 is inside the 7-day cooldown — drop at the first
+        # lockfile regen after 2026-06-19.
+        run: >-
+          pip-audit --strict --requirement requirements.lock
+          --ignore-vuln GHSA-cx3h-4qpv-8hc9
 
       - name: Audit dev lockfile
         # Dev-only CVEs (ruff, pytest, mypy) aren't shipped to users, but
         # they CAN compromise the CI runner that builds the wheel. Worth
         # gating on, can be waived per-CVE if a dev-only finding becomes
         # noisy and has no upstream fix yet.
-        run: pip-audit --strict --requirement requirements-dev.lock
+        run: >-
+          pip-audit --strict --requirement requirements-dev.lock
+          --ignore-vuln GHSA-cx3h-4qpv-8hc9
 
   wheel-smoke:
     # Build the wheel and install it into a fresh venv. Catches the

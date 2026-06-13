@@ -8,8 +8,16 @@ from pathlib import Path
 from mitmproxy import http
 from mitmproxy.addonmanager import Loader
 
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import BackendUnavailableError, SecretNotFoundError
+from agent_vault_proxy.audit import (
+    REASON_INVALID_BINDING_METADATA,
+    REASON_NO_BINDING_IN_NOTES,
+    AuditWriter,
+)
+from agent_vault_proxy.backends import (
+    BackendCannotListError,
+    BackendUnavailableError,
+    SecretNotFoundError,
+)
 from agent_vault_proxy.caching import CachingSecretsClient
 from agent_vault_proxy.config import (
     BindingSpec,
@@ -34,6 +42,17 @@ class AgentVaultProxyAddon:
         # Kept generic so future backends (1Password, Vault, etc.) plug in here.
         self.client: CachingSecretsClient | None = None
         self.audit: AuditWriter | None = None
+        # BWS-notes activation state (ADR-0011). Populated in bws_notes/both
+        # mode by configure(); empty/None in file mode. The request path
+        # consults these to fail closed on a placeholder whose secret has no
+        # binding (no spec) with the right audit reason.
+        #   _placeholder_to_name: derived placeholder -> secret_name for EVERY
+        #     listed BWS secret (bound, no-binding, or invalid).
+        #   _no_binding_names / _invalid_names: the audit-reason split.
+        self._placeholder_to_name: dict[str, str] = {}
+        self._no_binding_names: set[str] = set()
+        self._invalid_names: set[str] = set()
+        self._companion_headers: dict[str, dict[str, str]] = {}
         # Tracks composite bindings that have already logged the same-UUID
         # warning. Once per binding (not per request) — signal stays high.
         self._same_uuid_warned: set[str] = set()
@@ -52,16 +71,55 @@ class AgentVaultProxyAddon:
             return
         from mitmproxy.ctx import options
 
-        config_path = Path(options.avp_config)
+        self.configure_from_path(options.avp_config)
+
+    def configure_from_path(
+        self,
+        config_path: str | Path,
+        *,
+        backend_override: object | None = None,
+    ) -> None:
+        """Load config + (re)build the live state.
+
+        Split out from :meth:`configure` so it can be driven directly in
+        tests (and any non-mitmproxy harness) without the ctx.options shim.
+        ``backend_override`` substitutes a backend instance for the one
+        ``build_backend`` would construct — used by tests to inject a fake
+        BWS backend; production passes None.
+        """
+        config_path = Path(config_path)
         # Snapshot pattern: build the full new state BEFORE assigning to
         # self. STORE_ATTR is atomic, so the worst a concurrent handler
         # sees is one fresh component mixed with a stale one — and the
         # per-handler snapshot in _capture_state freezes the tuple for
         # the rest of that request.
         new_config = load_config(config_path)
-        backend, _ = build_backend(new_config)
+        if backend_override is not None:
+            backend: object = backend_override
+        else:
+            backend, _ = build_backend(new_config)
+
+        # BWS-notes activation (ADR-0011 item 3). In bws_notes/both mode we
+        # resolve bindings from BWS secret notes and MERGE them into the
+        # config's secrets map (notes win over file). file mode is left
+        # completely untouched — no BWS listing, identical to pre-ADR-0011.
+        new_placeholder_to_name: dict[str, str] = {}
+        new_no_binding: set[str] = set()
+        new_invalid: set[str] = set()
+        new_companion_headers: dict[str, dict[str, str]] = {}
+        if new_config.binding_source != "file":
+            self._activate_bws_notes(
+                new_config=new_config,
+                backend=backend,
+                config_path=config_path,
+                out_placeholder_to_name=new_placeholder_to_name,
+                out_no_binding=new_no_binding,
+                out_invalid=new_invalid,
+                out_companion_headers=new_companion_headers,
+            )
+
         new_client = CachingSecretsClient(
-            backend=backend,
+            backend=backend,  # type: ignore[arg-type]
             ttl_seconds=new_config.cache.ttl_seconds,
             jitter_seconds=new_config.cache.jitter_seconds,
             max_entries=new_config.cache.max_entries,
@@ -75,20 +133,125 @@ class AgentVaultProxyAddon:
         # if the new config still has the issue.
         with self._warned_lock:
             self._same_uuid_warned.clear()
-        # Publish all three. Reads from request handlers are captured
-        # once at handler entry so a partial publish here cannot tear
-        # a single in-flight request's view.
-        self.config = new_config
+        # Publish all state. Reads from request handlers are captured once at
+        # handler entry so a partial publish here cannot tear a single
+        # in-flight request's view. Publish the no-binding/invalid maps
+        # BEFORE config so a handler that sees the new config also sees the
+        # matching attribution maps (config is the last write).
+        self._placeholder_to_name = new_placeholder_to_name
+        self._no_binding_names = new_no_binding
+        self._invalid_names = new_invalid
+        self._companion_headers = new_companion_headers
         self.client = new_client
         self.audit = new_audit
+        self.config = new_config
+
+    def _activate_bws_notes(
+        self,
+        *,
+        new_config: Config,
+        backend: object,
+        config_path: Path,
+        out_placeholder_to_name: dict[str, str],
+        out_no_binding: set[str],
+        out_invalid: set[str],
+        out_companion_headers: dict[str, dict[str, str]],
+    ) -> None:
+        """Resolve BWS-notes bindings and merge them into ``new_config``.
+
+        Mutates ``new_config.secrets`` (notes specs win over file specs for
+        the same name) and rebuilds the host index. Populates the three
+        ``out_*`` collections so the request path can attribute and fail
+        closed on no-binding / invalid placeholders.
+
+        Collision / config errors remain hard failures. Salt-path/salt-file
+        failures and backends that cannot list secrets degrade to file-only
+        (`both`) or no bindings (`bws_notes`) so the daemon keeps serving
+        without guessing or using insecure state.
+        """
+        from agent_vault_proxy.placeholders import (
+            load_or_create_install_salt,
+            resolve_install_salt_path,
+        )
+        from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
+
+        try:
+            salt_path = resolve_install_salt_path(new_config.install_salt_path)
+            install_salt = load_or_create_install_salt(salt_path)
+        except (OSError, RuntimeError, ValueError) as e:
+            self._degrade_bws_notes_activation(
+                new_config=new_config,
+                reason=(
+                    f"cannot use install salt at {new_config.install_salt_path or '<default>'}: "
+                    f"{type(e).__name__}: {e}"
+                ),
+            )
+            return
+
+        try:
+            resolved = resolve_runtime_bindings(
+                backend=backend,
+                binding_source=new_config.binding_source,
+                install_salt=install_salt,
+                file_config=new_config if new_config.binding_source == "both" else None,
+            )
+        except BackendCannotListError as e:
+            self._degrade_bws_notes_activation(
+                new_config=new_config,
+                reason=f"backend cannot list secrets: {type(e).__name__}: {e}",
+            )
+            return
+
+        file_specs = dict(new_config.secrets)
+
+        # Merge resolved specs over the file-loaded secrets. The resolver has
+        # ALREADY applied notes-over-file precedence within its own sources;
+        # here we additionally let any resolved spec replace the matching
+        # file entry in the live config (so the request path's single
+        # config.secrets iteration sees the effective binding).
+        if new_config.binding_source == "both":
+            merged: dict[str, SecretSpec] = {
+                name: spec for name, spec in file_specs.items() if name not in resolved.invalid
+            }
+        else:
+            merged = {}
+        for name, (spec, _source, companion) in resolved.specs.items():
+            merged[name] = spec
+            if companion:
+                out_companion_headers[name] = dict(companion)
+        new_config.secrets = merged
+        # Re-assert the placeholder invariants over the MERGED set. config-load
+        # validated only the file secrets; in `both` mode a derived placeholder
+        # could in principle collide with / be a substring of a file one, which
+        # would make the addon's `in` matching ambiguous. Fail closed at
+        # configure() before serving rather than risk routing the wrong secret.
+        from agent_vault_proxy.config import validate_placeholder_invariants
+
+        validate_placeholder_invariants({name: spec.placeholder for name, spec in merged.items()})
+        # Rebuild the host-keyed indices for the merged secret set — the
+        # request path's destination matching reads these indices.
+        new_config.rebuild_host_index()
+
+        out_placeholder_to_name.update(resolved.placeholder_to_name)
+        for name in resolved.invalid:
+            file_spec = file_specs.get(name)
+            if file_spec is not None:
+                out_placeholder_to_name[file_spec.placeholder] = name
+        out_no_binding.update(resolved.no_binding)
+        out_invalid.update(resolved.invalid)
 
     def _capture_state(
         self,
-    ) -> tuple[Config | None, CachingSecretsClient | None, AuditWriter | None]:
+    ) -> tuple[
+        Config | None,
+        CachingSecretsClient | None,
+        AuditWriter | None,
+        dict[str, dict[str, str]],
+    ]:
         """Snapshot (config, client, audit) at handler entry. Each individual
         attribute read is atomic; the per-handler snapshot prevents using
         a new config with an old client (or vice versa) within one request."""
-        return self.config, self.client, self.audit
+        return self.config, self.client, self.audit, self._companion_headers
 
     def running(self) -> None:
         # Mitmproxy calls this once after addons are wired up and the proxy
@@ -110,7 +273,7 @@ class AgentVaultProxyAddon:
             self.audit.emit({"type": "proxy_restart"})
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
-        config, _client, audit = self._capture_state()
+        config, _client, audit, _companion_headers = self._capture_state()
         if config is None or audit is None:
             return
         target_host = flow.request.pretty_host
@@ -152,7 +315,7 @@ class AgentVaultProxyAddon:
         #
         # Snapshot (config, client, audit) at handler entry. Any concurrent
         # configure() publishes a new triple that this request will never see.
-        config, client, audit = self._capture_state()
+        config, client, audit, companion_headers = self._capture_state()
         if config is None or client is None or audit is None:
             return
         request_id = flow.metadata.get("avp_request_id") or str(uuid.uuid4())
@@ -197,6 +360,20 @@ class AgentVaultProxyAddon:
             )
             return
 
+        # BWS-notes fail-closed gate (ADR-0011): a placeholder belonging to a
+        # secret that has NO binding (or a malformed one) has no SecretSpec,
+        # so the header pipeline below would never match it and the
+        # placeholder would forward verbatim. That IS fail-closed (no real
+        # value injected), but we additionally AUDIT it with the precise
+        # reason so the operator sees "this secret isn't bound / is typo'd"
+        # rather than silence. Snapshot the maps once for this request.
+        self._audit_unbound_placeholders(
+            flow=flow,
+            audit=audit,
+            request_id=request_id,
+            target_host=target_host,
+        )
+
         # Header injection pipeline — may set flow.response on deny.
         self._run_header_injection_pipeline(
             flow=flow,
@@ -205,6 +382,7 @@ class AgentVaultProxyAddon:
             audit=audit,
             request_id=request_id,
             target_host=target_host,
+            companion_headers=companion_headers,
         )
 
         # Body streaming setup. Runs alongside header injection unless
@@ -220,6 +398,62 @@ class AgentVaultProxyAddon:
                 target_host=target_host,
             )
 
+    def _audit_unbound_placeholders(
+        self,
+        *,
+        flow: http.HTTPFlow,
+        audit: AuditWriter,
+        request_id: str,
+        target_host: str,
+    ) -> None:
+        """Audit any request header carrying a placeholder for a no-binding or
+        invalid-binding BWS secret (ADR-0011 fail-closed reasons).
+
+        These secrets have no SecretSpec, so the header pipeline never matches
+        them — the placeholder is forwarded verbatim (fail closed, no real
+        value injected). This method ONLY adds the audit record with the
+        precise reason; it does NOT set flow.response (forward-unmodified is
+        the documented default — an egress firewall enforces actual blocking).
+        Emits at most one event per affected secret per request.
+
+        Snapshot the attribution maps once; they are replaced atomically by
+        configure(), so a single read is a consistent view. No-op in file mode
+        (the maps are empty).
+        """
+        placeholder_to_name = self._placeholder_to_name
+        if not placeholder_to_name:
+            return
+        no_binding = self._no_binding_names
+        invalid = self._invalid_names
+        seen: set[str] = set()
+        for value in flow.request.headers.values():
+            if not value:
+                continue
+            for placeholder, secret_name in placeholder_to_name.items():
+                if secret_name in seen:
+                    continue
+                if placeholder not in value:
+                    continue
+                if secret_name in invalid:
+                    reason = REASON_INVALID_BINDING_METADATA
+                elif secret_name in no_binding:
+                    reason = REASON_NO_BINDING_IN_NOTES
+                else:
+                    # Has a real spec — handled by the header/body pipeline.
+                    continue
+                seen.add(secret_name)
+                audit.emit(
+                    {
+                        "type": "inject_decision",
+                        "request_id": request_id,
+                        "decision": "denied",
+                        "reason": reason,
+                        "secret_name": secret_name,
+                        "binding_source": "bws_notes",
+                        "destination": {"host": target_host, "port": flow.request.port},
+                    }
+                )
+
     def _run_header_injection_pipeline(  # noqa: C901
         self,
         *,
@@ -229,6 +463,7 @@ class AgentVaultProxyAddon:
         audit: AuditWriter,
         request_id: str,
         target_host: str,
+        companion_headers: dict[str, dict[str, str]],
     ) -> None:
         """Header-injection sub-pipeline (factored out of requestheaders
         in P0.6 so body streaming can run as a sibling stage).
@@ -386,6 +621,14 @@ class AgentVaultProxyAddon:
             )
 
         flow.request.headers[header_name] = new_header_value
+        # Companion headers (e.g. anthropic-version) are DEFAULTS, not overrides:
+        # set them only when the client didn't already send one. AVP must not
+        # change request semantics beyond the credential — clobbering a
+        # client-chosen value could break the caller. mitmproxy Headers
+        # membership is case-insensitive.
+        for companion_name, companion_value in companion_headers.get(secret_name, {}).items():
+            if companion_name not in flow.request.headers:
+                flow.request.headers[companion_name] = companion_value
 
         # G6 ORDERING — DO NOT REORDER. mitmproxy does not write the request
         # to the upstream socket until requestheaders() returns. The header
@@ -407,6 +650,10 @@ class AgentVaultProxyAddon:
                 "decision": "allowed",
                 "reason": "binding_matched",
                 "secret_name": secret_name,
+                # ADR-0011 item 6: which source the binding came from
+                # ("file" | "bws_notes"). Defaults to "file" on file-loaded
+                # specs; the BindingsResolver tags notes-sourced specs.
+                "binding_source": secret_spec.binding_source,
                 "destination": {
                     "host": target_host,
                     "port": flow.request.port,
@@ -414,6 +661,25 @@ class AgentVaultProxyAddon:
                 },
             }
         )
+
+    def _degrade_bws_notes_activation(self, *, new_config: Config, reason: str) -> None:
+        """Fall back from notes activation without serving guessed state.
+
+        An unusable salt is a security failure, not something we should work
+        around by continuing to derive placeholders from it. Degrading to
+        file-only (`both`) or no bindings (`bws_notes`) keeps startup alive
+        while staying fail closed for notes-derived bindings.
+        """
+        degraded_to = "file bindings only" if new_config.binding_source == "both" else "no bindings"
+        _log.warning(
+            "BWS-notes activation degraded in %s mode: %s; serving %s",
+            new_config.binding_source,
+            reason,
+            degraded_to,
+        )
+        if new_config.binding_source == "bws_notes":
+            new_config.secrets = {}
+        new_config.rebuild_host_index()
 
     def _setup_body_injection_streaming(
         self,
@@ -829,8 +1095,8 @@ class _BodyReplacer:
         # Phase 1 — resolve every placeholder match's substitute. On any
         # backend error: fail-closed denial, return b"" without emitting
         # an allowed audit for any prior placeholder in this buffer.
-        pending: list[tuple[bytes, str]] = []
-        for placeholder, name, _spec, inject in self._targets:
+        pending: list[tuple[bytes, str, SecretSpec]] = []
+        for placeholder, name, spec, inject in self._targets:
             if placeholder not in buf:
                 continue
             if name not in self._rendered_cache:
@@ -860,7 +1126,7 @@ class _BodyReplacer:
                     real_secret=real_secret,
                     secret_name=name,
                 ).encode("utf-8")
-            pending.append((placeholder, name))
+            pending.append((placeholder, name, spec))
         # Phase 2 — every fetch succeeded; emit per-secret allowed audits
         # (one per first occurrence per request) BEFORE returning the
         # bytes with real secrets, then perform the in-place replacements.
@@ -869,7 +1135,7 @@ class _BodyReplacer:
         # request's audit reflects exactly the substitutions the upstream
         # will see.
         out = buf
-        for placeholder, name in pending:
+        for placeholder, name, spec in pending:
             if name not in self._matched_names:
                 self._matched_names.add(name)
                 self._audit.emit(
@@ -879,6 +1145,7 @@ class _BodyReplacer:
                         "decision": "allowed",
                         "reason": "body_binding_matched",
                         "secret_name": name,
+                        "binding_source": spec.binding_source,
                         "destination": {
                             "host": self._target_host,
                             "port": self._flow.request.port,

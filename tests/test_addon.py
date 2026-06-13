@@ -694,3 +694,33 @@ audit:
     addon.requestheaders(flow2)
     expected = "Basic " + base64.b64encode(b"alice:s3cret").decode("ascii")
     assert flow2.request.headers["Authorization"] == expected
+
+
+def test_inject_decision_carries_binding_source_file(tmp_path: Path) -> None:
+    """ADR-0011 item 6: every inject_decision event records which source the
+    binding came from. The default addon loads bindings from a file, so the
+    allowed event is tagged binding_source: file."""
+    addon, audit_path = _build_addon(tmp_path)
+    flow = _make_request("api.anthropic.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
+    addon.http_connect(flow)
+    addon.requestheaders(flow)
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert len(allowed) == 1
+    assert allowed[0]["binding_source"] == "file"
+
+
+def test_inject_decision_carries_binding_source_bws_notes(tmp_path: Path) -> None:
+    """When a secret's SecretSpec originates from a BWS note, the allowed
+    inject_decision is tagged binding_source: bws_notes. The resolver sets
+    spec.binding_source; the addon reads it onto the audit event."""
+    addon, audit_path = _build_addon(tmp_path)
+    # Simulate the resolver having tagged this spec as bws_notes-sourced.
+    addon.config.secrets["ANTHROPIC_API_KEY"].binding_source = "bws_notes"
+    flow = _make_request("api.anthropic.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
+    addon.http_connect(flow)
+    addon.requestheaders(flow)
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert len(allowed) == 1
+    assert allowed[0]["binding_source"] == "bws_notes"

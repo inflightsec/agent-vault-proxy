@@ -1,0 +1,22 @@
+pins: [W10, G3]
+config: |
+  version: 1
+  secrets:
+    ANTHROPIC_API_KEY:
+      placeholder: "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
+      inject:
+        header: "Authorization"
+        format: "Bearer {ANTHROPIC_API_KEY}"
+      bindings:
+        - host: "api.anthropic.com"
+  unmatched_destination_policy: deny
+request:
+  host: "169.254.169.254"
+  method: GET
+  path: /latest/meta-data/iam/security-credentials/
+  headers: {}
+expect:
+  decision: denied
+  reason: unmatched_destination
+  injected: false
+  status: 403

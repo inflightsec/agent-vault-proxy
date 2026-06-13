@@ -134,13 +134,13 @@ Three steps. Once you've done this, every new API key is just "add to Bitwarden 
 
 ## Add a secret
 
-After the one-time setup, every new credential is the same three steps:
+With the default `binding_source: both`, adding a credential is a Bitwarden edit plus two commands:
 
-1. **Bitwarden:** add the real secret to the project from step 1 above (use a clear name like `GITHUB_PAT`).
-2. **Bindings:** add a block to `bindings.yaml`, the BWS name, a placeholder string, the destination host(s), and how to inject it. Composite credentials (e.g. `base64(email:token)` for Jira / Atlassian Cloud) use `compose:` + a sandboxed Jinja2 template - see [`bindings.example.yaml`](bindings.example.yaml) for one-secret and composite patterns covering OpenAI, GitHub, Jira, Slack.
-3. **Restart:** `sudo systemctl restart agent-vault-proxy.service` (or `docker compose restart agent-vault-proxy` if you went with Docker). Verify with a request from the calling shell: the proxy audits every decision to `/var/log/agent-vault-proxy/audit.jsonl`.
+1. **Bitwarden:** add the secret to the project (clear name like `GITHUB_PAT`). In its **Notes**, set the destination: `host: api.github.com`. Bearer auth is the default; a bundled table covers known providers and ships tight defaults (GitHub is read-only — no `POST /gists`). Override per-secret in the note with `header:` / `format:` / `methods:` / `paths:`. The real value never leaves Bitwarden.
+2. **Project the placeholder:** `avp env` writes a placeholder for each secret to `~/.config/avp/env`; source it in your shell. The agent uses the placeholder; AVP swaps it on the wire.
+3. **Reload** so the daemon re-reads the secret list + notes: `sudo systemctl restart agent-vault-proxy.service` (or `docker compose restart agent-vault-proxy`). Decisions audit to `/var/log/agent-vault-proxy/audit.jsonl`.
 
-That's it. Your agent uses the placeholder; the proxy swaps it for the real value on the wire.
+Prefer GitOps or air-gapped? Hand-authored [`bindings.yaml`](bindings.example.yaml) still works (set `binding_source: file`, or keep `both` — BWS-notes wins per secret); composite credentials (`compose:` + Jinja2) live there. Check the install with `avp doctor`.
 
 ## Deeper docs
 

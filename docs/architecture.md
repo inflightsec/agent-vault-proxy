@@ -209,6 +209,28 @@ Whitelisted callables (anything else is rejected at config-load):
 - **Redirects are NOT followed by the proxy.** The proxy forwards the upstream's 3xx response to the agent and stops. If the agent follows the redirect to a host not in any binding, the real secret is not injected: the placeholder forwards verbatim and the upstream rejects it. Defenders treat redirects as the calling code's problem.
 - **Binding order matters.** Within a single `secrets:` entry, bindings are evaluated top-to-bottom; the first matching binding wins. If two `host:` patterns could both match, the more specific one should come first.
 
+**Binding source (`binding_source`, ADR-0011):**
+
+Bindings can come from the `bindings.yaml` file (above), from each BWS secret's `notes` field, or both. The `binding_source` key selects which:
+
+| value | behaviour |
+|---|---|
+| `file` (default) | Bindings come ONLY from `secrets:` in `bindings.yaml`. Identical to pre-ADR-0011; no BWS listing happens. Existing installs are unaffected. |
+| `bws_notes` | Bindings are resolved from each BWS secret's `notes` field. The daemon lists the project's secrets, derives each one's salted placeholder, fetches and parses its note, and enforces the result. `secrets:` in the file is ignored (leave it `{}`). |
+| `both` | Resolve from BOTH. For a secret defined in both, the **BWS-notes binding wins** (it's closer to the secret). |
+
+In `bws_notes`/`both` mode, placeholders are not hand-authored — they are derived deterministically from a per-install salt:
+
+```
+avp-PLACEHOLDER-<base32(HMAC-SHA256(install_salt, secret_name))[:21]>
+```
+
+The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-owner) is generated once at `avp setup` and stored at `install_salt_path` (default: `$AVP_CONFDIR/install-salt`, else `install-salt` under the daemon's `$HOME` — the `avp`-writable confdir, e.g. `/var/lib/agent-vault-proxy/`). It makes placeholders non-precomputable from the secret name alone. The same derivation runs in `avp env` (which writes the agent's `export NAME='<placeholder>'` file) and in the daemon, so both sides agree without a second config. A derived-placeholder **collision** across the secret set is a hard startup failure listing the conflicting names.
+
+A request carrying a placeholder whose secret has **no binding** in its note fails closed and audits `no_binding_in_notes`; a **malformed** note audits `invalid_binding_metadata`. Both forward the placeholder verbatim (no real value injected).
+
+> Listing secrets requires a listable backend (`bws`, `static`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file); per-request credential VALUE fetches still honour `cache.ttl_seconds`.
+
 ### 4.3 Request lifecycle
 
 ```
@@ -250,12 +272,21 @@ Whitelisted callables (anything else is rejected at config-load):
 
 ### 4.4 Audit log
 
-JSONL, append-only via `chattr +a`. One event per line.
+JSONL, append-only via `chattr +a`. One event per line. Every record carries
+`v` — the audit JSON contract version (`AUDIT_CONTRACT_VERSION` in `audit.py`).
+**Current version: 2** (v2 added `binding_source` to `inject_decision` and the
+`no_binding_in_notes` reason, per ADR-0011). Bumping this version is a contract
+change: see hard constraint #3 in [`AGENTS.md`](../AGENTS.md).
 
 ```json
-{"ts":"2026-05-17T14:32:11.123456+00:00","type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
-{"ts":"2026-05-17T14:32:11.234567+00:00","type":"upstream_response","request_id":"01HXY...","status":200}
+{"ts":"2026-05-17T14:32:11.123456+00:00","v":2,"type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","binding_source":"bws_notes","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
+{"ts":"2026-05-17T14:32:11.234567+00:00","v":2,"type":"upstream_response","request_id":"01HXY...","status":200}
 ```
+
+`binding_source` (`inject_decision` events) records which source supplied the
+binding: `file` (a `bindings.yaml` entry) or `bws_notes` (the binding metadata
+in the BWS secret's notes field). When both define the same secret, BWS-notes
+wins (ADR-0011) and the event reads `bws_notes`.
 
 Rules:
 
@@ -280,6 +311,8 @@ Rules:
 | `denied` | `composite_unavailable:<ExcName>` | One or more compose entries failed to fetch |
 | `denied` | `composite_fetch_error:<ExcName>` | Compose-path catch-all |
 | `denied` | `render_failed` | Composite template render raised (template-internal detail logged separately, not audited) |
+| `denied` | `invalid_binding_metadata` | A BWS secret's notes blob is MALFORMED (bad YAML, unknown key, bad value). Fail closed; a precise diagnostic is surfaced via `avp doctor` (ADR-0011) |
+| `denied` | `no_binding_in_notes` | A BWS secret's notes blob carries NO binding (empty/missing note, or no `host`). Distinct from `invalid_binding_metadata` — the secret simply isn't bound yet, not typo'd (ADR-0011) |
 
 For multi-injector secrets (`inject.type: multi`), each substituted leaf emits its own event (one `binding_matched` per header leaf that fires, one `body_binding_matched` per body leaf that fires). `secret_name` is the parent secret's name; consumers parsing the stream see one substitution event per (request, leaf-that-fired).
 
@@ -422,6 +455,29 @@ The proxy holds every bound secret in flight. Compromising its dependency graph 
 | From a non-proxy-configured shell, attempt to use proxy directly → TLS verify must fail | G7 |
 
 The pytest suite covers config validation, addon hooks, BWS client behavior, and the scope-matching logic. Run `pytest` to execute it.
+
+### 8.1 Policy regression fixtures (`avp test`) — ADR-0013
+
+The verdict taxonomy in §4.4 is exercised declaratively by a fixture suite. The decision logic
+is reachable as a pure function `decide(config, request) -> Decision` (the single source of truth
+for `inject_decision`'s `decision` / `reason` / `secret_name` / slot), and each fixture asserts a
+`(config, request) -> expected decision` against it.
+
+- **Fixtures** are spec-derived YAML under `tests/fixtures/policy/`, each pinning the `T-`/`G-` id
+  it guards (a fixture is an executable threat-model assertion). They assert
+  `{decision, reason, secret_name, injected}`; composite / multi / body cases additionally snapshot
+  the `rendered:` output computed from fixed fake static-backend values. Fixtures are **not**
+  recorded from the audit log — §4.4 audit minimization omits the raw request, so record-replay is
+  structurally impossible; declarative also avoids locking in buggy captured behavior.
+- **Two entry points, one engine:** `pytest` globs the fixtures (dev), and `avp test <dir>` runs the
+  identical engine (operators validate their own `bindings.yaml` edits). `avp validate` runs the
+  config-load invariants alone. Exit `0`=match, `1`=drift, `2`=config/usage error.
+- **Test-mode invariants:** static backend only (BWS backend uninstantiable — no real secret in the
+  process), clock pinned, jitter off, `ts`/`request_id` excluded from the compared record.
+- **Scope:** fixtures own policy correctness; transport + `inject_decision` fsync ordering (G2/G6) stay with
+  the docker-e2e + smoke layers, with one e2e smoke retained per injector type. The `addon`'s live
+  path delegates to `decide()` only behind a parity test (run all fixtures through both, assert
+  identical) — see ADR-0013.
 
 ## 9. Rollback
 

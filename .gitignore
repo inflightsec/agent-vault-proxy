@@ -18,9 +18,11 @@ node_modules/
 .npm/
 .pnp.*
 
-# Lockfiles — kept (committed for reproducibility)
-# uv.lock and package-lock.json should be COMMITTED.
-# This block exists to flag the convention.
+# Lockfiles: requirements*.lock are the single dependency truth
+# (hash-pinned, cooldown-gated, CI-verified). uv.lock is a local `uv run`
+# byproduct — nothing regenerates or verifies it, and its universal
+# resolution drags in Windows-only GPL deps that fail dependency review.
+uv.lock
 
 # Secrets and keys — never commit
 *.key

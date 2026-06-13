@@ -1,0 +1,229 @@
+"""Deterministic, salted placeholder derivation (ADR-0011 amendment).
+
+Simple mode does NOT ask the operator to hand-author placeholder strings.
+Instead the daemon and ``avp env`` both derive the SAME placeholder for a
+secret name, so the env file the agent sees and the map the daemon enforces
+agree without a second config file::
+
+    avp-PLACEHOLDER-<base32(HMAC-SHA256(install_salt, secret_name)).lower()[:N]>
+
+Design choices and why:
+
+* **HMAC, not a bare hash.** The per-install ``install_salt`` is the HMAC
+  key. Keying (rather than concatenating salt+name into a plain SHA-256)
+  is the textbook construction for "derive an unpredictable-but-stable
+  token from a known input under a secret." An attacker who knows the
+  secret NAME but not the salt cannot precompute the placeholder, so a
+  placeholder leaking on the wire/env doesn't reveal which BWS secret it
+  maps to without the salt.
+* **base32, lowercased, no padding.** base32's alphabet (A-Z2-7) is
+  case-insensitive-safe and shell/env-safe: no ``/ + =`` (base64) and no
+  characters that need quoting in ``export NAME='...'``. Lowercasing keeps
+  it visually distinct from real ALL-CAPS tokens. ``=`` padding is
+  stripped because it carries no entropy and would need quoting.
+* **N = 21 base32 chars => 105 bits.** >=104 bits keeps the truncated-tail
+  collision probability negligible for any realistic per-install secret
+  set (birthday bound ~2^52 names before a 1e-9 collision chance). The
+  full 37-char placeholder (16-char prefix + 21-char tail) comfortably
+  exceeds config.py's >=24 char invariant and contains "PLACEHOLDER".
+
+Collision handling: even at 105 bits a collision is *possible*, and a
+silent coalesce would map two secrets to one placeholder (the daemon's
+substring/uniqueness invariant would then reject the config, or worse,
+inject the wrong secret). :func:`derive_placeholder_map` detects a
+collision across the supplied name set and raises
+:class:`PlaceholderCollisionError` listing BOTH conflicting names — a hard,
+loud, fail-closed error, never a guess.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import os
+import secrets
+import stat
+from pathlib import Path
+
+# 16 chars. Contains the "PLACEHOLDER" marker config.py requires.
+PLACEHOLDER_PREFIX = "avp-PLACEHOLDER-"
+
+# Truncated base32 tail length. 21 chars * 5 bits/char = 105 bits of
+# entropy (>=104). Total placeholder length = 16 + 21 = 37 >= 24.
+_TAIL_CHARS = 21
+
+# Minimum acceptable install-salt length in bytes. HMAC-SHA256's security
+# margin wants a key at least as long as the block/output size; we mandate
+# 32 bytes (256 bits) to match the digest and to make a short/truncated
+# salt file a detectable corruption signal rather than a silent weakening.
+_SALT_BYTES = 32
+_DEFAULT_SALT_BASENAME = "install-salt"
+
+
+class PlaceholderCollisionError(RuntimeError):
+    """Two distinct secret names derived the same truncated placeholder.
+
+    Raised by :func:`derive_placeholder_map`. The message lists every
+    colliding name so the operator can rename one secret (or, in the
+    astronomically unlikely event this fires legitimately, rotate the
+    install salt). This is a hard startup failure by design — a silent
+    coalesce could route the wrong real secret onto the wire.
+    """
+
+
+def _check_salt(install_salt: bytes) -> None:
+    """Validate the salt before it's used as an HMAC key. A too-short salt
+    is a misuse/corruption signal — fail loud rather than derive weak,
+    low-entropy-keyed placeholders."""
+    if not isinstance(install_salt, (bytes, bytearray)):
+        raise TypeError(f"install_salt must be bytes, got {type(install_salt).__name__}")
+    if len(install_salt) < _SALT_BYTES:
+        raise ValueError(
+            f"install_salt must be at least {_SALT_BYTES} bytes "
+            f"(got {len(install_salt)}); a short salt weakens the keyed HMAC. "
+            "Regenerate via `avp setup` (this invalidates existing placeholders)."
+        )
+
+
+def _derive_tail(secret_name: str, install_salt: bytes) -> str:
+    """The lowercased, unpadded, truncated base32 HMAC tail for one name.
+
+    Factored out so tests can stub it to force a collision, and so the
+    digest construction lives in exactly one place.
+    """
+    digest = hmac.new(install_salt, secret_name.encode("utf-8"), hashlib.sha256).digest()
+    b32 = base64.b32encode(digest).decode("ascii").lower().rstrip("=")
+    return b32[:_TAIL_CHARS]
+
+
+def derive_placeholder(secret_name: str, install_salt: bytes) -> str:
+    """Derive the deterministic, salted placeholder for ``secret_name``.
+
+    Stable for a given (name, salt). Satisfies config.py's placeholder
+    invariants (>=24 chars, contains the PLACEHOLDER marker, printable,
+    no shell metacharacters). See module docstring for the construction.
+    """
+    _check_salt(install_salt)
+    if not secret_name:
+        raise ValueError("secret_name must be a non-empty string")
+    return PLACEHOLDER_PREFIX + _derive_tail(secret_name, install_salt)
+
+
+def derive_placeholder_map(
+    secret_names: list[str],
+    install_salt: bytes,
+) -> dict[str, str]:
+    """Derive ``{secret_name: placeholder}`` for a set of names, detecting
+    collisions.
+
+    A collision on the truncated tail raises :class:`PlaceholderCollisionError`
+    naming every conflicting secret. Duplicate names in the input are
+    deduplicated (the same name deriving the same placeholder is not a
+    collision).
+    """
+    _check_salt(install_salt)
+    mapping: dict[str, str] = {}
+    # placeholder -> first name that produced it, for collision diagnostics.
+    seen: dict[str, str] = {}
+    collisions: list[tuple[str, str, str]] = []
+    for name in secret_names:
+        if name in mapping:
+            continue  # same name twice — derives the same placeholder, fine.
+        ph = derive_placeholder(name, install_salt)
+        if ph in seen and seen[ph] != name:
+            collisions.append((ph, seen[ph], name))
+            continue
+        seen[ph] = name
+        mapping[name] = ph
+    if collisions:
+        detail = "; ".join(f"{a!r} and {b!r} -> {ph}" for ph, a, b in collisions)
+        raise PlaceholderCollisionError(
+            "derived placeholder collision across secret names: "
+            f"{detail}. Rename one of the conflicting secrets in BWS "
+            "(or rotate the install salt, which re-derives all placeholders)."
+        )
+    return mapping
+
+
+def load_or_create_install_salt(salt_path: str | Path) -> bytes:
+    """Load the per-install salt from ``salt_path``, creating it (32 random
+    bytes, mode 0600) on first call.
+
+    The salt is generated ONCE per install and must remain stable: it keys
+    every derived placeholder, so regenerating it silently would invalidate
+    every secret's placeholder (the daemon would stop recognising the env
+    file the agent already has). Therefore:
+
+    * An existing file that is the right length is returned as-is.
+    * An existing file that is TOO SHORT is treated as corruption/tamper and
+      raises (never silently regenerated) — the operator must decide to
+      rotate deliberately.
+    * The parent directory is created (0700) if missing, so a fresh install
+      under ``$AVP_CONFDIR`` works without a separate mkdir step.
+
+    Concurrency note: creation uses ``O_CREAT | O_EXCL`` so two racing
+    processes can't both write a salt; the loser re-reads the winner's.
+    """
+    path = Path(salt_path)
+    if path.exists():
+        st = path.stat()
+        mode = stat.S_IMODE(st.st_mode)
+        if mode & 0o077:
+            raise ValueError(
+                f"install salt at {path} has insecure mode {oct(mode)}; expected 0o600. "
+                "Restrict it to owner read/write only before starting the daemon."
+            )
+        euid = os.geteuid()
+        if st.st_uid not in {euid, 0}:
+            raise ValueError(
+                f"install salt at {path} is owned by uid {st.st_uid}; expected uid {euid} "
+                "or root (0). Fix the owner before starting the daemon."
+            )
+        data = path.read_bytes()
+        if len(data) < _SALT_BYTES:
+            raise ValueError(
+                f"install salt at {path} is {len(data)} bytes; expected at least "
+                f"{_SALT_BYTES}. Refusing to use a short/corrupt salt. If this is "
+                "intentional rotation, delete the file and re-run setup (this "
+                "invalidates all existing placeholders)."
+            )
+        return data
+
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    salt = secrets.token_bytes(_SALT_BYTES)
+    # O_EXCL: fail if another process created it between the exists() check
+    # and now. 0o600: owner read/write only — the salt is key material.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        # Lost the create race; read the winner's salt.
+        return load_or_create_install_salt(path)
+    try:
+        os.write(fd, salt)
+    finally:
+        os.close(fd)
+    # Re-assert 0600 explicitly — key material; belt over O_EXCL's mode arg.
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    return salt
+
+
+def resolve_install_salt_path(explicit: str | Path | None) -> str:
+    """Resolve the install-salt path.
+
+    Precedence: explicit path, then ``$AVP_CONFDIR/install-salt``, then
+    ``$HOME/install-salt`` (via :func:`Path.home`). The HOME fallback keeps
+    the default in the avp-writable confdir rather than next to
+    ``bindings.yaml``.
+    """
+    if explicit:
+        return str(explicit)
+    confdir = os.environ.get("AVP_CONFDIR")
+    if confdir:
+        return str(Path(confdir) / _DEFAULT_SALT_BASENAME)
+    try:
+        home = Path.home()
+    except RuntimeError as e:
+        raise RuntimeError("could not determine HOME for install salt path") from e
+    return str(home / _DEFAULT_SALT_BASENAME)

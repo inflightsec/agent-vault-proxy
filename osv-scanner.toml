@@ -1,0 +1,8 @@
+# Auto-discovered by the pre-commit docker hook and the CI osv-scan job.
+
+[[IgnoredVulns]]
+id = "GHSA-cx3h-4qpv-8hc9"
+# tornado OOB read, CVSS 3.7, transitive. Fix (6.5.6, published
+# 2026-06-12) is inside the 7-day cooldown; drop this entry at the
+# first lockfile regen after 2026-06-19.
+reason = "low-severity; fix blocked by supply-chain cooldown until 2026-06-19"

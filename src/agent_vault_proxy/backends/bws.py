@@ -71,6 +71,23 @@ class BitwardenBackend:
         return f"<{self.__class__.__name__}>"
 
     def fetch(self, name: str, ctx: Any = None) -> str:
+        value, _note = self._fetch_data(name)
+        return value
+
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+        """Return ``(value, note)`` for ``name`` (ADR-0011 item 1).
+
+        The note is the BWS secret's ``notes`` field, carrying the binding
+        metadata blob. Normalisation: an absent field, an empty string, or a
+        whitespace-only string all collapse to ``None`` — i.e. "no binding",
+        NOT a malformed one. The malformed-vs-no-binding distinction is made
+        downstream by the notes parser; here we only decide present-vs-absent.
+        """
+        return self._fetch_data(name)
+
+    def _fetch_data(self, name: str) -> tuple[str, str | None]:
+        """Shared resolve+get for fetch / fetch_with_meta. Returns the
+        secret value and its normalised note (None when absent/blank)."""
         from agent_vault_proxy.backends import (
             BackendUnavailableError,
             SecretNotFoundError,
@@ -85,11 +102,25 @@ class BitwardenBackend:
             response = self._sdk_client.secrets().get(secret_id)
         except Exception as e:
             raise BackendUnavailableError(f"BWS get failed: {e}") from e
-        # bws-sdk has no type stubs; the .value field is Any. Cast at the
+        # bws-sdk has no type stubs; .value / .note are Any. Cast at the
         # boundary so the rest of the codebase keeps the Protocol's `str`
         # contract intact.
         value: str = response.data.value
-        return value
+        # .note may be absent on older SDK objects / mocks; getattr-default
+        # to None. Empty/whitespace -> None (no binding, not malformed).
+        raw_note = getattr(response.data, "note", None)
+        note = None if raw_note is None or not str(raw_note).strip() else str(raw_note)
+        return value, note
+
+    def list_secret_names(self) -> list[str]:
+        """Return every secret NAME (BWS ``.key``) in the configured org/project
+        (ADR-0011 amendment — drives ``avp env`` and the daemon's BWS-notes
+        placeholder map). Triggers auth + the list call on first use, reusing
+        the cached name→id map thereafter. Returns names only — no values, no
+        ids — so the projection that builds the env file never pulls secret
+        bytes it doesn't need."""
+        self._ensure_authed()
+        return list(self._ensure_name_map().keys())
 
     def flush_name_map(self) -> None:
         """Invalidate the cached name→id map. Called when the caching

@@ -18,6 +18,8 @@ import sys
 
 from agent_vault_proxy.cli.doctor import run_doctor
 from agent_vault_proxy.cli.env import default_env_path, run_env
+from agent_vault_proxy.cli.run import register_run_subparser, run_run
+from agent_vault_proxy.cli.secret import register_secret_subparser, run_secret
 from agent_vault_proxy.cli.setup import run_setup
 
 _DEFAULT_CONFIG = "/etc/agent-vault-proxy/bindings.yaml"
@@ -132,6 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Bitwarden — no BWS token needed (development/testing only)."
         ),
     )
+    register_secret_subparser(sub)
+    register_run_subparser(sub)
     return parser
 
 
@@ -158,6 +162,10 @@ def main(argv: list[str] | None = None) -> int:
             no_service=args.no_service,
             static=args.static,
         )
+    if args.command == "secret":
+        return run_secret(args)
+    if args.command in ("run", "sandvault"):
+        return run_run(args)
 
     # No subcommand — print help and signal misuse.
     parser.print_help(sys.stderr)

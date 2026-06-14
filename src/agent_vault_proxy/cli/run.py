@@ -44,26 +44,79 @@ def _proxy_is_loopback(proxy_url: str) -> bool:
     return host in _LOOPBACK_HOSTS
 
 
+def _warn_env_file_perms(path: Path) -> None:
+    """Defense-in-depth: warn (don't refuse) if the user-owned env file is
+    not 0600 and self-owned. Threat is local — anyone who can write
+    ``~/.config/avp/env`` already has code-execution as the user — but a
+    loud warning catches honest misconfiguration."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return
+    if (st.st_mode & 0o777) != 0o600:
+        print(
+            f"[avp run] WARNING: {path} mode {oct(st.st_mode & 0o777)} "
+            "(expected 0o600). Re-run `avp env` to rewrite.",
+            file=sys.stderr,
+        )
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        print(
+            f"[avp run] WARNING: {path} not owned by current user.",
+            file=sys.stderr,
+        )
+
+
 def _load_env_file(path: Path) -> dict[str, str]:
     """Parse ``export NAME='value'`` lines from ``path``.
 
     Returns an empty dict if the file is missing — that's the first-run /
-    no-secrets case and not an error. Lines that don't match the strict
-    format are silently skipped; we never pass the file through a shell, so
-    a malformed line is ignored rather than treated as injection."""
+    no-secrets case and not an error. Permission-denied is reported and also
+    returns empty so launches don't break, but the operator sees the warning.
+
+    Lines that don't match the strict format are skipped with a one-line
+    warning each so a regex/grammar drift between ``avp env`` and this parser
+    surfaces immediately instead of producing a silently-empty environment.
+    We never pass the file through a shell."""
     try:
         text = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError:
         return {}
+    except OSError as exc:
+        print(
+            f"[avp run] WARNING: could not read {path}: {type(exc).__name__}.",
+            file=sys.stderr,
+        )
+        return {}
+    _warn_env_file_perms(path)
     out: dict[str, str] = {}
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         m = _EXPORT_RE.match(line)
         if m:
             out[m.group(1)] = m.group(2)
+        else:
+            print(
+                f"[avp run] WARNING: skipping {path}:{lineno} — does not "
+                "match `export NAME='value'` grammar.",
+                file=sys.stderr,
+            )
     return out
+
+
+# Lowercase proxy variants and bypass lists that some clients prefer over the
+# uppercase forms (curl, requests, some Go binaries). Without overriding these
+# the host shell can divert traffic away from AVP — e.g. `NO_PROXY=*` or a
+# stale `https_proxy=http://other:3128` shadowing our routing.
+_PROXY_OVERRIDE_KEYS = (
+    "https_proxy",
+    "http_proxy",
+    "HTTP_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+)
+_PROXY_BYPASS_KEYS = ("NO_PROXY", "no_proxy")
 
 
 def _build_avp_env(
@@ -77,6 +130,12 @@ def _build_avp_env(
     env["NODE_EXTRA_CA_CERTS"] = str(ca_path)
     env["SSL_CERT_FILE"] = str(ca_path)
     env["NODE_USE_ENV_PROXY"] = "1"
+    # Defense in depth: override every proxy variant + clear bypass lists so
+    # an inherited host-shell value cannot route around AVP.
+    for key in _PROXY_OVERRIDE_KEYS:
+        env[key] = proxy_url
+    for key in _PROXY_BYPASS_KEYS:
+        env.pop(key, None)
     return env
 
 

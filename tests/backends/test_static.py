@@ -73,3 +73,22 @@ def test_warn_stays_on_stderr_when_unsafe(
     assert backend.fetch("K") == "v"
 
     assert "static secrets backend is in use" in capsys.readouterr().err
+
+
+def test_file_is_safe_rejects_symlink(tmp_path: Path) -> None:
+    # A symlinked configured path is rejected outright, even when the target
+    # happens to satisfy the modes — the link itself is the attack surface.
+    tmp_path.chmod(0o700)
+    real = _write_secrets(tmp_path / "real.yaml", "secrets: {}\n", mode=0o600)
+    link = tmp_path / "secrets.yaml"
+    link.symlink_to(real)
+    assert _file_is_safe(link) is False
+
+
+def test_file_is_safe_rejects_symlinked_parent(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real"
+    real_parent.mkdir(mode=0o700)
+    link_parent = tmp_path / "link"
+    link_parent.symlink_to(real_parent)
+    path = _write_secrets(link_parent / "secrets.yaml", "secrets: {}\n", mode=0o600)
+    assert _file_is_safe(path) is False

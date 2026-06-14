@@ -311,14 +311,48 @@ def test_secret_without_nested_subcommand_prints_help(capsys) -> None:
     assert "usage: avp secret" in capsys.readouterr().err
 
 
-def test_errors_when_static_file_not_writable(tmp_path: Path, monkeypatch) -> None:
+def test_mutating_ops_fail_when_static_file_not_writable(tmp_path: Path, monkeypatch) -> None:
     config_path, _secrets_path = _make_static_bindings(tmp_path)
     monkeypatch.setattr("agent_vault_proxy.cli.secret.os.access", lambda path, mode: False)
+    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "v")
 
     with pytest.raises(SystemExit) as excinfo:
-        run_secret_list(config_path)
-
+        run_secret_add("FOO", config_path, False)
     assert "run with sudo as the service user" in str(excinfo.value)
+
+
+def test_list_works_when_file_is_read_only(tmp_path: Path, monkeypatch, capsys) -> None:
+    # `avp secret list` is read-only — must work for diagnostics even when
+    # the operator has read but not write access (e.g. service-group member).
+    config_path, secrets_path = _make_static_bindings(tmp_path)
+    secrets_path.write_text("secrets:\n  ALPHA: a\n  BETA: b\n")
+    monkeypatch.setattr("agent_vault_proxy.cli.secret.os.access", lambda path, mode: False)
+    rc = run_secret_list(config_path)
+    assert rc == 0
+    assert capsys.readouterr().out.split() == ["ALPHA", "BETA"]
+
+
+def test_refuses_symlinked_secrets_file(tmp_path: Path) -> None:
+    config_path, secrets_path = _make_static_bindings(tmp_path)
+    real = tmp_path / "real-secrets.yaml"
+    real.write_text("secrets:\n  FOO: bar\n")
+    secrets_path.unlink()
+    secrets_path.symlink_to(real)
+    with pytest.raises(SystemExit) as excinfo:
+        run_secret_list(config_path)
+    assert "symlink" in str(excinfo.value)
+
+
+def test_refuses_group_world_accessible_parent_dir(tmp_path: Path, monkeypatch) -> None:
+    config_path, secrets_path = _make_static_bindings(tmp_path)
+    secrets_path.parent.chmod(0o755)
+    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "v")
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            run_secret_add("FOO", config_path, False)
+        assert "group/world" in str(excinfo.value)
+    finally:
+        secrets_path.parent.chmod(0o700)
 
 
 def test_atomic_write_failure_keeps_original_file_and_cleans_temp(

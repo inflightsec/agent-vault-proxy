@@ -157,11 +157,18 @@ class StaticSecretsBackend:
 
 
 def _file_is_safe(path: Path) -> bool:
-    """True iff path is owner-only 0600 inside an owner-only 0700 parent dir."""
+    """True iff path is a regular file (not a symlink), owner-only 0600,
+    inside an owner-only 0700 non-symlink parent dir. Uses lstat so a
+    symlinked path is rejected outright — a symlink whose target happens
+    to satisfy the modes is not a safe configured path."""
     try:
-        st = path.stat()
-        dst = path.parent.stat()
+        st = path.lstat()
+        dst = path.parent.lstat()
     except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or stat.S_ISLNK(dst.st_mode):
+        return False
+    if not stat.S_ISREG(st.st_mode) or not stat.S_ISDIR(dst.st_mode):
         return False
     euid = os.geteuid()
     file_mode = stat.S_IMODE(st.st_mode)

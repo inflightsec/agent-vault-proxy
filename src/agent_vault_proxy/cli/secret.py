@@ -79,10 +79,39 @@ def _ensure_writable(path: Path) -> None:
         raise _die(f"cannot write {path} as uid {os.geteuid()}: run with sudo as the service user")
 
 
-def _read_secrets(path: Path) -> dict[str, str]:
+def _reject_symlink(path: Path) -> None:
+    """Refuse to operate on a symlinked secrets file. A symlinked configured
+    path would let an attacker who controls the link redirect reads/writes
+    elsewhere; safer to fail closed than to follow."""
+    try:
+        if path.is_symlink():
+            raise _die(f"static secrets file {path} is a symlink — refusing for safety")
+    except OSError as exc:
+        raise _die(f"could not lstat {path}: {type(exc).__name__}") from None
+
+
+def _ensure_parent_safe(path: Path) -> None:
+    """Match _file_is_safe's parent-dir invariant: 0o700, owner-only, no
+    symlink. We enforce at write time so a permissive parent dir can't be
+    used to substitute the secrets file between our temp-write and rename."""
+    parent = path.parent
+    try:
+        st = parent.lstat()
+    except OSError as exc:
+        raise _die(f"could not lstat {parent}: {type(exc).__name__}") from None
+    if (st.st_mode & 0o777) & 0o077:
+        raise _die(
+            f"parent dir {parent} mode {oct(st.st_mode & 0o777)} is group/world "
+            "accessible — refuse to write secrets through it. Expected 0o700."
+        )
+
+
+def _read_secrets(path: Path, *, for_write: bool = False) -> dict[str, str]:
+    _reject_symlink(path)
     if not path.exists():
         raise _die(f"static secrets file not found: {path}")
-    _ensure_writable(path)
+    if for_write:
+        _ensure_writable(path)
     try:
         raw = yaml.safe_load(path.read_text())
     except OSError as exc:
@@ -99,7 +128,9 @@ def _read_secrets(path: Path) -> dict[str, str]:
 
 
 def _write_secrets_atomic(path: Path, mapping: dict[str, str]) -> None:
+    _reject_symlink(path)
     _ensure_writable(path)
+    _ensure_parent_safe(path)
     try:
         stat_result = path.stat()
     except FileNotFoundError:
@@ -155,7 +186,7 @@ def _read_stdin_value() -> str:
 def run_secret_add(name: str, config_path: str, from_stdin: bool) -> int:
     name = _validate_name(name)
     path = _load_static_path(config_path)
-    secrets = _read_secrets(path)
+    secrets = _read_secrets(path, for_write=True)
     secrets[name] = _read_stdin_value() if from_stdin else _prompt_value()
     _write_secrets_atomic(path, secrets)
     print(f"✓ added secret {name!r}", file=sys.stderr)
@@ -174,7 +205,7 @@ def run_secret_list(config_path: str) -> int:
 def run_secret_remove(name: str, config_path: str) -> int:
     name = _validate_name(name)
     path = _load_static_path(config_path)
-    secrets = _read_secrets(path)
+    secrets = _read_secrets(path, for_write=True)
     if name not in secrets:
         print(f"secret {name!r} not present; nothing to do", file=sys.stderr)
         return 0
@@ -187,7 +218,7 @@ def run_secret_remove(name: str, config_path: str) -> int:
 def run_secret_rotate(name: str, config_path: str) -> int:
     name = _validate_name(name)
     path = _load_static_path(config_path)
-    secrets = _read_secrets(path)
+    secrets = _read_secrets(path, for_write=True)
     if name not in secrets:
         raise _die(f"cannot rotate {name!r}: not present (use `avp secret add` instead)")
     del secrets[name]

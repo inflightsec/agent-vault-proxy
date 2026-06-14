@@ -271,3 +271,49 @@ def test_run_routing_vars_win_over_env_file(
             )
         )
     assert captured["env"]["HTTPS_PROXY"] == "http://127.0.0.1:14322"
+
+
+def test_load_env_file_warns_on_malformed_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Silent skips were a debugging trap: if `avp env` ever drifts from this
+    # parser's grammar, the operator must see it instead of getting an empty
+    # placeholder environment with no explanation.
+    p = tmp_path / "env"
+    p.write_text("export OK='value'\ngarbage line\n")
+    p.chmod(0o600)
+    run_mod._load_env_file(p)
+    err = capsys.readouterr().err
+    assert "skipping" in err and "env:2" in err
+
+
+def test_load_env_file_warns_on_loose_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "env"
+    p.write_text("export OK='value'\n")
+    p.chmod(0o644)
+    run_mod._load_env_file(p)
+    err = capsys.readouterr().err
+    assert "0o644" in err
+
+
+def test_build_avp_env_overrides_lowercase_proxy_variants(ca_path: Path) -> None:
+    # Some clients prefer lowercase `https_proxy` over `HTTPS_PROXY` and obey
+    # `NO_PROXY` / `no_proxy`. If the host shell sets either, AVP must still
+    # win in the spawned process — otherwise traffic bypasses the proxy.
+    env = run_mod._build_avp_env(ca_path, "http://127.0.0.1:14322", {})
+    for key in ("HTTPS_PROXY", "https_proxy", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        assert env[key] == "http://127.0.0.1:14322", key
+    for key in ("NO_PROXY", "no_proxy"):
+        assert key not in env, key
+
+
+def test_build_avp_env_strips_inherited_no_proxy(
+    monkeypatch: pytest.MonkeyPatch, ca_path: Path
+) -> None:
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "api.example.com")
+    env = run_mod._build_avp_env(ca_path, "http://127.0.0.1:14322", {})
+    assert "NO_PROXY" not in env
+    assert "no_proxy" not in env

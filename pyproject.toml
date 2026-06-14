@@ -56,6 +56,7 @@ Changelog = "https://github.com/inflightsec/agent-vault-proxy/blob/main/CHANGELO
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.13",
     "types-PyYAML",

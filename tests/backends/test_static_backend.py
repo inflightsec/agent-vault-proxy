@@ -70,7 +70,12 @@ def test_warning_logged_on_first_fetch(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The static backend must surface a clear in-use warning so an
-    operator who selects it cannot miss that this isn't a production path."""
+    operator who selects it cannot miss that this isn't a production path.
+
+    The downgrade-to-info path is exercised in tests/backends/test_static.py;
+    here we widen the parent dir mode to the unsafe range so the canonical
+    stderr WARNING is what fires."""
+    tmp_path.chmod(0o755)
     p = _write_secrets(tmp_path, "secrets:\n  K: v\n")
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(p)))
     backend.fetch("K")
@@ -83,6 +88,7 @@ def test_warning_emitted_only_once(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    tmp_path.chmod(0o755)
     p = _write_secrets(tmp_path, "secrets:\n  K: v\n")
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(p)))
     backend.fetch("K")

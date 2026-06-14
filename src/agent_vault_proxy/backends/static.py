@@ -21,6 +21,8 @@ container layer or a misconfigured volume.
 from __future__ import annotations
 
 import logging
+import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any, Literal
@@ -83,6 +85,10 @@ class StaticSecretsBackend:
         if self._warned_in_use:
             return
         self._warned_in_use = True
+        path = Path(self._config.path) if self._config is not None else None
+        if path is not None and _file_is_safe(path):
+            _log.info("static backend in use at %s", path)
+            return
         msg = (
             "static secrets backend is in use — this reads plaintext "
             "secrets from a file and is intended for development, "
@@ -148,6 +154,19 @@ class StaticSecretsBackend:
         # doesn't surface as int and break the addon's header-substitution.
         self._secrets = {str(k): str(v) for k, v in secrets_raw.items()}
         return self._secrets
+
+
+def _file_is_safe(path: Path) -> bool:
+    """True iff path is owner-only 0600 inside an owner-only 0700 parent dir."""
+    try:
+        st = path.stat()
+        dst = path.parent.stat()
+    except OSError:
+        return False
+    euid = os.geteuid()
+    file_mode = stat.S_IMODE(st.st_mode)
+    dir_mode = stat.S_IMODE(dst.st_mode)
+    return st.st_uid == euid and dst.st_uid == euid and file_mode == 0o600 and dir_mode == 0o700
 
 
 def _register() -> None:

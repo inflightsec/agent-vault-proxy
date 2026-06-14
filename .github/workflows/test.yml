@@ -194,10 +194,10 @@ jobs:
           # cutoff stricter, never weaker).
           CUTOFF=$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z"))')
           echo "Cooldown cutoff: $CUTOFF"
-          uv pip compile --generate-hashes \
+          uv pip compile --universal --generate-hashes \
             --exclude-newer "$CUTOFF" \
             pyproject.toml -o /tmp/requirements.lock.fresh
-          uv pip compile --generate-hashes \
+          uv pip compile --universal --generate-hashes \
             --exclude-newer "$CUTOFF" \
             --extra dev \
             pyproject.toml -o /tmp/requirements-dev.lock.fresh
@@ -220,8 +220,8 @@ jobs:
           if [ "$fail" -ne 0 ]; then
             echo "::error::Regenerate locally with:"
             echo "::error::  CUTOFF=\$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) - timedelta(days=7)).strftime(\"%Y-%m-%dT00:00:00Z\"))')"
-            echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" pyproject.toml -o requirements.lock"
-            echo "::error::  uv pip compile --generate-hashes --exclude-newer \"\$CUTOFF\" --extra dev pyproject.toml -o requirements-dev.lock"
+            echo "::error::  uv pip compile --universal --generate-hashes --exclude-newer \"\$CUTOFF\" pyproject.toml -o requirements.lock"
+            echo "::error::  uv pip compile --universal --generate-hashes --exclude-newer \"\$CUTOFF\" --extra dev pyproject.toml -o requirements-dev.lock"
             exit 1
           fi
 

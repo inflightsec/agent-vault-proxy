@@ -35,9 +35,9 @@ hash_before_dev=$(sha256sum requirements-dev.lock | awk '{print $1}')
 # local cache. Belt-and-suspenders alongside the tempfile pattern.
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" \
+uv pip compile --universal --refresh --generate-hashes --exclude-newer "$CUTOFF" \
     pyproject.toml -o "$TMP/requirements.lock" >/dev/null
-uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
+uv pip compile --universal --refresh --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
     pyproject.toml -o "$TMP/requirements-dev.lock" >/dev/null
 mv "$TMP/requirements.lock"     requirements.lock
 mv "$TMP/requirements-dev.lock" requirements-dev.lock

@@ -40,9 +40,9 @@ trap 'rm -rf "$TMP"' EXIT
 # stale metadata cache and produce a different resolution than regen-lockfiles.sh
 # did seconds earlier (different cache state -> contradictory results). The
 # 1-5s extra latency per check is worth deterministic resolution.
-uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" \
+uv pip compile --universal --refresh --generate-hashes --exclude-newer "$CUTOFF" \
     pyproject.toml -o "$TMP/requirements.lock.fresh" >/dev/null
-uv pip compile --refresh --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
+uv pip compile --universal --refresh --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
     pyproject.toml -o "$TMP/requirements-dev.lock.fresh" >/dev/null
 
 fail=0

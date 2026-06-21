@@ -222,6 +222,10 @@ class BodyInjector(BaseModel):
 
     ``format`` / ``template`` semantics mirror :class:`HeaderInjector` —
     the result is the bytes each placeholder occurrence gets replaced WITH.
+    Single-secret bindings use ``format`` (literal ``{<SECRET_NAME>}``
+    substitution); composite bindings use ``template`` (sandboxed Jinja2)
+    together with ``compose:`` on the parent ``SecretSpec``. The render
+    path is identical to headers — only the substitution target differs.
 
     ``content_type`` (optional): when set, the request's Content-Type must
     match (parameters stripped, case-insensitive) or the body forwards
@@ -236,10 +240,11 @@ class BodyInjector(BaseModel):
     template: str | None = None
 
     def render_value(self, *, real_secret: str, secret_name: str) -> str:
-        """Bytes each in-body placeholder occurrence is replaced with."""
+        """Bytes each in-body placeholder occurrence is replaced with (single-
+        secret path only). Composite body bindings go through
+        ``SecretSpec.compiled_template`` — same as composite header bindings."""
         assert self.format is not None, (
-            "render_value() expects inject.format; composite body bindings would "
-            "use compiled_template (not yet supported for body)"
+            "render_value() expects inject.format; use compiled_template for composite bindings"
         )
         return _render_substitution(
             self.format,
@@ -255,11 +260,6 @@ class BodyInjector(BaseModel):
             raise ValueError("body inject.format and inject.template are mutually exclusive")
         if not has_format and not has_template:
             raise ValueError("body inject requires either 'format' or 'template'")
-        if has_template:
-            raise ValueError(
-                "body inject.template (composite/Jinja) is not yet supported; "
-                "use inject.format for single-secret substitution"
-            )
         if has_format:
             assert self.format is not None
             _assert_format_has_placeholder(self.format, context_label="body inject.format")

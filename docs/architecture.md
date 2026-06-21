@@ -311,6 +311,7 @@ Rules:
 | `denied` | `composite_unavailable:<ExcName>` | One or more compose entries failed to fetch |
 | `denied` | `composite_fetch_error:<ExcName>` | Compose-path catch-all |
 | `denied` | `render_failed` | Composite template render raised (template-internal detail logged separately, not audited) |
+| `denied` | `composite_render_unexpected_error:<ExcName>` | Body composite resolver raised an exception type that `_fetch_and_render_composite` doesn't catch (closure-capture bug, `MemoryError`, `RecursionError`); G6 fail-closed catch-all at the body-streaming layer |
 | `denied` | `invalid_binding_metadata` | A BWS secret's notes blob is MALFORMED (bad YAML, unknown key, bad value). Fail closed; a precise diagnostic is surfaced via `avp doctor` (ADR-0011) |
 | `denied` | `no_binding_in_notes` | A BWS secret's notes blob carries NO binding (empty/missing note, or no `host`). Distinct from `invalid_binding_metadata` — the secret simply isn't bound yet, not typo'd (ADR-0011) |
 

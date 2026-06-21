@@ -27,6 +27,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import time
 import urllib.parse
 from types import MappingProxyType
 from typing import Any
@@ -139,6 +140,87 @@ def _func_hmac_sha512(key: Any, msg: Any) -> str:
     return hmac.new(k.encode("utf-8"), m.encode("utf-8"), "sha512").hexdigest()
 
 
+def _func_hmac_sha1(key: Any, msg: Any) -> str:
+    """Lowercase hex HMAC-SHA1(key, msg) over UTF-8 bytes.
+
+    HMAC-SHA1 is included specifically to support RFC 6238 TOTP (which
+    mandates SHA-1 as the default HMAC primitive). SHA-1 is deprecated for
+    general cryptographic use but remains the interoperable choice for TOTP
+    against deployed authenticators — adding it here is bounded scope, not
+    a general endorsement.
+    """
+    k = _require_str("hmac_sha1.key", key)
+    m = _require_str("hmac_sha1.msg", msg)
+    return hmac.new(k.encode("utf-8"), m.encode("utf-8"), "sha1").hexdigest()
+
+
+# RFC 4648 §6 base32 alphabet (uppercase A-Z + digits 2-7). Frozen at module
+# import so the per-call alphabet check ``set(cleaned).issubset(...)`` doesn't
+# rebuild the set on each render.
+_BASE32_ALPHABET: frozenset[str] = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+
+
+def _func_totp(secret_b32: Any) -> str:
+    """RFC 6238 TOTP code from a base32-encoded secret.
+
+    Returns a 6-digit ASCII code, derived from HMAC-SHA1 over the current
+    30-second window counter, dynamic-truncated per RFC 4226 §5.3, modulo
+    10**6.
+
+    NON-DETERMINISTIC across renders: output depends on wall-clock time.
+    Every other whitelisted helper is a pure function of its inputs; ``totp``
+    is the single exception. Operators relying on this should understand the
+    consequences for retry semantics (a refused request that retries 30s
+    later will get a different code) and for caching (composite_fetch caches
+    the secret value, but ``compiled_template.render`` re-evaluates every
+    request — that is correct behaviour and must not be cached).
+
+    Input contract: base32 alphabet per RFC 4648 §6, case-insensitive,
+    optional whitespace and ``=`` padding. Implementation tolerates both
+    padded and unpadded inputs (the authenticator-app standard varies).
+    """
+    s = _require_str("totp.secret", secret_b32)
+    # Normalise: strip whitespace + casefold + drop padding. Then re-pad to
+    # the nearest base32 block (multiple of 8) so b64decode-strict accepts.
+    cleaned = "".join(s.split()).upper().rstrip("=")
+    if not cleaned:
+        raise UnsupportedTemplateError("totp.secret: empty after normalization")
+    # base32 alphabet check before decode so we raise UnsupportedTemplateError
+    # consistently rather than letting base64.binascii.Error surface. The
+    # ``set(cleaned)`` build itself runs in length-of-input time; the
+    # subsequent ``issubset`` against the fixed alphabet is O(unique chars in
+    # input) and may short-circuit — total cost dominated by the build. This
+    # avoids a per-char ``any`` whose short-circuit position would leak the
+    # offset of the first malformed byte through render time. Minor side-
+    # channel posture defence; HMAC dominates the timing budget (review R-7).
+    if not set(cleaned).issubset(_BASE32_ALPHABET):
+        raise UnsupportedTemplateError("totp.secret: contains non-base32 characters")
+    pad = (-len(cleaned)) % 8
+    try:
+        key = base64.b32decode(cleaned + "=" * pad)
+    except binascii.Error:
+        # Defence-in-depth: the binascii.Error message is short and bounded
+        # in CPython today (e.g. "Non-base32 digit found") and doesn't echo
+        # input bytes, but a future stdlib change that did so would silently
+        # exfil base32-secret fragments through the proxy's stderr (see the
+        # WARNING line in _fetch_and_render_composite). Drop the interpolated
+        # exception message and use a static string.
+        raise UnsupportedTemplateError("totp.secret: base32 decode failed") from None
+    # RFC 6238 §4.1 default: 30-second step. Counter is big-endian 8 bytes.
+    counter = int(time.time()) // 30
+    msg = counter.to_bytes(8, "big")
+    digest = hmac.new(key, msg, "sha1").digest()
+    # RFC 4226 §5.3 dynamic truncation.
+    offset = digest[-1] & 0x0F
+    code = (
+        ((digest[offset] & 0x7F) << 24)
+        | (digest[offset + 1] << 16)
+        | (digest[offset + 2] << 8)
+        | digest[offset + 3]
+    ) % 1_000_000
+    return f"{code:06d}"
+
+
 # Whitelists are immutable read-only views. Each entry maps to
 # (callable, expected_positional_arg_count). Arity is enforced at AST-walk
 # time so a wrong-arg-count template fails AT CONFIG-LOAD, not at the first
@@ -160,6 +242,8 @@ _FILTERS_RAW: dict[str, tuple[Any, int]] = {
 _FUNCTIONS_RAW: dict[str, tuple[Any, int]] = {
     "hmac_sha256": (_func_hmac_sha256, 2),
     "hmac_sha512": (_func_hmac_sha512, 2),
+    "hmac_sha1": (_func_hmac_sha1, 2),
+    "totp": (_func_totp, 1),
 }
 
 # Public, read-only views. Mutation attempts raise TypeError. Prevents tests
@@ -395,9 +479,15 @@ class AvpTemplate:
         # depending on whether they happen to call it. Resolve the
         # ambiguity at construction.
         for entry in names:
-            if entry in WHITELISTED_FILTERS or entry in WHITELISTED_FUNCTIONS:
+            if entry in WHITELISTED_FILTERS:
                 raise UnsupportedTemplateError(
-                    f"allowed_vars entry {entry!r} collides with a reserved filter or function name"
+                    f"allowed_vars entry {entry!r} collides with reserved filter "
+                    f"{entry!r}; rename your compose entry (e.g. {entry.upper() + '_VALUE'!r})"
+                )
+            if entry in WHITELISTED_FUNCTIONS:
+                raise UnsupportedTemplateError(
+                    f"allowed_vars entry {entry!r} collides with reserved function "
+                    f"{entry!r}; rename your compose entry (e.g. {entry.upper() + '_VALUE'!r})"
                 )
         self._source = source
         self._allowed_vars = frozenset(names)

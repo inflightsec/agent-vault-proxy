@@ -572,25 +572,386 @@ def test_body_injector_fail_closed_clears_buffer(tmp_path: Path) -> None:
     assert len(replacer._buffer) == 0, "buffer should be cleared on fail-closed"
 
 
-def test_body_injector_rejects_template_in_p06(tmp_path: Path) -> None:
-    """Body inject.template (composite path) is not supported in P0.6.
-    Config-load should fail with a clear message pointing at the
-    follow-up."""
-    yaml = f"""
+# NOTE: body composite (inject.template + compose:) was deferred in P0.6 and
+# is now supported — the original "rejects template" test is replaced by the
+# composite acceptance + render tests below.
+
+
+# ---------------------------------------------------------------------------
+# Composite body bindings — inject.template + compose: on a body injector
+# ---------------------------------------------------------------------------
+
+# 35-char placeholder for the composite-rendered output; distinct from the
+# single-secret BODY_PLACEHOLDER above so the existing fixture-config tests
+# stay deterministic.
+COMPOSITE_BODY_PLACEHOLDER = "cmp_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars
+
+
+_BODY_COMPOSITE_CONFIG = f"""
 version: 1
+
 secrets:
-  WEBHOOK_TOKEN:
+  WEBHOOK_HMAC:
+    placeholder: "{COMPOSITE_BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      content_type: "application/json"
+      template: "{{{{ (KEY + ':' + MSG) | b64encode }}}}"
+    compose:
+      - KEY
+      - MSG
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+
+
+def test_body_composite_renders_via_b64encode(tmp_path: Path) -> None:
+    """Body composite with two compose secrets + b64encode filter renders
+    deterministically and the placeholder in the body is replaced with the
+    rendered bytes. Mirrors the header composite end-to-end shape."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_COMPOSITE_CONFIG)
+    addon.client = _make_client(per_name={"KEY": "alice", "MSG": "ping"})
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+    assert callable(flow.request.stream), "expected streaming replacer attached"
+
+    body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER, "ok": True}).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in body_out
+    parsed = json.loads(body_out)
+    # b64encode("alice:ping") = "YWxpY2U6cGluZw=="
+    assert parsed["sig"] == "YWxpY2U6cGluZw=="
+    assert parsed["ok"] is True
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert len(allowed) == 1
+    assert allowed[0]["reason"] == "body_binding_matched"
+    assert allowed[0]["secret_name"] == "WEBHOOK_HMAC"
+    # Hot-path audit on success does NOT include compose: list — mirrors
+    # the header composite contract (see addon.py:642-646).
+    assert "compose" not in allowed[0]
+
+
+def test_body_composite_fail_closed_on_backend_unavailable(tmp_path: Path) -> None:
+    """A composite leg's BWS fetch failure must 503 the request, emit
+    ``composite_unavailable`` with the compose list in audit, and eat the
+    remaining body bytes (no partial leak of the placeholder upstream)."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_COMPOSITE_CONFIG)
+    addon.client = _make_client(
+        per_name={"KEY": "alice", "MSG": "ping"},
+        fail_names={"MSG"},
+    )
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+    assert callable(flow.request.stream)
+
+    body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER}).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+    # Composite resolver set flow.response = 503 + emitted audit; the
+    # replacer signals end-of-stream by returning b"" thereafter, and any
+    # already-emitted post-failure bytes must NOT contain the placeholder.
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in body_out
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+
+    events = _read_audit(audit_path)
+    denied = [e for e in events if e.get("decision") == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["reason"].startswith("composite_unavailable:")
+    assert denied[0]["secret_name"] == "WEBHOOK_HMAC"
+    # Failure-path audit MUST include compose: list (operator forensics).
+    assert denied[0]["compose"] == ["KEY", "MSG"]
+
+
+def test_body_composite_render_failed_audits_generic_reason(tmp_path: Path) -> None:
+    """Render failure (e.g., b64decode on non-base64 input) must 503 and
+    audit ``reason: render_failed`` — generic, no template internals leaked
+    via the agent-observable response or the audit log."""
+    config_yaml = _BODY_COMPOSITE_CONFIG.replace(
+        "\"{{ (KEY + ':' + MSG) | b64encode }}\"",
+        '"{{ KEY | b64decode }}"',
+    )
+    addon, audit_path = _build_addon(tmp_path, config_yaml)
+    # KEY is set to a non-base64 value; b64decode will raise
+    # TemplateRenderError at render time.
+    addon.client = _make_client(per_name={"KEY": "not!base64!", "MSG": "x"})
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+
+    body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER}).encode()
+    _stream_through(flow.request.stream, [body_in])
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+
+    events = _read_audit(audit_path)
+    denied = [e for e in events if e.get("decision") == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["reason"] == "render_failed"
+    assert denied[0]["secret_name"] == "WEBHOOK_HMAC"
+    assert denied[0]["compose"] == ["KEY", "MSG"]
+
+
+_BODY_COMPOSITE_TOTP_CONFIG = f"""
+version: 1
+
+secrets:
+  TOTP_BODY:
+    placeholder: "{COMPOSITE_BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      content_type: "application/json"
+      template: "{{{{ totp(TOTP_SECRET) }}}}"
+    compose:
+      - TOTP_SECRET
+    bindings:
+      - host: "api.example.com"
+        methods: [POST]
+        paths: ["/account/totp"]
+
+unmatched_destination_policy: forward_unmodified
+
+audit:
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
+"""
+
+
+def test_body_composite_totp_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The motivating use case: a 2FA TOTP code computed inside AVP from a
+    base32 secret and injected into the request body. Time is frozen against
+    the RFC 6238 §5.2 SHA-1 vector at T=59s → 6-digit code 287082."""
+    import agent_vault_proxy.template as template_module
+
+    monkeypatch.setattr(template_module.time, "time", lambda: 59.0)
+
+    addon, audit_path = _build_addon(tmp_path, _BODY_COMPOSITE_TOTP_CONFIG)
+    addon.client = _make_client(
+        per_name={"TOTP_SECRET": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"},
+    )
+
+    flow = _make_request(
+        "api.example.com",
+        path="/account/totp",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+    assert callable(flow.request.stream)
+
+    body_in = json.dumps(
+        {"totp_token": "session-handle-from-/login", "code": COMPOSITE_BODY_PLACEHOLDER}
+    ).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in body_out
+    parsed = json.loads(body_out)
+    assert parsed["code"] == "287082"
+    assert parsed["totp_token"] == "session-handle-from-/login"  # untouched
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert len(allowed) == 1
+    assert allowed[0]["reason"] == "body_binding_matched"
+    assert allowed[0]["secret_name"] == "TOTP_BODY"
+
+
+def test_body_composite_coexists_with_single_secret_body_binding(tmp_path: Path) -> None:
+    """A single request body that contains BOTH a composite-binding placeholder
+    AND a single-secret-binding placeholder must substitute both correctly.
+    Pins that the per-target branch (composite vs single) inside the
+    replacer's two-phase commit doesn't trip when both paths execute."""
+    config_yaml = f"""
+version: 1
+
+secrets:
+  WEBHOOK_HMAC:
+    placeholder: "{COMPOSITE_BODY_PLACEHOLDER}"
+    inject:
+      type: body
+      content_type: "application/json"
+      template: "{{{{ (KEY + ':' + MSG) | b64encode }}}}"
+    compose:
+      - KEY
+      - MSG
+    bindings:
+      - host: "hooks.example.com"
+        methods: [POST]
+  WEBHOOK_PLAIN:
     placeholder: "{BODY_PLACEHOLDER}"
     inject:
       type: body
-      template: "{{{{ WEBHOOK_TOKEN }}}}"
-    compose: [WEBHOOK_TOKEN]
+      content_type: "application/json"
+      format: "{{WEBHOOK_PLAIN}}"
     bindings:
       - host: "hooks.example.com"
+        methods: [POST]
+
+unmatched_destination_policy: forward_unmodified
+
 audit:
-  path: /tmp/x.jsonl
+  path: __AUDIT_PATH__
+  fail_on_unwritable: true
 """
-    config_path = tmp_path / "bindings.yaml"
-    config_path.write_text(yaml)
-    with pytest.raises(Exception, match=r"body inject.template.*not yet supported"):
-        load_config(config_path)
+    addon, audit_path = _build_addon(tmp_path, config_yaml)
+    addon.client = _make_client(
+        per_name={"KEY": "alice", "MSG": "ping", "WEBHOOK_PLAIN": BODY_REAL},
+    )
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+
+    body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER, "token": BODY_PLACEHOLDER}).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in body_out
+    assert BODY_PLACEHOLDER.encode() not in body_out
+    parsed = json.loads(body_out)
+    assert parsed["sig"] == "YWxpY2U6cGluZw=="
+    assert parsed["token"] == BODY_REAL
+
+    events = _read_audit(audit_path)
+    allowed = [e for e in events if e.get("decision") == "allowed"]
+    assert {e["secret_name"] for e in allowed} == {"WEBHOOK_HMAC", "WEBHOOK_PLAIN"}
+
+
+def test_body_composite_placeholder_spans_chunk_boundary(tmp_path: Path) -> None:
+    """Chunk-boundary correctness must inherit from the single-secret path.
+    Splitting the composite placeholder across two chunks at every byte
+    boundary still detects + substitutes the rendered value. Same property
+    proven for single-secret body bindings; this pins it for composite.
+    Review R-9 closes the test gap."""
+    addon, _ = _build_addon(tmp_path, _BODY_COMPOSITE_CONFIG)
+    addon.client = _make_client(per_name={"KEY": "alice", "MSG": "ping"})
+
+    body = f'{{"sig":"{COMPOSITE_BODY_PLACEHOLDER}","msg":"hi"}}'.encode()
+    placeholder_start = body.index(COMPOSITE_BODY_PLACEHOLDER.encode())
+    placeholder_end = placeholder_start + len(COMPOSITE_BODY_PLACEHOLDER)
+
+    for split in range(placeholder_start + 1, placeholder_end):
+        flow = _make_request(
+            "hooks.example.com",
+            headers={"Content-Type": "application/json"},
+        )
+        addon.requestheaders(flow)
+        out = _stream_through(flow.request.stream, [body[:split], body[split:]])
+        assert COMPOSITE_BODY_PLACEHOLDER.encode() not in out, (
+            f"composite placeholder leaked when split at byte {split}"
+        )
+        assert b"YWxpY2U6cGluZw==" in out, f"rendered value missing when split at byte {split}"
+
+    # Worst case: 1-byte chunks across the entire placeholder.
+    flow_one_byte = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow_one_byte)
+    out = _stream_through(flow_one_byte.request.stream, [bytes([b]) for b in body])
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in out
+    assert b"YWxpY2U6cGluZw==" in out
+
+
+def test_body_composite_resolver_uncaught_exception_fails_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the composite resolver raises an exception type ``_fetch_and_render
+    _composite`` doesn't catch (e.g. RecursionError, MemoryError, a future
+    closure-capture bug), the body replacer's catch-all converts it to a
+    503 + denied audit instead of propagating through mitmproxy's streaming
+    machinery — review R-8 / G6 fail-closed."""
+    addon, audit_path = _build_addon(tmp_path, _BODY_COMPOSITE_CONFIG)
+    addon.client = _make_client(per_name={"KEY": "alice", "MSG": "ping"})
+
+    # Force the addon's composite render to raise an unexpected type. We
+    # patch ``_fetch_and_render_composite`` itself rather than going through
+    # the render layer — the test is specifically about exception types the
+    # render layer's catches don't cover.
+    def _boom(**_kwargs: object) -> str | None:
+        raise RuntimeError("synthetic test failure")
+
+    monkeypatch.setattr(addon, "_fetch_and_render_composite", _boom)
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+    body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER}).encode()
+    body_out = _stream_through(flow.request.stream, [body_in])
+
+    assert COMPOSITE_BODY_PLACEHOLDER.encode() not in body_out
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+
+    events = _read_audit(audit_path)
+    denied = [e for e in events if e.get("decision") == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["reason"] == "composite_render_unexpected_error:RuntimeError"
+    assert denied[0]["secret_name"] == "WEBHOOK_HMAC"
+
+
+def test_body_composite_render_failure_does_not_leak_input_to_stderr(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The WARNING line emitted on render failure logs only the EXCEPTION
+    CLASS NAME (e.g. ``TemplateRenderError``), never the exception message
+    — which could legitimately include operator-supplied fragments (a base32
+    secret that failed to decode, a Unicode position from an encode step).
+    Stderr is commonly piped to log aggregators; this pins the no-leak
+    contract — review R-1."""
+    import logging
+
+    # Use a body composite whose template fails at render time on a value
+    # that is itself a substring of the (non-secret) input: b64decode on a
+    # value containing the placeholder marker is enough to force a render
+    # failure whose unwrapped message would carry the input shape.
+    config_yaml = _BODY_COMPOSITE_CONFIG.replace(
+        "\"{{ (KEY + ':' + MSG) | b64encode }}\"",
+        '"{{ KEY | b64decode }}"',
+    )
+    addon, _ = _build_addon(tmp_path, config_yaml)
+    # KEY is a fake "secret-shaped" string that exercises the b64decode
+    # failure path. The test asserts this string never reaches stderr.
+    fake_secret = "TOTPSECRET_DO_NOT_LOG_ME"
+    addon.client = _make_client(per_name={"KEY": fake_secret, "MSG": "x"})
+
+    flow = _make_request(
+        "hooks.example.com",
+        headers={"Content-Type": "application/json"},
+    )
+    addon.requestheaders(flow)
+
+    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.addon"):
+        body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER}).encode()
+        _stream_through(flow.request.stream, [body_in])
+
+    assert flow.response is not None
+    assert flow.response.status_code == 503
+
+    # Iterate every captured record and confirm none of them carry the
+    # fake secret value as a substring of the FORMATTED message.
+    for record in caplog.records:
+        assert fake_secret not in record.getMessage(), (
+            f"secret value leaked into log record: {record.getMessage()!r}"
+        )

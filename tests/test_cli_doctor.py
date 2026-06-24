@@ -22,6 +22,7 @@ import os
 from agent_vault_proxy.cli.doctor import (
     check_ca_key_perms,
     check_ca_not_in_trust_store,
+    run_doctor,
 )
 
 
@@ -117,3 +118,52 @@ def test_ca_not_in_trust_store_silent_when_ca_cert_absent(tmp_path) -> None:
     cert = tmp_path / ".mitmproxy" / "mitmproxy-ca-cert.pem"
     warnings = check_ca_not_in_trust_store(str(cert), trust_store_paths=[str(tmp_path)])
     assert warnings == []
+
+
+def test_ca_cert_unreadable_is_treated_as_absent(tmp_path) -> None:
+    """An unreadable CA cert path (here: a directory) is skipped, not a
+    traceback — same contract as a missing cert."""
+    # Passing a directory makes read_text raise IsADirectoryError (OSError).
+    warnings = check_ca_not_in_trust_store(str(tmp_path), trust_store_paths=[str(tmp_path)])
+    assert warnings == []
+
+
+def test_trust_store_scan_skips_missing_dirs_and_unreadable_files(tmp_path) -> None:
+    """A non-existent store path is skipped; an unreadable file in a real
+    store dir is skipped rather than crashing the scan."""
+    _confdir, cert, _key = _make_ca_files(tmp_path)
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    unreadable = store_dir / "locked.pem"
+    unreadable.write_text("whatever")
+    os.chmod(unreadable, 0o000)
+    try:
+        warnings = check_ca_not_in_trust_store(
+            str(cert),
+            trust_store_paths=[str(tmp_path / "does-not-exist"), str(store_dir)],
+        )
+        assert warnings == []
+    finally:
+        os.chmod(unreadable, 0o600)  # let tmp cleanup remove it
+
+
+# --------------------------------------------------------------------------
+# run_doctor (exit-code + output contract)
+# --------------------------------------------------------------------------
+
+
+def test_run_doctor_returns_0_and_prints_pass_when_clean(tmp_path, capsys) -> None:
+    absent_cert = tmp_path / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+    absent_key = tmp_path / ".mitmproxy" / "mitmproxy-ca.pem"
+    rc = run_doctor(ca_cert_path=str(absent_cert), ca_key_path=str(absent_key))
+    assert rc == 0
+    assert "passed" in capsys.readouterr().out
+
+
+def test_run_doctor_returns_1_and_reports_warnings(tmp_path, capsys) -> None:
+    _confdir, _cert, key = _make_ca_files(tmp_path, key_mode=0o640)
+    absent_cert = tmp_path / "nope-cert.pem"
+    rc = run_doctor(ca_cert_path=str(absent_cert), ca_key_path=str(key))
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()

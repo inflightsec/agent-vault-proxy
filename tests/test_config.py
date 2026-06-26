@@ -375,6 +375,81 @@ def test_composite_secret_validates() -> None:
     assert rendered.startswith("Basic ")
 
 
+def test_body_composite_secret_validates() -> None:
+    """Body injector + compose: + inject.template compiles the template at
+    config-load — same machinery as the header composite path. The deferral
+    that previously blocked this at the BodyInjector validator is now lifted."""
+    config = Config.model_validate(
+        {
+            "version": 1,
+            "secrets": {
+                "WEBHOOK_HMAC": {
+                    "placeholder": "wh_PLACEHOLDER_01HXY1234567890ABC",
+                    "inject": {
+                        "type": "body",
+                        "content_type": "application/json",
+                        "template": "{{ (KEY + ':' + MSG) | b64encode }}",
+                    },
+                    "compose": ["KEY", "MSG"],
+                    "bindings": [{"host": "hooks.example.com", "methods": ["POST"]}],
+                }
+            },
+            "audit": {"path": "/tmp/x.jsonl"},
+        }
+    )
+    spec = config.secrets["WEBHOOK_HMAC"]
+    assert spec.compose == ["KEY", "MSG"]
+    assert spec.compiled_template is not None
+    rendered = spec.compiled_template.render({"KEY": "alice", "MSG": "ping"})
+    assert rendered == "YWxpY2U6cGluZw=="
+
+
+def test_body_composite_without_compose_rejected() -> None:
+    """Body inject.template alone (no compose:) must fail at config-load
+    with the same message as the header case — co-required."""
+    with pytest.raises(ValidationError, match="requires compose"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "WH": {
+                        "placeholder": "wh_PLACEHOLDER_01HXY1234567890ABC",
+                        "inject": {
+                            "type": "body",
+                            "template": "{{ X }}",
+                        },
+                        "bindings": [{"host": "hooks.example.com", "methods": ["POST"]}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
+def test_body_composite_with_format_too_rejected() -> None:
+    """Body inject.format AND inject.template are mutually exclusive — the
+    BodyInjector validator surfaces the same error as the header path."""
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        Config.model_validate(
+            {
+                "version": 1,
+                "secrets": {
+                    "WH": {
+                        "placeholder": "wh_PLACEHOLDER_01HXY1234567890ABC",
+                        "inject": {
+                            "type": "body",
+                            "format": "{WH}",
+                            "template": "{{ X }}",
+                        },
+                        "compose": ["X"],
+                        "bindings": [{"host": "hooks.example.com", "methods": ["POST"]}],
+                    }
+                },
+                "audit": {"path": "/tmp/x.jsonl"},
+            }
+        )
+
+
 def test_inject_format_and_template_both_set_rejected() -> None:
     with pytest.raises(ValidationError, match="mutually exclusive"):
         Config.model_validate(

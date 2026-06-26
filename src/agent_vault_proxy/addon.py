@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from mitmproxy import http
@@ -681,7 +682,7 @@ class AgentVaultProxyAddon:
             new_config.secrets = {}
         new_config.rebuild_host_index()
 
-    def _setup_body_injection_streaming(
+    def _setup_body_injection_streaming(  # noqa: C901
         self,
         *,
         flow: http.HTTPFlow,
@@ -771,6 +772,23 @@ class AgentVaultProxyAddon:
             flow.request.stream = True
             return
 
+        # Composite resolver closure: captures the addon instance so the
+        # body replacer can invoke ``_fetch_and_render_composite`` (which
+        # owns the per-binding same-UUID warning state) without holding a
+        # direct addon reference. Returns the rendered composite value on
+        # success, or None after the resolver has already set ``flow.response
+        # = 503`` and emitted the failure audit.
+        def _composite_resolver(secret_name: str, secret_spec: SecretSpec) -> str | None:
+            return self._fetch_and_render_composite(
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+                flow=flow,
+                secret_name=secret_name,
+                secret_spec=secret_spec,
+            )
+
         replacer = _build_body_replacer(
             eligible=eligible,
             client=client,
@@ -778,6 +796,7 @@ class AgentVaultProxyAddon:
             request_id=request_id,
             target_host=target_host,
             flow=flow,
+            composite_resolver=_composite_resolver,
         )
         flow.request.stream = replacer
         # Chunked transfer encoding — superfly's pattern. The replacement
@@ -865,13 +884,28 @@ class AgentVaultProxyAddon:
             rendered = secret_spec.compiled_template.render(values)
         except TemplateRenderError as exc:
             # Audit reason stays generic ("render_failed") so the agent
-            # boundary can't infer compose-internal details. Full exception
-            # goes to the proxy's logger (root-readable).
+            # boundary can't infer compose-internal details.
+            #
+            # Default WARNING line carries only the EXCEPTION CLASS NAME —
+            # not the exception message. Template helpers (e.g. ``b64decode``,
+            # ``totp``) raise exceptions whose ``str()`` legitimately includes
+            # operator-provided fragments (a base32 input that fails to decode,
+            # a Unicode position from ``encode("ascii")``). Those fragments can
+            # be substrings or shape-leaks of the secret value the template
+            # was given. Stderr is root-readable but commonly shipped to log
+            # aggregators, so we keep secrets out of it by default. The full
+            # message is available at DEBUG when an operator opts in.
             _log.warning(
                 "composite render failed for binding %s: %s",
                 secret_name,
-                exc,
+                type(exc).__name__,
             )
+            if _log.isEnabledFor(logging.DEBUG):
+                _log.debug(
+                    "composite render failure detail for binding %s: %s",
+                    secret_name,
+                    exc,
+                )
             audit.emit(
                 {
                     "type": "inject_decision",
@@ -947,6 +981,7 @@ def _build_body_replacer(
     request_id: str,
     target_host: str,
     flow: http.HTTPFlow,
+    composite_resolver: Callable[[str, SecretSpec], str | None],
 ) -> _BodyReplacer:
     """Build the per-flow streaming replacement callable.
 
@@ -977,6 +1012,7 @@ def _build_body_replacer(
         request_id=request_id,
         target_host=target_host,
         flow=flow,
+        composite_resolver=composite_resolver,
     )
 
 
@@ -1014,6 +1050,7 @@ class _BodyReplacer:
         request_id: str,
         target_host: str,
         flow: http.HTTPFlow,
+        composite_resolver: Callable[[str, SecretSpec], str | None],
     ) -> None:
         self._targets = targets
         self._client = client
@@ -1021,6 +1058,11 @@ class _BodyReplacer:
         self._request_id = request_id
         self._target_host = target_host
         self._flow = flow
+        # Composite render path for body bindings with ``compose:`` set.
+        # Returns the rendered value on success, or None when the resolver
+        # has already set ``flow.response = 503`` + emitted a failure audit
+        # (composite_unavailable / composite_fetch_error / render_failed).
+        self._composite_resolver = composite_resolver
         # Running buffer holding (a) bytes not yet emitted because they
         # might be the start of an incomplete placeholder, and (b)
         # incoming chunks before processing. Constant-bounded at
@@ -1080,7 +1122,7 @@ class _BodyReplacer:
         self._buffer.extend(processed[emit_len:])
         return processed[:emit_len]
 
-    def _apply_replacements(self, buf: bytes) -> bytes:
+    def _apply_replacements(self, buf: bytes) -> bytes:  # noqa: C901
         """Two-phase commit: fetch ALL needed secrets first, then audit +
         replace as a single atomic step. The split matters when a buffer
         contains placeholders for multiple secrets — without it, a
@@ -1100,32 +1142,82 @@ class _BodyReplacer:
             if placeholder not in buf:
                 continue
             if name not in self._rendered_cache:
-                try:
-                    real_secret = self._client.get(name)
-                except (BackendUnavailableError, SecretNotFoundError) as e:
-                    self._emit_fail_closed_denial(
+                if spec.compose is not None:
+                    # Composite path: delegate to the addon's
+                    # ``_fetch_and_render_composite`` (via the resolver
+                    # closure). The resolver owns ALL failure-path bookkeeping
+                    # — on None return it has already set ``flow.response =
+                    # 503`` and emitted ``composite_unavailable`` /
+                    # ``composite_fetch_error`` / ``render_failed`` to audit
+                    # with the ``compose:`` list, matching the header path's
+                    # failure shape. We fail-closed locally (drop buffer,
+                    # signal end-of-stream) without emitting a second audit.
+                    #
+                    # ``_fetch_and_render_composite`` catches BackendUnavailableError,
+                    # SecretNotFoundError, Exception (composite_fetch_error)
+                    # and TemplateRenderError. Anything else — e.g. a closure
+                    # capture bug, a RecursionError or MemoryError during
+                    # render — would otherwise propagate up through
+                    # mitmproxy's streaming machinery without ``flow.response``
+                    # being set, leaving placeholder bytes uncleared. G6
+                    # fail-closed requires us to catch here and 503.
+                    try:
+                        rendered = self._composite_resolver(name, spec)
+                    except Exception as e:  # noqa: BLE001
+                        _log.exception(
+                            "unexpected exception in body composite resolver for %s: %s",
+                            name,
+                            type(e).__name__,
+                        )
+                        self._emit_fail_closed_denial(
+                            secret_name=name,
+                            reason=f"composite_render_unexpected_error:{type(e).__name__}",
+                            message=b"agent-vault-proxy: composite render failed unexpectedly\n",
+                        )
+                        return b""
+                    if rendered is None:
+                        self._fetch_failed = True
+                        self._buffer.clear()
+                        return b""
+                    # Resolver contract (review Council seat 1): a non-None
+                    # return means the resolver did NOT touch ``flow.response``.
+                    # If a future refactor of ``_fetch_and_render_composite``
+                    # ever returns a string AND sets a 503, we would happily
+                    # substitute into a body whose response is already torn —
+                    # racier and harder to detect than a clean failure. Lock
+                    # the contract here.
+                    assert self._flow.response is None, (
+                        "composite_resolver returned a rendered value but already "
+                        "set flow.response; resolver contract violated"
+                    )
+                    self._rendered_cache[name] = rendered.encode("utf-8")
+                else:
+                    try:
+                        real_secret = self._client.get(name)
+                    except (BackendUnavailableError, SecretNotFoundError) as e:
+                        self._emit_fail_closed_denial(
+                            secret_name=name,
+                            reason=f"secret_unavailable:{type(e).__name__}",
+                            message=b"agent-vault-proxy: secret unavailable\n",
+                        )
+                        return b""
+                    except Exception as e:  # noqa: BLE001
+                        # G6 fail-closed mirror of header path's catch-all.
+                        _log.exception(
+                            "unexpected backend exception fetching body-injection secret %s: %s",
+                            name,
+                            type(e).__name__,
+                        )
+                        self._emit_fail_closed_denial(
+                            secret_name=name,
+                            reason=f"secret_fetch_error:{type(e).__name__}",
+                            message=b"agent-vault-proxy: secret fetch failed\n",
+                        )
+                        return b""
+                    self._rendered_cache[name] = inject.render_value(
+                        real_secret=real_secret,
                         secret_name=name,
-                        reason=f"secret_unavailable:{type(e).__name__}",
-                        message=b"agent-vault-proxy: secret unavailable\n",
-                    )
-                    return b""
-                except Exception as e:  # noqa: BLE001
-                    # G6 fail-closed mirror of header path's catch-all.
-                    _log.exception(
-                        "unexpected backend exception fetching body-injection secret %s: %s",
-                        name,
-                        type(e).__name__,
-                    )
-                    self._emit_fail_closed_denial(
-                        secret_name=name,
-                        reason=f"secret_fetch_error:{type(e).__name__}",
-                        message=b"agent-vault-proxy: secret fetch failed\n",
-                    )
-                    return b""
-                self._rendered_cache[name] = inject.render_value(
-                    real_secret=real_secret,
-                    secret_name=name,
-                ).encode("utf-8")
+                    ).encode("utf-8")
             pending.append((placeholder, name, spec))
         # Phase 2 — every fetch succeeded; emit per-secret allowed audits
         # (one per first occurrence per request) BEFORE returning the

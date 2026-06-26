@@ -145,6 +145,43 @@ secrets:
         methods: [GET]
         paths: ["/rest/**"]
 
+# ─── Composite body bindings (inject.type: body + inject.template) ────
+# Body bindings can also use `inject.template + compose:` — same Jinja
+# sandbox + helpers as composite headers (b64encode, sha256, urlencode,
+# hmac_sha256/sha512/sha1, totp; arity-checked at config-load). Use these
+# when a single secret value isn't enough — e.g. a 2FA code that must be
+# computed from a base32 TOTP secret stored in BWS.
+#
+# Example: Kraken's private REST endpoints take the live 6-digit TOTP as
+# the `otp` form field when the API key has 2FA enabled. The agent posts
+# the placeholder in the `otp` slot; AVP renders the code from the
+# BWS-held base32 secret and substitutes it in stream. `totp` is the only
+# non-deterministic helper in the sandbox (depends on wall-clock time);
+# render output rotates every 30s per RFC 6238.
+#
+# Operability for `totp`-using bindings:
+#   * The AVP host clock must be in sync with the upstream's TOTP authority
+#     to within the 30-second window. Verify `chronyc tracking` before
+#     deploying — a drifted host produces codes the upstream silently refuses
+#     and the agent sees only an upstream 4xx with no AVP-side audit clue.
+#   * Agent retries that cross a 30-second boundary will substitute a NEW
+#     code, not the original one. The audit log will show one
+#     `body_binding_matched` event per request; correlating "one logical
+#     login flow" needs request-id grouping on the agent side, not in AVP.
+
+  KRAKEN_TOTP_BODY:
+    placeholder: "kraken-totp_PLACEHOLDER_01HXY1234567890AB"
+    inject:
+      type: body
+      content_type: "application/x-www-form-urlencoded"
+      template: "{{ totp(KRAKEN_TOTP_SECRET) }}"
+    compose:
+      - KRAKEN_TOTP_SECRET
+    bindings:
+      - host: "api.kraken.com"
+        methods: [POST]
+        paths: ["/0/private/**"]
+
 # Example opts into allow-list behavior. Set `forward_unmodified` to
 # behave as a transparent forwarder for unrelated egress.
 unmatched_destination_policy: deny

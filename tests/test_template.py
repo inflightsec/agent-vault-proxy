@@ -296,7 +296,12 @@ def test_whitelisted_filters_exactly_matches_spec() -> None:
 
 
 def test_whitelisted_functions_exactly_matches_spec() -> None:
-    assert set(WHITELISTED_FUNCTIONS) == {"hmac_sha256", "hmac_sha512"}
+    assert set(WHITELISTED_FUNCTIONS) == {
+        "hmac_sha256",
+        "hmac_sha512",
+        "hmac_sha1",
+        "totp",
+    }
 
 
 def test_whitelisted_filters_is_immutable() -> None:
@@ -327,6 +332,180 @@ def test_func_hmac_sha256_non_string_key_raises() -> None:
     fn, _arity = WHITELISTED_FUNCTIONS["hmac_sha256"]
     with pytest.raises(UnsupportedTemplateError):
         fn(b"bytes-not-str", "m")
+
+
+# ---------------------------------------------------------------------------
+# HMAC-SHA1 — RFC 2202 test vector + type-guard parity
+# ---------------------------------------------------------------------------
+
+
+def test_func_hmac_sha1_rfc2202_vector() -> None:
+    """RFC 2202 §3 test case 1: key = 20 bytes of 0x0b, data = "Hi There",
+    expected HMAC-SHA1 = b617318655057264e28bc0b6fb378c8ef146be00.
+    We pass the key as a UTF-8 string of equivalent bytes; key "\\x0b" * 20
+    encodes to itself byte-for-byte under UTF-8 since 0x0b is single-byte ASCII.
+    """
+    fn, _arity = WHITELISTED_FUNCTIONS["hmac_sha1"]
+    key = "\x0b" * 20
+    data = "Hi There"
+    assert fn(key, data) == "b617318655057264e28bc0b6fb378c8ef146be00"
+
+
+def test_func_hmac_sha1_non_string_key_raises() -> None:
+    fn, _arity = WHITELISTED_FUNCTIONS["hmac_sha1"]
+    with pytest.raises(UnsupportedTemplateError):
+        fn(b"bytes-not-str", "m")
+
+
+def test_func_hmac_sha1_non_string_msg_raises() -> None:
+    fn, _arity = WHITELISTED_FUNCTIONS["hmac_sha1"]
+    with pytest.raises(UnsupportedTemplateError):
+        fn("k", b"bytes-not-str")
+
+
+# ---------------------------------------------------------------------------
+# TOTP — RFC 6238 reference vectors + input validation
+# ---------------------------------------------------------------------------
+
+
+def _patch_time(monkeypatch: pytest.MonkeyPatch, frozen_unix_seconds: int) -> None:
+    """Freeze ``time.time()`` inside the template module to a fixed value so
+    TOTP outputs are reproducible against RFC 6238 §5.2's published table."""
+    import agent_vault_proxy.template as template_module
+
+    monkeypatch.setattr(template_module.time, "time", lambda: float(frozen_unix_seconds))
+
+
+def test_func_totp_rfc6238_vector_59s(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC 6238 §5.2 SHA-1 vector at T=59s with seed "12345678901234567890".
+    Expected 8-digit TOTP is 94287082; the 6-digit code is the last six,
+    i.e. 287082. Our implementation returns 6 digits per RFC 6238 §4 default."""
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    # seed = ASCII "12345678901234567890" → 20 bytes; base32-encoded:
+    secret_b32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    _patch_time(monkeypatch, 59)
+    assert fn(secret_b32) == "287082"
+
+
+def test_func_totp_rfc6238_vector_1111111109s(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC 6238 §5.2 SHA-1 vector at T=1111111109s.
+    Expected 8-digit TOTP is 07081804; 6-digit code 081804."""
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    secret_b32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    _patch_time(monkeypatch, 1111111109)
+    assert fn(secret_b32) == "081804"
+
+
+def test_func_totp_rfc6238_vector_2000000000s(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC 6238 §5.2 SHA-1 vector at T=2000000000s.
+    Expected 8-digit TOTP is 69279037; 6-digit code 279037."""
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    secret_b32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    _patch_time(monkeypatch, 2000000000)
+    assert fn(secret_b32) == "279037"
+
+
+def test_func_totp_tolerates_padding_and_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authenticator apps display base32 secrets with spaces and ``=`` padding
+    in various combinations. Both should normalize to the same code."""
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    _patch_time(monkeypatch, 59)
+    a = fn("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+    b = fn("GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ")
+    c = fn("gezd gnbv gy3t qojq gezd gnbv gy3t qojq")
+    assert a == b == c
+
+
+def test_func_totp_non_string_raises() -> None:
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    with pytest.raises(UnsupportedTemplateError):
+        fn(b"GEZDGNBVGY3TQOJQ")
+
+
+def test_func_totp_empty_after_normalize_raises() -> None:
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    with pytest.raises(UnsupportedTemplateError, match="empty"):
+        fn("   = = =   ")
+
+
+def test_func_totp_invalid_base32_chars_raises() -> None:
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    # '1' and '0' are NOT in the base32 alphabet (uses 2-7 + A-Z).
+    with pytest.raises(UnsupportedTemplateError, match="non-base32"):
+        fn("ABCDEFGH10")
+
+
+def test_func_totp_via_template_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end: AvpTemplate parses + AST-validates + renders ``{{ totp(X) }}``
+    against a compose-var input, returning a 6-digit code."""
+    tmpl = AvpTemplate("{{ totp(TOTP_SECRET) }}", ["TOTP_SECRET"])
+    _patch_time(monkeypatch, 59)
+    result = tmpl.render({"TOTP_SECRET": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"})
+    assert result == "287082"
+
+
+def test_totp_arity_is_one() -> None:
+    """``totp()`` with zero or two args must fail at config-load (AST arity
+    check), not at request time."""
+    with pytest.raises(UnsupportedTemplateError, match="takes 1 positional"):
+        AvpTemplate("{{ totp() }}", [])
+    with pytest.raises(UnsupportedTemplateError, match="takes 1 positional"):
+        AvpTemplate("{{ totp(X, Y) }}", ["X", "Y"])
+
+
+def test_hmac_sha1_arity_is_two() -> None:
+    """``hmac_sha1()`` arity-check at config-load mirrors hmac_sha256/512."""
+    with pytest.raises(UnsupportedTemplateError, match="takes 2 positional"):
+        AvpTemplate("{{ hmac_sha1(K) }}", ["K"])
+    with pytest.raises(UnsupportedTemplateError, match="takes 2 positional"):
+        AvpTemplate("{{ hmac_sha1(K, M, X) }}", ["K", "M", "X"])
+
+
+def test_compose_var_named_totp_rejected() -> None:
+    """Compose entry colliding with the ``totp`` function name is rejected at
+    AvpTemplate construction — same as the existing rule for hmac_sha256 etc.
+    Error message includes the offending name + a rename suggestion so an
+    operator on upgrade gets a one-line remediation (review R-4)."""
+    with pytest.raises(
+        UnsupportedTemplateError, match="collides with reserved function 'totp'"
+    ) as exc_info:
+        AvpTemplate("{{ totp }}", ["totp"])
+    assert "rename" in str(exc_info.value)
+
+
+def test_compose_var_named_hmac_sha1_rejected() -> None:
+    with pytest.raises(
+        UnsupportedTemplateError, match="collides with reserved function 'hmac_sha1'"
+    ):
+        AvpTemplate("{{ hmac_sha1(X, Y) }}", ["hmac_sha1"])
+
+
+def test_compose_var_named_b64encode_rejected_with_filter_message() -> None:
+    """Filter-name collisions get a distinct message than function-name
+    collisions — review R-4 path; keep both error shapes covered."""
+    with pytest.raises(UnsupportedTemplateError, match="collides with reserved filter 'b64encode'"):
+        AvpTemplate("{{ X | b64encode }}", ["b64encode"])
+
+
+def test_func_totp_base32_decode_failure_message_is_static() -> None:
+    """Defence in depth (Council seat 4): the exception raised when
+    ``base64.b32decode`` rejects an input must NOT interpolate the underlying
+    ``binascii.Error`` message — that protects against a future stdlib change
+    that echoes input bytes (review R-1 stderr-leak chain)."""
+    fn, _arity = WHITELISTED_FUNCTIONS["totp"]
+    # An input that survives the alphabet check but fails decode would be
+    # zero-length after normalize — but we already gate empty above. Force
+    # the failure by feeding a length that base32 rejects post-pad. The
+    # simplest path: a single-char input that's in-alphabet but malformed
+    # block-wise after pad. Concretely: the base32 alphabet check passes
+    # for "A" but b32decode("A=======") raises binascii.Error.
+    with pytest.raises(UnsupportedTemplateError) as exc_info:
+        fn("A")
+    msg = str(exc_info.value)
+    assert msg == "totp.secret: base32 decode failed", (
+        f"expected static message, got {msg!r} — base32 decode error may now "
+        f"interpolate the binascii.Error message; revisit template.py"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -387,12 +566,12 @@ def test_allowed_vars_empty_string_entry_rejected() -> None:
 def test_compose_var_colliding_with_filter_name_rejected() -> None:
     # compose name `b64encode` would create ambiguous parse
     # behavior — reject at construction.
-    with pytest.raises(UnsupportedTemplateError, match="reserved filter or function"):
+    with pytest.raises(UnsupportedTemplateError, match="reserved filter 'b64encode'"):
         AvpTemplate("{{ b64encode }}", ["b64encode"])
 
 
 def test_compose_var_colliding_with_function_name_rejected() -> None:
-    with pytest.raises(UnsupportedTemplateError, match="reserved filter or function"):
+    with pytest.raises(UnsupportedTemplateError, match="reserved function 'hmac_sha256'"):
         AvpTemplate("{{ X }}", ["X", "hmac_sha256"])
 
 

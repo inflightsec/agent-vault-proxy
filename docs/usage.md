@@ -6,6 +6,7 @@ With the daemon running (either install path), any HTTPS client can route throug
 # 1. Route through the proxy and trust its CA
 export HTTPS_PROXY="http://127.0.0.1:14322"
 export HTTP_PROXY="http://127.0.0.1:14322"
+export NODE_USE_ENV_PROXY="1"   # Node 24+ ignores *_PROXY env without this
 export NODE_EXTRA_CA_CERTS="/etc/agent-vault-proxy/ca.pem"
 export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
 export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"

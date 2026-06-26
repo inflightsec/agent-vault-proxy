@@ -28,11 +28,12 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon, _BodyReplacer
+from agent_vault_proxy.addon import AgentVaultProxyAddon
 from agent_vault_proxy.audit import AuditWriter
 from agent_vault_proxy.backends import BackendUnavailableError, FetchContext
 from agent_vault_proxy.caching import CachingSecretsClient
 from agent_vault_proxy.config import load_config
+from agent_vault_proxy.injectors.body import _BodyReplacer
 
 BODY_PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars
 BODY_REAL = "tok-real-XYZ"

@@ -21,7 +21,9 @@ Scope:
 - **In scope:** static API keys (Anthropic, OpenAI, GitHub PAT, etc.); BWS as backing store; per-secret destination bindings; sandbox-only CA; structured audit log.
 - **Out of scope:** OAuth refresh-token flows, AWS SigV4 signing, kernel-level egress enforcement, multi-tenant routing.
 
-The implementation is ≈ 600 lines of Python plus a systemd unit. Operational complexity is small.
+The implementation is a few thousand lines of Python (≈2,500 statements across ~20 modules — the credential hot path is concentrated in `addon.py`) plus a systemd unit. Operational complexity stays small: one daemon, one config file, one audit log.
+
+> Design records cited as **ADR-NNNN** (e.g. ADR-0011/0012/0013) live in the maintainer's external design-doc archive, not this repo — per the project's "the repo carries the result, not the deliberation" rule (see `AGENTS.md`).
 
 ## 2. Threat model
 
@@ -457,12 +459,14 @@ The proxy holds every bound secret in flight. Compromising its dependency graph 
 
 The pytest suite covers config validation, addon hooks, BWS client behavior, and the scope-matching logic. Run `pytest` to execute it.
 
-### 8.1 Policy regression fixtures (`avp test`) — ADR-0013
+### 8.1 Policy regression fixtures + the `decide()` core — ADR-0013
 
-The verdict taxonomy in §4.4 is exercised declaratively by a fixture suite. The decision logic
-is reachable as a pure function `decide(config, request) -> Decision` (the single source of truth
-for `inject_decision`'s `decision` / `reason` / `secret_name` / slot), and each fixture asserts a
-`(config, request) -> expected decision` against it.
+The verdict taxonomy in §4.4 is computed by a pure function `decide(...) -> Decision` in
+`policy.py` — the single source of truth for an `inject_decision`'s `decision` / `reason` /
+`secret_name` / slot. It takes the config plus the request facts (host, port, method, path,
+CONNECT host, a header accessor) and does no I/O and no flow mutation; the addon EXECUTES the
+returned `Decision` (fetch, render, inject, and the G6-ordered audit). Each fixture asserts an
+expected decision against this verdict.
 
 - **Fixtures** are spec-derived YAML under `tests/fixtures/policy/`, each pinning the `T-`/`G-` id
   it guards (a fixture is an executable threat-model assertion). They assert
@@ -470,15 +474,15 @@ for `inject_decision`'s `decision` / `reason` / `secret_name` / slot), and each 
   the `rendered:` output computed from fixed fake static-backend values. Fixtures are **not**
   recorded from the audit log — §4.4 audit minimization omits the raw request, so record-replay is
   structurally impossible; declarative also avoids locking in buggy captured behavior.
-- **Two entry points, one engine:** `pytest` globs the fixtures (dev), and `avp test <dir>` runs the
-  identical engine (operators validate their own `bindings.yaml` edits). `avp validate` runs the
-  config-load invariants alone. Exit `0`=match, `1`=drift, `2`=config/usage error.
+- **Two test surfaces, one engine:** `pytest` runs the fixtures through the live addon
+  (`test_policy_fixtures.py`), and a parity test (`test_policy_decide.py`) runs every fixture
+  through BOTH the addon and `decide()` directly, asserting the verdicts agree. An operator-facing
+  `avp test` / `avp validate` CLI over the same engine is planned, not yet shipped.
 - **Test-mode invariants:** static backend only (BWS backend uninstantiable — no real secret in the
   process), clock pinned, jitter off, `ts`/`request_id` excluded from the compared record.
-- **Scope:** fixtures own policy correctness; transport + `inject_decision` fsync ordering (G2/G6) stay with
-  the docker-e2e + smoke layers, with one e2e smoke retained per injector type. The `addon`'s live
-  path delegates to `decide()` only behind a parity test (run all fixtures through both, assert
-  identical) — see ADR-0013.
+- **Scope:** fixtures + `decide()` own policy correctness; transport + `inject_decision` fsync ordering
+  (G2/G6) stay with the docker-e2e + smoke layers, with one e2e smoke retained per injector type.
+  The addon's live path delegates to `decide()` behind the parity test — see ADR-0013.
 
 ## 9. Rollback
 

@@ -1,8 +1,39 @@
 # Auto-discovered by the pre-commit docker hook and the CI osv-scan job.
+#
+# All ignored CVEs are in TRANSITIVE deps of mitmproxy (tornado, msgpack), not
+# in AVP's credential-injection path. They are suppressed only because the fix
+# is not yet installable — never to silence an applicable, fixable issue.
+
+# --- tornado: pinned by mitmproxy at tornado<=6.5.5,>=6.5.0 ------------------
+# tornado 6.5.6/6.5.7 (the fixes) CANNOT be installed until mitmproxy ships a
+# release that relaxes the <=6.5.5 pin (mitmproxy 12.2.3 is current). tornado is
+# used by mitmproxy's web UI/master, not AVP's request path. Drop all four when
+# a mitmproxy release allows tornado>=6.5.6 and a regen pulls it.
 
 [[IgnoredVulns]]
 id = "GHSA-cx3h-4qpv-8hc9"
-# tornado OOB read, CVSS 3.7, transitive. Fix (6.5.6, published
-# 2026-06-12) is inside the 7-day cooldown; drop this entry at the
-# first lockfile regen after 2026-06-19.
-reason = "low-severity; fix blocked by supply-chain cooldown until 2026-06-19"
+reason = "tornado OOB read, CVSS 3.7, transitive via mitmproxy; fix (6.5.6+) blocked by mitmproxy's tornado<=6.5.5 pin"
+
+[[IgnoredVulns]]
+id = "GHSA-3x9g-8vmp-wqvf"
+# CVSS 7.7 — credential forwarding when follow_redirects=True. N/A to AVP:
+# the proxy never follows redirects (architecture.md §4.2); tornado is not on
+# AVP's credential path.
+reason = "tornado follow_redirects cred-forwarding; N/A (AVP never follows redirects); fix blocked by mitmproxy's tornado<=6.5.5 pin"
+
+[[IgnoredVulns]]
+id = "GHSA-mgf9-4vpg-hj56"
+reason = "tornado CVSS 7.5, transitive via mitmproxy; fix (6.5.6+) blocked by mitmproxy's tornado<=6.5.5 pin"
+
+[[IgnoredVulns]]
+id = "GHSA-pw6j-qg29-8w7f"
+reason = "tornado CVSS 5.9, transitive via mitmproxy; fix (6.5.6+) blocked by mitmproxy's tornado<=6.5.5 pin"
+
+# --- msgpack: pinned by mitmproxy at msgpack<=1.1.2 --------------------------
+[[IgnoredVulns]]
+id = "GHSA-6v7p-g79w-8964"
+# CVSS 7.5 OOB read in Unpacker reuse-after-error on untrusted input. Transitive
+# via mitmproxy (flow serialization); AVP does not unpack untrusted msgpack. Fix
+# (1.2.1) cannot be installed: mitmproxy 12.2.3 pins msgpack<=1.1.2. Drop when a
+# mitmproxy release allows msgpack>=1.2.1.
+reason = "msgpack OOB read, transitive via mitmproxy; fix (1.2.1) blocked by mitmproxy's msgpack<=1.1.2 pin"

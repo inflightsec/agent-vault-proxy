@@ -142,17 +142,17 @@ repos:
         # pre-commit --hook-type pre-push`.
 
       # ─── Heavy security tools — mirror security.yml CI jobs ───────────
-      # All three use Docker (gracefully skip if docker not on PATH).
-      # Scoped to relevant file patterns so most commits don't pay the
-      # container startup tax.
+      # The Docker-based tools below gracefully skip if docker not on PATH;
+      # trufflehog runs a native version-pinned binary (no container tax).
+      # Scoped to relevant file patterns so most commits stay fast.
 
       - id: trufflehog
         name: TruffleHog (secret scan over diff)
         entry: bash scripts/precommit-trufflehog.sh
         language: system
         pass_filenames: false
-        # Always run — every commit could introduce a secret. ~1-2s with
-        # warm image. First run pulls the image (slower).
+        # Always run — every commit could introduce a secret. Native pinned
+        # binary keeps it fast; skips with install guidance if not present.
 
       - id: osv-scanner
         name: OSV-Scanner (CVE check on lockfiles)

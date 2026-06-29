@@ -54,6 +54,18 @@ For composite bindings (multi-value templates), see `bindings.example.yaml` and 
 
 If you touch `pyproject.toml` deps, regenerate `requirements.lock` *and* `requirements-dev.lock` in the same commit using the snippet in [`AGENTS.md` → Dependency changes](./AGENTS.md#dependency-changes). Don't hand-edit a lockfile to "just add one package" — the hash-pinning + cooldown gate (`scripts/check-lockfile-hashes.py` + `scripts/check-lockfile-drift.sh`, mirrored in CI) will fail the commit. Operator reviews the lockfile diff alongside the code diff before merge.
 
+## CI failures — canonical repo + the traps we keep hitting
+
+**The canonical repo is `inflightsec/agent-vault-proxy` (`origin`).**
+
+Each rule below is here because we broke it.
+
+1. **Two scanners, two waiver lists — keep them identical or `test.yml` reddens while `security.yml` stays green.** The same lockfile CVEs are suppressed in *two unshared places*: osv-scanner reads `osv-scanner.toml` `[[IgnoredVulns]]`; pip-audit reads inline `--ignore-vuln <GHSA>` flags on **both** `audit-lockfile` steps (production + dev) in `.github/workflows/test.yml` (pip-audit has no config-file support). When a mitmproxy-transitive CVE appears or a waiver changes, edit **both** so the sets match exactly. *(A waiver added to `osv-scanner.toml` but not `test.yml` is exactly what reddened `audit-lockfile` twice — the scheduled `security` run stays green and hides it, because that job only runs osv-scanner.)*
+
+2. **Regenerate lockfiles ONLY with `scripts/regen-lockfiles.sh`.** It uses the same 7-day cooldown cutoff and tempfile semantics as `check-lockfile-drift.sh`, so the result matches the drift gate. A manual `uv pip compile` with a hand-picked `--exclude-newer` produces drift the pre-commit + CI gate rejects, and leaves stale staged churn behind. If **Claude** regenerates them in the shared NFS clone, `chmod 664` both locks afterward or the operator's `end-of-file-fixer` pre-commit hook dies with `PermissionError` (the files end up `claude`-owned and group-read-only).
+
+3. **A CI fix is not done until you have watched the run go green.** After the operator pushes, pull the live result and confirm the *specific* previously-red job is now green: `gh api "repos/inflightsec/agent-vault-proxy/actions/runs?branch=main"` → the failing run's `/jobs` → `/actions/jobs/{id}/logs`. Identify which job + step is red *before* theorizing (the scheduled `security` workflow ≠ the `test` workflow's `audit-lockfile` job — they fail for different reasons). Never declare green from the diff alone.
+
 ## Releasing — STRICT RULES
 
 Full release loop in [`CONTRIBUTING.md` "Releasing"](./CONTRIBUTING.md#releasing). The mechanical sequence:

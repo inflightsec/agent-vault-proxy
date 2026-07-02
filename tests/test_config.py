@@ -81,6 +81,73 @@ def test_overbroad_wildcard_rejected() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "bad_host",
+    ["", "   ", "\t", "*", "*bad.com", "a*b.com", "evil_*", "api .github.com", "foo..bar"],
+)
+def test_host_without_real_hostname_rejected(bad_host: str) -> None:
+    """A secret must name a concrete destination host. Empty, whitespace,
+    bare/embedded '*', and malformed hosts are rejected at config-load — so it
+    is structurally impossible to define a secret with an unbounded (or a
+    silently dead, in the bare-'*' case) destination. Combined with `host`
+    being required and reject_empty_bindings, every secret is pinned to at
+    least one real hostname."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(_minimal_secret({"host": bad_host}))
+
+
+@pytest.mark.parametrize(
+    "good_host",
+    ["api.github.com", "postman-echo.com", "internal-host", "api.example.net"],
+)
+def test_valid_exact_hosts_accepted(good_host: str) -> None:
+    """Real exact hosts (including a single-label internal name) load cleanly —
+    the enforcement rejects junk, not intent."""
+    cfg = Config.model_validate(_minimal_secret({"host": good_host}))
+    assert cfg.secrets["FOO"].bindings[0].host == good_host.lower()
+
+
+@pytest.mark.parametrize(
+    "tld_wildcard",
+    [
+        "*.com",
+        "*.io",
+        "*.co.uk",
+        "*.com.au",
+        "*.co.jp",
+        "*.github.io",
+        "*.herokuapp.com",
+        "*.vercel.app",
+    ],
+)
+def test_public_suffix_wildcard_rejected_even_when_wildcards_enabled(tld_wildcard: str) -> None:
+    """A wildcard must never span a public suffix / registry TLD: `*.co.uk` or
+    `*.github.io` would broker the secret to every registrant under that suffix.
+    This is a FIELD-level rule — rejected even with `allow_wildcard_hosts: true`."""
+    cfg = _minimal_secret({"host": tld_wildcard})
+    cfg["allow_wildcard_hosts"] = True
+    with pytest.raises(ValidationError, match="too broad|public suffix"):
+        Config.model_validate(cfg)
+
+
+@pytest.mark.parametrize(
+    "registrable_wildcard",
+    ["*.github.com", "*.googleapis.com", "*.your-tenant.atlassian.net", "*.internal.example.com"],
+)
+def test_registrable_wildcard_requires_opt_in(registrable_wildcard: str) -> None:
+    """Wildcards on a real registrable domain are a deliberate opt-in: rejected
+    by default (blast-radius footgun), accepted only when the operator sets
+    `allow_wildcard_hosts: true`."""
+    off = _minimal_secret({"host": registrable_wildcard})
+    with pytest.raises(ValidationError, match="wildcard host"):
+        Config.model_validate(off)
+
+    on = _minimal_secret({"host": registrable_wildcard})
+    on["allow_wildcard_hosts"] = True
+    cfg = Config.model_validate(on)
+    assert cfg.secrets["FOO"].bindings[0].host == registrable_wildcard
+
+
 def test_mixed_case_host_is_lowercased_with_warning(caplog) -> None:
     """DNS is case-insensitive; binding hosts written in mixed case
     (e.g., a vendor doc paste) get normalised at config-load and the
@@ -707,10 +774,11 @@ def test_unknown_inject_type_clean_error() -> None:
 
 
 def test_known_but_unimplemented_inject_type_clean_error() -> None:
-    # `oauth2_refresh` is in the v0.5.0 planned taxonomy but ships in
-    # phase P1, not P0. An operator writing it under a P0-only install
+    # `github_app` is in the v0.5.0 planned taxonomy but ships in a
+    # later phase. An operator writing it under the current install
     # gets a clear "not yet implemented" error pointing at the CHANGELOG,
     # rather than a Pydantic validation error about missing fields.
+    # (Canary type was ``oauth2_refresh`` until ADR-0017 landed it.)
     with pytest.raises(ValidationError, match=r"not yet implemented in this version"):
         Config.model_validate(
             {
@@ -719,7 +787,7 @@ def test_known_but_unimplemented_inject_type_clean_error() -> None:
                     "FOO": {
                         "placeholder": _FOO_PH,
                         "inject": {
-                            "type": "oauth2_refresh",
+                            "type": "github_app",
                             "header": "Authorization",
                             "format": "Bearer {FOO}",
                         },

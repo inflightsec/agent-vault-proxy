@@ -60,6 +60,7 @@ def _build_addon(tmp_path: Path) -> tuple[AgentVaultProxyAddon, Path]:
     audit_path = tmp_path / "audit.jsonl"
     config_yaml = f"""
 version: 1
+allow_wildcard_hosts: true
 
 secrets:
   ANTHROPIC_API_KEY:
@@ -629,12 +630,12 @@ def test_composite_warning_resets_on_configure(tmp_path: Path) -> None:
         {"JIRA_EMAIL": "same", "JIRA_API_TOKEN": "same"},
     )
     # Directly populate as if the warning had fired.
-    addon._same_uuid_warned.add("JIRA_API_BASIC")
+    addon._composite._same_uuid_warned.add("JIRA_API_BASIC")
     # Trigger the configure() reload-state-reset by re-running it. We
     # bypass the mitmproxy options shim by re-calling the public method
     # with the same path.
-    addon._same_uuid_warned.clear()  # simulating what configure() would do
-    assert "JIRA_API_BASIC" not in addon._same_uuid_warned
+    addon._composite.reset_warnings()  # what configure() does on reload
+    assert "JIRA_API_BASIC" not in addon._composite._same_uuid_warned
 
 
 def test_composite_binding_with_format_legacy_still_works(tmp_path: Path) -> None:

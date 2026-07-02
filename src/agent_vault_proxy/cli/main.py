@@ -83,6 +83,34 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to the AVP CA private key (default: confdir mitmproxy-ca.pem).",
     )
+    doctor_p.add_argument(
+        "--config",
+        default=_DEFAULT_CONFIG,
+        help="Path to bindings.yaml (only used by --probe-oauth).",
+    )
+    doctor_p.add_argument(
+        "--probe-oauth",
+        action="store_true",
+        help=(
+            "Probe each oauth2_refresh binding: SSRF, vault inputs, "
+            "write-back capability. Read-only unless --exchange is also given."
+        ),
+    )
+    doctor_p.add_argument(
+        "--binding",
+        default=None,
+        help="Restrict --probe-oauth to one named binding (default: probe all).",
+    )
+    doctor_p.add_argument(
+        "--exchange",
+        action="store_true",
+        help=(
+            "When combined with --probe-oauth, actually call the upstream "
+            "token endpoint. MAY ROTATE the refresh token (provider-dependent); "
+            "a rotation during a probe is reported as a WARN since the probe "
+            "does not write-back to the vault."
+        ),
+    )
 
     setup_p = sub.add_parser(
         "setup",
@@ -152,7 +180,14 @@ def main(argv: list[str] | None = None) -> int:
             refresh=args.refresh,
         )
     if args.command == "doctor":
-        return run_doctor(ca_cert_path=args.ca_cert, ca_key_path=args.ca_key)
+        return run_doctor(
+            ca_cert_path=args.ca_cert,
+            ca_key_path=args.ca_key,
+            config_path=args.config,
+            probe_oauth=args.probe_oauth,
+            binding_filter=args.binding,
+            do_exchange=args.exchange,
+        )
     if args.command == "setup":
         return run_setup(
             user=args.user,

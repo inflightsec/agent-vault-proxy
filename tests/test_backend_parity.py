@@ -27,9 +27,29 @@ BWS notes) is irrelevant once the YAML is in hand.
 
 from __future__ import annotations
 
+import socket
+from collections.abc import Iterator
+
+import pytest
 import yaml
 
 from agent_vault_proxy.config import Config
+
+
+@pytest.fixture(autouse=True)
+def stub_ssrf_dns(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Schema parity is what this file pins; the SSRF guard is its own
+    test surface. Stub DNS so the explicit-URL canonical schemas
+    parse hermetically regardless of resolver state."""
+
+    def stub(host: str, *_args: object, **_kw: object) -> list[tuple]:
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0)),
+        ]
+
+    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
+    yield
+
 
 # Canonical placeholders meeting the validator's hardening rules.
 _FOO_PH = "foo_PLACEHOLDER_01HXY1234567890"
@@ -109,6 +129,7 @@ audit:
         "header_with_wildcard_host",
         f"""
 version: 1
+allow_wildcard_hosts: true
 secrets:
   FOO:
     placeholder: "{_FOO_PH}"
@@ -240,6 +261,45 @@ secrets:
     bindings:
       - host: api.example.com
         methods: [POST]
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "oauth2_refresh_provider_preset",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: oauth2_refresh
+      provider: google
+      client_id_secret: FOO_CLIENT_ID
+      client_secret_secret: FOO_CLIENT_SECRET
+      refresh_token_secret: FOO_REFRESH_TOKEN
+    bindings:
+      - host: www.googleapis.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "oauth2_refresh_explicit",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: oauth2_refresh
+      token_url: https://oauth2.example.com/token
+      client_auth_method: body_post
+      client_id_secret: FOO_CLIENT_ID
+      client_secret_secret: FOO_CLIENT_SECRET
+      refresh_token_secret: FOO_REFRESH_TOKEN
+    bindings:
+      - host: api.example.com
 audit:
   path: /tmp/x.jsonl
 """,

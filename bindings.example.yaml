@@ -1,5 +1,12 @@
 version: 1
 
+# Wildcard binding hosts (`*.suffix`) are OFF by default — a wildcard widens a
+# secret's blast radius to every subdomain, so it must be a deliberate opt-in.
+# This example uses `*.claude.com` below, so it sets the flag. Remove this line
+# (and switch to exact hosts) for the tightest posture. Public-suffix wildcards
+# like `*.com` / `*.co.uk` are rejected even with this enabled.
+allow_wildcard_hosts: true
+
 secrets:
   # Each entry: <SECRET_NAME>:placeholder + inject + bindings. The
   # `{<SECRET_NAME>}` slot in inject.format gets replaced with the real
@@ -181,6 +188,63 @@ secrets:
       - host: "api.kraken.com"
         methods: [POST]
         paths: ["/0/private/**"]
+
+  # ─── OAuth2 refresh-token grant (inject.type: oauth2_refresh) ────────
+  # For upstreams that issue short-lived access tokens against a refresh
+  # token: GCP, Microsoft Graph, Slack admin, Atlassian Cloud, Auth0 /
+  # Okta tenants, etc. AVP holds the three durable inputs (client_id,
+  # client_secret, refresh_token) in the vault and exchanges them on
+  # demand for an access token that gets injected into the agent's
+  # outgoing request. The agent NEVER sees the refresh token.
+  #
+  # Provider presets pin the token_url + client_auth_method + rotation
+  # disposition per vendor (catalogue lives in
+  # ``agent_vault_proxy/oauth_providers.py``); operator picks one of
+  # ``provider:`` OR supplies ``token_url:`` + ``client_auth_method:``
+  # explicitly. Tenant-specific providers (auth0, okta) take ``provider:``
+  # AND ``token_url:`` together — the preset pins auth method + rotation
+  # semantics, the operator supplies the tenant URL.
+  #
+  # ``refresh_token_write_back: true`` (default) persists rotated
+  # refresh tokens back to the vault so subsequent exchanges find the
+  # new value. Read-only backends (``static``) cannot write-back —
+  # ``avp doctor --probe-oauth`` flags this; either move to a writable
+  # backend or explicitly opt-out with ``refresh_token_write_back:
+  # false`` (accepting that the binding will lock out on the next
+  # upstream rotation).
+  #
+  # ``avp doctor --probe-oauth --binding GOOGLE_OAUTH`` validates SSRF,
+  # vault inputs, and write-back capability without making a proxied
+  # request. Add ``--exchange`` to also call the token endpoint live
+  # (state-mutating against the upstream — most providers rotate).
+  #
+  # ⚠ REQUIRES A WRITABLE BACKEND. Google rotates the refresh token on
+  # every exchange. With ``backend.type: static`` (read-only), this
+  # binding will self-destruct on the FIRST proxied request — the
+  # upstream issues a new refresh token, AVP can't write it back to the
+  # vault, the next exchange uses the stale value and gets
+  # ``invalid_grant`` forever. Use ``backend.type: bws`` (writable) or
+  # explicitly set ``refresh_token_write_back: false`` and accept the
+  # lockout. ``avp doctor --probe-oauth`` will FAIL on a read-only
+  # backend with write-back enabled — heed it.
+  GOOGLE_OAUTH:
+    placeholder: "google-oauth-PLACEHOLDER-01HXY1234567890ABCD"
+    inject:
+      type: oauth2_refresh
+      provider: google
+      client_id_secret: GOOGLE_OAUTH_CLIENT_ID
+      client_secret_secret: GOOGLE_OAUTH_CLIENT_SECRET
+      refresh_token_secret: GOOGLE_OAUTH_REFRESH_TOKEN
+      # Optional overrides:
+      # header: "Authorization"             # default
+      # access_token_format: "Bearer {access_token}"  # default
+      # scopes: ["https://www.googleapis.com/auth/drive.readonly"]
+      # cache_ttl_safety_seconds: 60        # default
+      # cache_ttl_max_seconds: 3600         # default
+      # refresh_token_write_back: true      # default
+    bindings:
+      - host: "www.googleapis.com"
+        methods: [GET, POST]
 
 # Example opts into allow-list behavior. Set `forward_unmodified` to
 # behave as a transparent forwarder for unrelated egress.

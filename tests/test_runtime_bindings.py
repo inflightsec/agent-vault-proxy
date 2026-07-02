@@ -143,6 +143,61 @@ def test_both_mode_file_used_when_no_note(tmp_path) -> None:
     assert spec.bindings[0].host == "file-host.example.com"
 
 
+def test_both_mode_file_only_binding_survives_alongside_noted(tmp_path) -> None:
+    """Regression (2026-07-02 credential-drop): in `both` mode, a file-only
+    binding (no BWS note) must STAY resolved even when OTHER secrets carry
+    notes and even when the backend lists only the noted ones. The incident
+    dropped every file-only binding once any secret had a note. This pins the
+    merge core (`resolve_runtime_bindings`) as the union of file + notes."""
+    noted_ph = derive_placeholder("NOTED", _SALT)
+    fileonly_ph = derive_placeholder("FILEONLY", _SALT)
+    yaml = f"""
+version: 1
+secrets:
+  NOTED:
+    placeholder: "{noted_ph}"
+    inject:
+      header: "Authorization"
+      format: "Bearer {{NOTED}}"
+    bindings:
+      - host: "file-noted.example.com"
+  FILEONLY:
+    placeholder: "{fileonly_ph}"
+    inject:
+      header: "Authorization"
+      format: "Bearer {{FILEONLY}}"
+    bindings:
+      - host: "file-only.example.com"
+audit:
+  path: {tmp_path / "a.jsonl"}
+binding_source: both
+"""
+    from agent_vault_proxy.config import load_config
+
+    p = tmp_path / "bindings.yaml"
+    p.write_text(yaml)
+    cfg = load_config(str(p))
+
+    class _ListsOnlyNoted(_FakeNotesListBackend):
+        # Backend can fetch both but LISTS only NOTED — mirrors a machine
+        # account that can see fewer secrets than the file references.
+        def list_secret_names(self) -> list[str]:
+            return ["NOTED"]
+
+    backend = _ListsOnlyNoted({"NOTED": ("v1", "host: noted.example.com"), "FILEONLY": ("v2", "")})
+    resolved = resolve_runtime_bindings(
+        backend=backend,
+        binding_source="both",
+        install_salt=_SALT,
+        file_config=cfg,
+    )
+    assert "FILEONLY" in resolved.specs, "file-only binding was DROPPED in both mode (regression)"
+    spec, source, _companion = resolved.specs["FILEONLY"]
+    assert source == "file"
+    assert spec.bindings[0].host == "file-only.example.com"
+    assert "NOTED" in resolved.specs
+
+
 def test_both_mode_invalid_note_excludes_same_name_file_binding(tmp_path) -> None:
     cfg = _load_file_config(
         tmp_path,

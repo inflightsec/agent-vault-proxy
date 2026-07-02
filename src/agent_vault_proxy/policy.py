@@ -28,6 +28,7 @@ from agent_vault_proxy.config import (
     BindingSpec,
     Config,
     HeaderInjector,
+    Oauth2RefreshInjector,
     SecretSpec,
     iter_leaf_injectors,
 )
@@ -59,9 +60,14 @@ class Decision:
     response_status: int | None = None
     response_body: bytes | None = None
     extra: dict[str, Any] = field(default_factory=dict)
-    # Execution handles (allowed only):
+    # Execution handles (allowed only). For a single allowed verdict,
+    # exactly ONE of ``header_injector`` / ``oauth2_injector`` is set —
+    # the dispatch is keyed on the populated field rather than a tagged
+    # union so the existing HeaderInjector code path stays untouched
+    # by ADR-0017.
     secret_spec: SecretSpec | None = None
     header_injector: HeaderInjector | None = None
+    oauth2_injector: Oauth2RefreshInjector | None = None
     header_name: str | None = None
     matched_binding: BindingSpec | None = None
 
@@ -87,24 +93,31 @@ def matched_binding(host: str, spec: SecretSpec) -> BindingSpec | None:
 
 def find_header_placeholder_matches(
     config: Config, header_get: Callable[[str], str | None]
-) -> list[tuple[str, SecretSpec, HeaderInjector, str, str]]:
-    """Every ``(secret_name, spec, header_injector, header_name, value)`` where
+) -> list[tuple[str, SecretSpec, HeaderInjector | Oauth2RefreshInjector, str, str]]:
+    """Every ``(secret_name, spec, injector, header_name, value)`` where
     the secret's placeholder appears inside its configured target header.
 
     Multiple matches => the request is ambiguous (the caller refuses to
-    guess). Only ``HeaderInjector`` leaves are considered; body leaves are
-    handled by the streaming body path. ``header_get`` is the request's
-    header accessor (case-insensitive, mitmproxy semantics) so this stays
-    free of the flow object.
+    guess). Header-target injectors only — body leaves are handled by
+    the streaming body path. The matched ``injector`` is either a
+    :class:`HeaderInjector` (vault-secret substitution) or an
+    :class:`Oauth2RefreshInjector` (exchange-then-substitute). Both
+    share the placeholder-in-header detection shape; what differs is
+    the resolution path the addon takes after this returns.
+    ``header_get`` is the request's header accessor (case-insensitive,
+    mitmproxy semantics) so this stays free of the flow object.
     """
-    matches: list[tuple[str, SecretSpec, HeaderInjector, str, str]] = []
+    matches: list[tuple[str, SecretSpec, HeaderInjector | Oauth2RefreshInjector, str, str]] = []
     for secret_name, spec in config.secrets.items():
         for child in iter_leaf_injectors(spec.inject):
-            if not isinstance(child, HeaderInjector):
+            if isinstance(child, HeaderInjector | Oauth2RefreshInjector):
+                header_name = child.header
+            else:
+                # Body leaves: handled by the streaming body path.
                 continue
-            value = header_get(child.header)
+            value = header_get(header_name)
             if value and spec.placeholder in value:
-                matches.append((secret_name, spec, child, child.header, value))
+                matches.append((secret_name, spec, child, header_name, value))
     return matches
 
 
@@ -171,7 +184,7 @@ def decide(
             response_body=b"agent-vault-proxy: ambiguous placeholder match\n",
             extra={"matched_secret_names": sorted({m[0] for m in matches})},
         )
-    secret_name, secret_spec, header_injector, header_name, _value = matches[0]
+    secret_name, secret_spec, matched_injector, header_name, _value = matches[0]
 
     # 4. The matched secret must be bound to this destination (else G5: forward
     #    the placeholder verbatim, audit the omission, no response).
@@ -195,12 +208,25 @@ def decide(
     # 6. Allowed. The addon fetches + renders + injects (and only then can an
     #    I/O failure produce secret_unavailable / secret_fetch_error / the
     #    composite_* denials — those are execution-layer, not policy).
+    # For oauth2_refresh, the addon also runs the token-exchange step
+    # between fetch and inject; ``token_endpoint_*`` outcomes are
+    # execution-layer too.
+    if isinstance(matched_injector, Oauth2RefreshInjector):
+        return Decision(
+            decision="allowed",
+            reason="binding_matched",
+            secret_name=secret_name,
+            secret_spec=secret_spec,
+            oauth2_injector=matched_injector,
+            header_name=header_name,
+            matched_binding=binding,
+        )
     return Decision(
         decision="allowed",
         reason="binding_matched",
         secret_name=secret_name,
         secret_spec=secret_spec,
-        header_injector=header_injector,
+        header_injector=matched_injector,
         header_name=header_name,
         matched_binding=binding,
     )

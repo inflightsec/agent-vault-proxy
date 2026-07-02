@@ -120,10 +120,10 @@ print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['vers
 INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/agent_vault_proxy/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}')
 
 # 2. README.md install line — `agent-vault-proxy==X.Y.Z`
-README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}')
+README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}' || true)
 
 # 3. README.md clone tag — `git clone -b vX.Y.Z`
-README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//')
+README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//' || true)
 
 # 4. docker-compose.yml image tag — `image: inflightsec/agent-vault-proxy:X.Y.Z`
 COMPOSE_VER=$(grep -Eo 'inflightsec/agent-vault-proxy:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}')
@@ -140,10 +140,22 @@ check_one() {
     fi
 }
 
-check_one "src/agent_vault_proxy/__init__.py"       "$INIT_VER"
-check_one "README.md   agent-vault-proxy==<ver>"    "$README_INSTALL_VER"
-check_one "README.md   git clone -b v<ver>"         "$README_CLONE_VER"
-check_one "docker-compose.yml  image: ...:<ver>"    "$COMPOSE_VER"
+# The README intentionally uses UNPINNED install (`pipx install
+# agent-vault-proxy`, latest) and no clone-install, so a pinned `==<ver>` /
+# `git clone -b v<ver>` literal may legitimately be absent. Verify it ONLY if
+# present (catches a STALE pin); never fail on its absence.
+check_one_optional() {
+    local label="$1" found="$2"
+    if [ -n "$found" ] && [ "$found" != "$TAG_VER" ]; then
+        red "$label: $found  (pyproject.toml says $TAG_VER)"
+        VERSION_SKEW=1
+    fi
+}
+
+check_one          "src/agent_vault_proxy/__init__.py"    "$INIT_VER"
+check_one_optional "README.md   agent-vault-proxy==<ver>" "$README_INSTALL_VER"
+check_one_optional "README.md   git clone -b v<ver>"      "$README_CLONE_VER"
+check_one          "docker-compose.yml  image: ...:<ver>" "$COMPOSE_VER"
 
 if [ "$VERSION_SKEW" -eq 0 ]; then
     pass "every tracked version literal == pyproject.toml == $TAG_VER"

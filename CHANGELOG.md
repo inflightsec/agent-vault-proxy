@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0], 2026-07-03
+
 ### Added
 
 - **Host-validation hardening + wildcard opt-in.** Binding hosts must name a real destination: empty, whitespace, bare/embedded `*`, malformed, and public-suffix wildcards (`*.com`, `*.co.uk`, `*.github.io`) are rejected at config-load. Wildcard hosts are now opt-in via the top-level `allow_wildcard_hosts: true` — off by default, since a wildcard widens a secret's blast radius to every subdomain.
@@ -231,7 +233,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...v0.7.0
 [0.4.3]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.3
 [0.4.2]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.2
 [0.4.1]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.1

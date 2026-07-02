@@ -12,7 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: inflightsec/agent-vault-proxy:0.6.0
+    image: inflightsec/agent-vault-proxy:0.7.0
     container_name: agent-vault-proxy
 
     # Loopback-only host publish. The 127.0.0.1 prefix is critical — without

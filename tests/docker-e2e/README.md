@@ -6,10 +6,31 @@ What it actually tests:
 
 - The image **builds** with the hash-pinned `requirements.lock` install path. Regression coverage for v0.4.1's Dockerfile hardening.
 - The container **starts** and the proxy listens on port 14322.
-- A client request through the proxy with a configured **placeholder** in the `Authorization` header gets the real secret substituted before the upstream sees it.
-- The **upstream's echoed headers** contain the real secret string and do NOT contain the placeholder string. This is the on-the-wire assertion.
-- The **audit log** on the named volume contains an `inject_decision: allowed` entry with the right `secret_name`.
-- A request to an **unbound destination** is denied with 403 and audited as `deny: unmatched_destination`. Covers the `unmatched_destination_policy: deny` posture the example config now ships with.
+- **Header injector (v0.4 path):** a GET with the placeholder in the `Authorization` header lands upstream with the real secret substituted; placeholder does not leak.
+- **Body injector (v0.5 path):** a POST with the placeholder inside a JSON request body to `/body` lands upstream with the real secret substituted in-place inside the body; placeholder does not leak. Exercises the streaming body-mutation path.
+- **Multi injector (v0.5 path):** a POST with the placeholder in BOTH a custom header (`X-Multi-Key`) AND the JSON body to `/multi` lands upstream with the real secret substituted in both places on the same request; placeholder appears nowhere in the echo.
+- **Composite header/body:** `inject.template + compose` assembles two atomic secrets (`E2E_USER` + `E2E_PASS`) into a rendered `Basic base64(user:pass)` credential, substituted into the `Authorization` header (`/composite-header`) and into the JSON body (`/composite-body`); each produces an `allowed` audit.
+- **Scope violation:** an out-of-scope path for a bound secret forwards the placeholder **verbatim** (real secret NOT injected — G5 fail-closed by omission) and audits `denied: binding_scope_violation`.
+- Each positive path produces an `inject_decision: allowed` audit entry with the right `secret_name`.
+- A request to an **unbound destination** is denied with 403 and audited as `deny: unmatched_destination`.
+
+## Feature coverage — where each feature is tested
+
+Not every feature is wire-testable in a plain-HTTP isolated-bridge harness. The split:
+
+| Feature | Where | Why |
+|---|---|---|
+| header / body / multi injectors | **docker-e2e** | wire substitution |
+| composite header / composite body | **docker-e2e** | wire substitution |
+| scope violation (method/path) | **docker-e2e** | forward-verbatim + audit |
+| unmatched destination deny (403) | **docker-e2e** | wire deny |
+| **oauth2_refresh** (exchange, rotation, write-back) | `tests/test_oauth2_refresh_e2e.py` | token endpoint must be HTTPS + pass the SSRF guard; a private bridge host is rejected at config-load by design (no test override without editing `src`). |
+| **SNI / Host mismatch** | `tests/fixtures/policy/04_sni_host_mismatch.yaml` | needs a real CONNECT/SNI; the harness drives plain HTTP. |
+| **fail-closed** (secret unavailable) | `tests/fixtures/policy/06_secret_unavailable_fail_closed.yaml` | execution-layer denial; a missing static secret would also break harness boot. |
+| **host validation** (empty/`*`/public-suffix, wildcard opt-in) | `tests/test_config.py` | config-load rejection, not a wire path. |
+| **binding_source file/both** regression | `tests/test_runtime_bindings.py` | config-resolution behaviour; the addon-layer rebuild repro needs mitmproxy (`tests/test_addon_bws_notes_mode.py`). |
+
+Run the wire harness with `bash tests/docker-e2e/run.sh` (or `pytest -m docker`); the config-load / SSRF / resolver features run in the standard `pytest` suite.
 
 ## Backend
 

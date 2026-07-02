@@ -19,12 +19,20 @@ A "proxy" here means a small program that your agent's HTTPS traffic is routed t
 The lifecycle of a single request, in plain terms:
 
 1. **The agent sends a request carrying a placeholder.** For example a call to `api.github.com` with the header `Authorization: token ghp_PLACEHOLDER_...`. As far as the agent is concerned, that is its API key.
-2. **AVP matches the placeholder against a binding.** A **binding** is a rule the operator wrote that says "this placeholder is allowed to become the real secret, but only when talking to these destinations". AVP checks the request's destination (host, and optionally HTTP method and URL path) against that rule.
+2. **AVP matches the placeholder against a binding.** A **binding** is a rule the operator wrote that says "this placeholder is allowed to become the real secret, but only when talking to these destinations". In other words, each secret carries its own **per-secret host allowlist**: the secret is injected *only* for the hosts its binding names, never for any other destination. Crucially, AVP checks the request's **real** destination — the TLS SNI / `CONNECT` host that actually terminates the connection, not the spoofable `Host:` header — optionally narrowed further by HTTP method and URL path. That is what blocks **exfil-by-redirect**: an attacker cannot aim a request at an allowed host to get the secret injected and then have it delivered somewhere else, because a mismatch between the connection's real host and the claimed host is denied outright (`sni_host_mismatch`).
 3. **If it matches, AVP fetches the real secret from the vault.** The real value lives in the **backend** (Bitwarden Secrets Manager today), fetched just-in-time and held briefly in an in-memory cache so repeat calls are fast.
 4. **AVP swaps the placeholder for the real secret on the way out.** The substitution happens on the connection to the upstream only. It also writes an audit-log entry, flushed to disk, before the modified bytes go on the wire.
 5. **The upstream sees the real key. The agent never did.** The response comes back to the agent unchanged.
 
 If no binding matches, behaviour depends on the policy. On the default (`forward_unmodified`), AVP does not error: it forwards the placeholder unchanged and lets the upstream reject it with its own "bad credentials" response. Operators who want allow-list behaviour set `unmatched_destination_policy: deny`, which makes AVP return a 403 for an unbound destination instead. The default "stay quiet" choice is deliberate; the fail-closed glossary entry explains why.
+
+**Three "allowlists" people conflate — keep them separate.** These sound alike but do different jobs:
+
+1. **Per-secret injection allowlist (always on).** A binding's host list (step 2) decides *which hosts a given secret may be handed to*. This is enforced for every secret, always. It is the answer to "where can `GITHUB_PAT` go?" — never to "where can the agent connect?".
+2. **Unbound-destination policy (one config flag).** `unmatched_destination_policy` decides what happens to a destination *no secret is bound to*: `forward_unmodified` (default — let it through un-injected) or `deny` (return 403). This is the only "allowlist vs. not" toggle, and it only governs *un-brokered* traffic.
+3. **Egress firewall (not AVP at all).** Blocking the agent from *opening a connection* to a host in the first place is a separate tool's job (OpenSnitch, nftables, firewalld). AVP never does this; by default it happily forwards traffic to any host, it just won't inject a secret that host isn't bound to.
+
+So: bindings gate *secret injection*, not *connectivity*. AVP with the default policy is a credential broker, not an egress firewall — set `unmatched_destination_policy: deny` if you want it to also refuse unbound destinations, and pair it with a real egress firewall for hard network isolation.
 
 For the precise, hook-by-hook lifecycle, including the SNI/Host consistency check and the exact audit ordering, see [architecture.md section 4.3](architecture.md#43-request-lifecycle).
 

@@ -20,6 +20,7 @@ from collections.abc import Callable
 
 from mitmproxy import http
 
+from agent_vault_proxy._fail_closed import emit_denial_and_503
 from agent_vault_proxy.audit import AuditWriter
 from agent_vault_proxy.backends import (
     BackendUnavailableError,
@@ -311,21 +312,12 @@ class _BodyReplacer:
         # Drop held bytes — request is aborting; the buffer would otherwise
         # pin memory until the replacer is GC'd.
         self._buffer.clear()
-        self._audit.emit(
-            {
-                "type": "inject_decision",
-                "request_id": self._request_id,
-                "decision": "denied",
-                "reason": reason,
-                "secret_name": secret_name,
-                "destination": {
-                    "host": self._target_host,
-                    "port": self._flow.request.port,
-                },
-            }
-        )
-        self._flow.response = http.Response.make(
-            503,
-            message,
-            {"Content-Type": "text/plain"},
+        emit_denial_and_503(
+            audit=self._audit,
+            flow=self._flow,
+            request_id=self._request_id,
+            reason=reason,
+            secret_name=secret_name,
+            message=message,
+            target_host=self._target_host,
         )

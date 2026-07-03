@@ -112,6 +112,64 @@ class BitwardenBackend:
         note = None if raw_note is None or not str(raw_note).strip() else str(raw_note)
         return value, note
 
+    def update(self, name: str, value: str, ctx: Any = None) -> None:  # noqa: ARG002
+        """Persist ``value`` under ``name`` (ADR-0017 slice 3).
+
+        Reads the current secret to capture ``note`` and ``project_ids``,
+        then PUTs the new value with the same metadata. Blanking the
+        note would lose binding-yaml-blob metadata on every refresh-
+        token rotation — that's not acceptable behaviour for a write
+        the operator never asked about.
+
+        The SDK's ``secrets().update`` is the BWS PUT-by-id endpoint.
+        Org id and secret id are looked up identically to the fetch
+        path (cached name→id map; refreshed via ``flush_name_map``).
+
+        ``ctx`` is accepted to match the Protocol signature but is
+        intentionally unused — BWS update has no per-request context
+        to honour beyond what the secret id carries.
+
+        **Known limitations:**
+
+        * **No ETag/version preconditions.** The BWS SDK exposes no
+          conditional-PUT primitive. A concurrent edit to ``note`` or
+          ``project_ids`` between this method's GET and PUT is
+          silently overwritten. Single-host single-instance AVP keeps
+          this rare; multi-instance coordination is its own ADR.
+        * **No retry on stale name→id map.** ``_ensure_name_map`` is
+          populated lazily and only refreshed via ``flush_name_map``;
+          a secret deleted and re-created with the same key between
+          map populations will fail with ``BackendUnavailableError``
+          via the SDK's not-found path. Operator action: invoke
+          ``avp doctor`` (which flushes) and retry.
+        """
+        from agent_vault_proxy.backends import (
+            BackendUnavailableError,
+            SecretNotFoundError,
+        )
+
+        self._ensure_authed()
+        name_to_id = self._ensure_name_map()
+        secret_id = name_to_id.get(name)
+        if secret_id is None:
+            raise SecretNotFoundError(f"secret '{name}' not in BWS organization")
+        try:
+            current = self._sdk_client.secrets().get(secret_id)
+            note = getattr(current.data, "note", None)
+            project_ids = getattr(current.data, "project_ids", None)
+            self._sdk_client.secrets().update(
+                self._organization_id,
+                secret_id,
+                name,
+                value,
+                note,
+                project_ids,
+            )
+        except (SecretNotFoundError, BackendUnavailableError):
+            raise
+        except Exception as e:
+            raise BackendUnavailableError(f"BWS update failed: {e}") from e
+
     def list_secret_names(self) -> list[str]:
         """Return every secret NAME (BWS ``.key``) in the configured org/project
         (ADR-0011 amendment — drives ``avp env`` and the daemon's BWS-notes

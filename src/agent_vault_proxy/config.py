@@ -2,364 +2,102 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
+from agent_vault_proxy.config_models import _INJECTOR_TYPES as _INJECTOR_TYPES
+from agent_vault_proxy.config_models import _PLACEHOLDER_MARKER as _PLACEHOLDER_MARKER
+from agent_vault_proxy.config_models import _PLACEHOLDER_MIN_LEN as _PLACEHOLDER_MIN_LEN
+from agent_vault_proxy.config_models import (
+    _STRICT_MODEL,
+    InjectorSpec,
+    MultiInjector,
+    Oauth2RefreshInjector,
+    _validate_inject_block,
+    iter_leaf_injectors,
+    validate_placeholder_invariants,
+)
+from agent_vault_proxy.config_models import BodyInjector as BodyInjector
+from agent_vault_proxy.config_models import HeaderInjector as HeaderInjector
 from agent_vault_proxy.matching import host_matches_pattern, path_glob_matches
 from agent_vault_proxy.template import AvpTemplate, UnsupportedTemplateError
 
-# Known injector types — closed enumeration. Maps each type name to the
-# phase that ships it; entries whose value starts with "planned:" are in
-# the v0.5.0 taxonomy but raise a "not yet implemented" error at config
-# load until their phase lands. Single source of truth: adding a new
-# type means one line here plus the matching class + InjectorSpec union
-# extension, never a parallel edit to two tuples.
-_INJECTOR_TYPES: dict[str, str] = {
-    "header": "P0",
-    "body": "P0.6",
-    "multi": "P0.7",
-    "oauth2_refresh": "planned: P1",
-    "github_app": "planned: P1",
-    "sigv4": "planned: P2/P3",
-    "oauth2_client_credentials": "planned: P2",
-    "jwt_bearer": "planned: P2",
-    "hmac": "planned: P4",
-}
-
-
-def _validate_inject_block(name: str, inject: dict) -> None:
-    """Validate the ``type`` field of one ``inject:`` block (and, for
-    ``multi``, of each declared child). Raises ``ValueError`` with an
-    operator-friendly message on unknown / unimplemented / malformed
-    types. ``name`` is the parent secret's YAML key, interpolated into
-    error messages so operators can locate the entry.
-
-    Pre-condition: ``inject["type"]`` is set (the default-injection
-    pass upstream guarantees this for v0.4.x-shape inputs).
-    """
-    t = inject.get("type")
-    if t is None:
-        return  # already defaulted upstream; defensive
-    _check_injector_type(t, type_path=f"secret {name!r}: inject.type")
-    if t != "multi":
-        return
-    children = inject.get("injectors")
-    if not isinstance(children, list):
-        return  # let standard validator raise (wrong shape)
-    for i, child in enumerate(children):
-        if not isinstance(child, dict):
-            continue
-        ct = child.get("type")
-        if ct is None:
-            # Multi is v0.5.0 P0.7 — no backward-compat reason to default
-            # child types. Be explicit to avoid ambiguity ("which leaf
-            # did the operator mean?") and keep errors tight.
-            raise ValueError(
-                f"secret {name!r}: inject.injectors[{i}] is missing the "
-                "required ``type:`` field. Multi injector children must "
-                "specify their leaf type explicitly; valid leaf types in "
-                "v0.5.0: 'header', 'body'."
-            )
-        _check_injector_type(ct, type_path=f"secret {name!r}: inject.injectors[{i}].type")
-        # ``multi`` inside ``multi`` is rejected at the MultiInjector
-        # schema level (LeafInjectorSpec excludes "multi"), but catch
-        # it here too with a tighter message — same operator-facing UX
-        # as the other type checks.
-        if ct == "multi":
-            raise ValueError(
-                f"secret {name!r}: inject.injectors[{i}].type is 'multi'; "
-                "nested multi-injectors are not supported (use a single "
-                "multi with all leaf children flat)."
-            )
-
-
-def _check_injector_type(t: object, *, type_path: str) -> None:
-    """Validate a single ``inject.type`` value against the closed taxonomy.
-
-    Raises ``ValueError`` with an operator-friendly message on:
-
-    * type not a string / not in :data:`_INJECTOR_TYPES`
-      ("unknown type"; lists every valid alternative)
-    * type known but not yet implemented in this version
-      ("planned for phase X"; points at the CHANGELOG)
-
-    ``type_path`` is the dotted location of the offending ``type`` field —
-    e.g. ``"secret 'FOO': inject.type"`` or
-    ``"secret 'FOO': inject.injectors[2].type"``. Interpolated verbatim so
-    the operator can locate the entry without guesswork.
-    """
-    if not isinstance(t, str) or t not in _INJECTOR_TYPES:
-        raise ValueError(f"{type_path} {t!r} is unknown; valid types: {sorted(_INJECTOR_TYPES)}")
-    phase = _INJECTOR_TYPES[t]
-    if phase.startswith("planned:"):
-        implemented = sorted(k for k, v in _INJECTOR_TYPES.items() if not v.startswith("planned:"))
-        raise ValueError(
-            f"{type_path} {t!r} is in the planned v0.5.0 taxonomy ({phase}) but "
-            "not yet implemented in this version. Currently implemented: "
-            f"{implemented}. See CHANGELOG.md for the per-phase ship order."
-        )
-
-
-# `extra="forbid"` everywhere: a `method:` typo for `methods:` would
-# otherwise silently produce an unscoped binding.
-_STRICT_MODEL = ConfigDict(extra="forbid")
-
-# Placeholders must be ≥24 chars, contain the marker, be unique, and not
-# substring-overlap (addon detects via `in` matching).
-_PLACEHOLDER_MIN_LEN = 24
-_PLACEHOLDER_MARKER = "PLACEHOLDER"
-
-# Permissive at the injector layer; the strict name-match runs at Config
-# level in `validate_format_placeholders`.
-_FORMAT_PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
-
-
-def validate_placeholder_invariants(placeholders: dict[str, str]) -> None:
-    """Assert the placeholder invariants over a ``{secret_name: placeholder}``
-    map: each is non-empty, >= the min length, contains the PLACEHOLDER
-    marker, printable, unique, and no placeholder is a substring of another
-    (the addon's ``in`` matching would otherwise pick the wrong secret).
-
-    Raised as ``ValueError`` so it surfaces identically whether invoked by
-    the Config load-time validator or by the daemon's BWS-notes activation
-    (which merges file + derived placeholders into one set that must ALSO
-    satisfy these invariants — a derived placeholder colliding/overlapping
-    with a file one is a hard, fail-closed startup error).
-    """
-    seen: dict[str, str] = {}
-    for name, ph in placeholders.items():
-        if not ph:
-            raise ValueError(f"secret {name!r}: placeholder is empty")
-        if len(ph) < _PLACEHOLDER_MIN_LEN:
-            raise ValueError(
-                f"secret {name!r}: placeholder must be at least "
-                f"{_PLACEHOLDER_MIN_LEN} characters (got {len(ph)})"
-            )
-        if _PLACEHOLDER_MARKER not in ph:
-            raise ValueError(
-                f"secret {name!r}: placeholder must contain the "
-                f"literal marker {_PLACEHOLDER_MARKER!r}"
-            )
-        if not ph.isprintable():
-            raise ValueError(f"secret {name!r}: placeholder must be printable")
-        if ph in seen:
-            raise ValueError(f"secret {name!r}: placeholder is identical to secret {seen[ph]!r}")
-        seen[ph] = name
-    # Pairwise substring check — a placeholder that's a substring of another
-    # would let the addon's `in` matching pick the wrong secret.
-    for ph_a, name_a in seen.items():
-        for ph_b, name_b in seen.items():
-            if name_a != name_b and ph_a in ph_b:
-                raise ValueError(
-                    f"secret {name_a!r}: placeholder is a substring "
-                    f"of secret {name_b!r}'s placeholder"
-                )
-
-
-def _assert_format_has_placeholder(format_str: str, *, context_label: str) -> None:
-    """Require ``format_str`` to contain some ``{NAME}``-shaped placeholder."""
-    if not _FORMAT_PLACEHOLDER_RE.search(format_str):
-        raise ValueError(
-            f"{context_label} must contain a `{{<SECRET_NAME>}}` "
-            "placeholder for the value to substitute"
-        )
-
-
-def _render_substitution(format_str: str, *, real_secret: str, secret_name: str) -> str:
-    """Substitute ``{<secret_name>}`` -> ``real_secret``. Uses ``str.replace``
-    (not ``str.format``) so an operator-provided format can't traverse
-    attributes via Python's format-mini-language."""
-    return format_str.replace("{" + secret_name + "}", real_secret)
-
-
-class HeaderInjector(BaseModel):
-    """Header-injection rule. Exactly one of ``format`` (literal substitution)
-    or ``template`` (Jinja2-sandboxed, requires ``compose:`` on the parent)
-    must be set."""
-
-    model_config = _STRICT_MODEL
-
-    type: Literal["header"] = "header"
-    header: str
-    format: str | None = None
-    template: str | None = None
-
-    def render_value(self, *, real_secret: str, secret_name: str) -> str:
-        """Substituted header value for a single-secret binding. Composite
-        bindings go through ``SecretSpec.compiled_template``."""
-        assert self.format is not None, (
-            "render_value() expects inject.format; use compiled_template for composite bindings"
-        )
-        return _render_substitution(
-            self.format,
-            real_secret=real_secret,
-            secret_name=secret_name,
-        )
-
-    @model_validator(mode="after")
-    def exactly_one_of_format_or_template(self) -> HeaderInjector:
-        has_format = self.format is not None
-        has_template = self.template is not None
-        if has_format and has_template:
-            raise ValueError(
-                "inject.format and inject.template are mutually exclusive; "
-                "use format for literal substitution or template for Jinja2-syntax assembly"
-            )
-        if not has_format and not has_template:
-            raise ValueError("inject requires either 'format' or 'template'")
-        if has_format:
-            assert self.format is not None
-            _assert_format_has_placeholder(self.format, context_label="inject.format")
-        return self
-
-
-class BodyInjector(BaseModel):
-    """Body-injection rule. The secret's ``placeholder`` (inherited from the
-    parent :class:`SecretSpec`) is substituted in the request body via
-    streaming replacement (constant memory, chunked transfer).
-
-    ``format`` / ``template`` semantics mirror :class:`HeaderInjector` —
-    the result is the bytes each placeholder occurrence gets replaced WITH.
-    Single-secret bindings use ``format`` (literal ``{<SECRET_NAME>}``
-    substitution); composite bindings use ``template`` (sandboxed Jinja2)
-    together with ``compose:`` on the parent ``SecretSpec``. The render
-    path is identical to headers — only the substitution target differs.
-
-    ``content_type`` (optional): when set, the request's Content-Type must
-    match (parameters stripped, case-insensitive) or the body forwards
-    unmodified. Default None = any content-type eligible.
-    """
-
-    model_config = _STRICT_MODEL
-
-    type: Literal["body"] = "body"
-    content_type: str | None = None
-    format: str | None = None
-    template: str | None = None
-
-    def render_value(self, *, real_secret: str, secret_name: str) -> str:
-        """Bytes each in-body placeholder occurrence is replaced with (single-
-        secret path only). Composite body bindings go through
-        ``SecretSpec.compiled_template`` — same as composite header bindings."""
-        assert self.format is not None, (
-            "render_value() expects inject.format; use compiled_template for composite bindings"
-        )
-        return _render_substitution(
-            self.format,
-            real_secret=real_secret,
-            secret_name=secret_name,
-        )
-
-    @model_validator(mode="after")
-    def exactly_one_of_format_or_template(self) -> BodyInjector:
-        has_format = self.format is not None
-        has_template = self.template is not None
-        if has_format and has_template:
-            raise ValueError("body inject.format and inject.template are mutually exclusive")
-        if not has_format and not has_template:
-            raise ValueError("body inject requires either 'format' or 'template'")
-        if has_format:
-            assert self.format is not None
-            _assert_format_has_placeholder(self.format, context_label="body inject.format")
-        return self
-
-    @field_validator("content_type")
-    @classmethod
-    def normalize_content_type(cls, v: str | None) -> str | None:
-        # Normalise at config-load so the runtime gate is a single
-        # case-insensitive compare against the wire's Content-Type.
-        if v is None:
-            return None
-        v = v.strip().lower()
-        if not v:
-            raise ValueError("content_type must be a non-empty string, or omit the field")
-        if ";" in v:
-            raise ValueError(
-                f"content_type {v!r} contains parameters; specify only the media-type "
-                "(e.g. 'application/json')."
-            )
-        if "/" not in v:
-            raise ValueError(
-                f"content_type {v!r} is not a media-type (expected 'type/subtype' form)"
-            )
-        return v
-
-
-# Leaf injectors permitted inside MultiInjector. Nested multi is rejected
-# at config-load.
-LeafInjectorSpec = Annotated[HeaderInjector | BodyInjector, Field(discriminator="type")]
-
-
-_MULTI_MIN_CHILDREN = 2
-_MULTI_MAX_CHILDREN = 4  # mirrors compose: cap
-
-
-class MultiInjector(BaseModel):
-    """One secret's placeholder feeds multiple injection sites in one request
-    (e.g. an Authorization header AND a JSON body field). 2-4 leaf children.
-    Nested multi rejected; ``compose:`` cannot wrap a multi."""
-
-    model_config = _STRICT_MODEL
-
-    type: Literal["multi"] = "multi"
-    injectors: list[LeafInjectorSpec]
-
-    @model_validator(mode="after")
-    def validate_children(self) -> MultiInjector:
-        n = len(self.injectors)
-        if n < _MULTI_MIN_CHILDREN or n > _MULTI_MAX_CHILDREN:
-            raise ValueError(
-                f"multi inject.injectors must contain "
-                f"{_MULTI_MIN_CHILDREN}-{_MULTI_MAX_CHILDREN} children; got {n}. "
-                "Single-injector secrets should use the leaf type directly."
-            )
-        # Header names compared case-insensitively per RFC 7230 §3.2 —
-        # otherwise `Authorization` + `authorization` would silently
-        # overwrite on the wire.
-        header_names_lower: set[str] = set()
-        body_count = 0
-        for child in self.injectors:
-            if isinstance(child, HeaderInjector):
-                lowered = child.header.lower()
-                if lowered in header_names_lower:
-                    raise ValueError(
-                        f"multi inject.injectors contains two header children "
-                        f"targeting the same header {child.header!r} "
-                        "(HTTP header names are case-insensitive). Pick one."
-                    )
-                header_names_lower.add(lowered)
-            elif isinstance(child, BodyInjector):
-                body_count += 1
-        # One body child per multi — multiple would race on the same
-        # placeholder occurrence in the body bytes.
-        if body_count > 1:
-            raise ValueError(
-                "multi inject.injectors contains more than one body child; "
-                "use one body child per multi (or split into separate secrets)."
-            )
-        return self
-
-
-# Discriminated union of all injector specs. Default-type injection at
-# `Config.normalize_and_validate_injector_types` keeps v0.4.x configs
-# parsing without a `type:` field.
-InjectorSpec = Annotated[
-    HeaderInjector | BodyInjector | MultiInjector,
-    Field(discriminator="type"),
-]
-
-
-def iter_leaf_injectors(spec: InjectorSpec) -> list[HeaderInjector | BodyInjector]:
-    """Flatten ``spec`` to its ordered leaf injectors. Single-leaf bindings
-    yield ``[spec]``; multi yields ``spec.injectors``."""
-    if isinstance(spec, MultiInjector):
-        return list(spec.injectors)
-    return [spec]
-
-
 _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+# A single DNS label: 1-63 chars, alphanumerics with internal hyphens.
+_HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+# A valid binding host: one or more dot-separated labels, with an OPTIONAL
+# single leading "*." wildcard. Anchored/fullmatch. Rejects empty strings,
+# whitespace, bare "*", embedded "*", and other non-hostname junk. The
+# separate ">= 2 labels behind a wildcard" rule is enforced in the validator.
+_HOST_RE = re.compile(rf"^(?:\*\.)?{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
+
+# Public suffixes a "*." wildcard must never span — `*.co.uk` would broker a
+# credential to EVERY .co.uk registrant, a TLD-wide blast radius the naive
+# ">= 2 labels" rule misses (co.uk has two labels but is a registry suffix,
+# not a registrable domain). This is a curated subset of the Mozilla Public
+# Suffix List covering the common multi-label registry suffixes AND the bare
+# TLDs (the latter are also caught by the label-count rule; listed here for
+# defense in depth). NOT exhaustive — the PSL has ~9000 entries. For full
+# coverage, an operator enables strict PSL validation via a pinned dependency
+# (see docs); this bundled set blocks the footguns without a runtime dep.
+_PUBLIC_SUFFIX_WILDCARD_DENY = frozenset(
+    {
+        # bare TLDs (redundant with label-count rule; belt-and-suspenders)
+        "com",
+        "net",
+        "org",
+        "io",
+        "co",
+        "ai",
+        "app",
+        "dev",
+        "cloud",
+        "xyz",
+        # multi-label ccTLD registry suffixes (the real gap)
+        "co.uk",
+        "org.uk",
+        "gov.uk",
+        "ac.uk",
+        "me.uk",
+        "ltd.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "co.nz",
+        "co.za",
+        "co.jp",
+        "or.jp",
+        "com.br",
+        "com.cn",
+        "com.mx",
+        "co.in",
+        "co.kr",
+        "com.tr",
+        "com.sg",
+        # common platform/SaaS suffixes that are effectively public
+        "github.io",
+        "gitlab.io",
+        "herokuapp.com",
+        "cloudfront.net",
+        "s3.amazonaws.com",
+        "azurewebsites.net",
+        "web.app",
+        "firebaseapp.com",
+        "pages.dev",
+        "workers.dev",
+        "vercel.app",
+        "netlify.app",
+    }
+)
 
 
 class BindingSpec(BaseModel):
@@ -372,19 +110,48 @@ class BindingSpec(BaseModel):
     @field_validator("host")
     @classmethod
     def normalize_and_validate_host(cls, v: str) -> str:
-        # DNS is case-insensitive; lowercase at load + warn on uppercase
-        # so silent rewrites don't lose audit value.
+        # A binding MUST name a real destination host. Enforced here so it is
+        # STRUCTURALLY IMPOSSIBLE to define a secret with no concrete host: an
+        # empty, whitespace, or match-all host would either give a credential
+        # an unbounded blast radius, or (for bare "*") create a silently dead
+        # binding the operator believes is active. Every secret already
+        # requires >= 1 binding (reject_empty_bindings) and `host` is a
+        # required field; this closes the "present but meaningless" gap.
+        original = v
+        v = v.strip()
+        # DNS is case-insensitive; lowercase at load + warn on uppercase so
+        # silent rewrites don't lose audit value.
         if v != v.lower():
             import logging
 
             logging.getLogger("agent_vault_proxy.config").warning(
                 "binding host %r contains uppercase; normalising to %r.",
-                v,
+                original,
                 v.lower(),
             )
             v = v.lower()
-        if v.startswith("*.") and v.count(".") < 2:
-            raise ValueError(f"wildcard '{v}' is too broad; require at least two DNS labels")
+        if not v:
+            raise ValueError("binding host is required and cannot be empty or whitespace")
+        if v == "*" or ("*" in v and not v.startswith("*.")):
+            raise ValueError(
+                f"host {original!r}: bare or embedded '*' is not allowed. Use an exact host "
+                "(e.g. api.example.com) or a '*.suffix' wildcard with at least two labels."
+            )
+        if v.startswith("*."):
+            if v.count(".") < 2:
+                raise ValueError(f"wildcard '{v}' is too broad; require at least two DNS labels")
+            base = v[2:]  # everything after the leading "*."
+            if base in _PUBLIC_SUFFIX_WILDCARD_DENY:
+                raise ValueError(
+                    f"wildcard '{v}' spans the public suffix '{base}' — that would broker the "
+                    "secret to EVERY domain under a registry TLD. Bind to a specific registrable "
+                    "domain (e.g. '*.your-tenant.example.com') or an exact host instead."
+                )
+        if not _HOST_RE.fullmatch(v):
+            raise ValueError(
+                f"host {original!r} is not a valid hostname (dot-separated DNS labels of "
+                "a-z, 0-9, '-'; optional single leading '*.')."
+            )
         return v
 
     @field_validator("methods")
@@ -468,6 +235,14 @@ class SecretSpec(BaseModel):
         if isinstance(self.inject, MultiInjector):
             if self.compose is not None:
                 raise ValueError("compose: cannot be used with inject.type: multi")
+            return self
+        # OAuth2 refresh injects an *exchanged* access token, not a
+        # vault-composed secret. ``compose:`` is for assembling multiple
+        # vault secrets into one value; it has no meaning when the value
+        # comes from an upstream token-exchange. Reject the combination.
+        if isinstance(self.inject, Oauth2RefreshInjector):
+            if self.compose is not None:
+                raise ValueError("compose: cannot be used with inject.type: oauth2_refresh")
             return self
         has_compose = self.compose is not None
         has_template = self.inject.template is not None
@@ -606,6 +381,12 @@ class Config(BaseModel):
     # bws_notes/both mode. Defaults to install-salt next to this file's
     # directory; overridable for non-systemd layouts. Ignored in file mode.
     install_salt_path: str | None = None
+    # Wildcard binding hosts (`*.suffix`) are OFF by default. A wildcard widens
+    # a credential's blast radius to every subdomain, so it must be a deliberate
+    # opt-in: set `allow_wildcard_hosts: true` to permit `*.` hosts. Even when
+    # enabled, public-suffix wildcards (`*.co.uk`, `*.com`) are still rejected
+    # at the field level. When false (default), any `*.` host fails config-load.
+    allow_wildcard_hosts: bool = False
     cache: CacheSpec = Field(default_factory=CacheSpec)
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
@@ -667,6 +448,13 @@ class Config(BaseModel):
         legacy ``{secret}`` alias."""
         for name, spec in self.secrets.items():
             for child in iter_leaf_injectors(spec.inject):
+                # oauth2_refresh substitutes the exchanged access token
+                # under the literal `{access_token}` placeholder — never
+                # the vault-secret name. Skip the YAML-key match here;
+                # the injector's own validator pins the access-token
+                # placeholder.
+                if isinstance(child, Oauth2RefreshInjector):
+                    continue
                 fmt = child.format
                 if fmt is None:
                     continue
@@ -732,6 +520,32 @@ class Config(BaseModel):
         return result
 
     @model_validator(mode="after")
+    def enforce_wildcard_opt_in(self) -> Config:
+        """Wildcard hosts (`*.suffix`) are a deliberate opt-in. Unless
+        ``allow_wildcard_hosts: true`` is set, any binding with a `*.` host
+        fails config-load — a wildcard silently widens a credential's blast
+        radius to every subdomain, so it should never be reachable by accident
+        or by a config paste. Public-suffix / malformed wildcards are already
+        rejected at the field level; this gates *all* wildcards behind the
+        explicit flag."""
+        if self.allow_wildcard_hosts:
+            return self
+        offenders = [
+            (name, b.host)
+            for name, spec in self.secrets.items()
+            for b in spec.bindings
+            if b.host.startswith("*.")
+        ]
+        if offenders:
+            shown = ", ".join(f"{n} -> {h}" for n, h in offenders[:5])
+            raise ValueError(
+                f"wildcard host(s) present but disabled: {shown}. Wildcards widen a "
+                "secret's blast radius to every subdomain; set `allow_wildcard_hosts: true` "
+                "at the top level to permit them, or bind to exact hosts."
+            )
+        return self
+
+    @model_validator(mode="after")
     def reject_nested_composition(self) -> Config:
         """``compose:`` entries must point at leaf BWS secret names, never
         at another binding that itself has ``compose:`` set. Leaf-check
@@ -756,7 +570,7 @@ InjectSpec = HeaderInjector
 
 
 def load_config(path: str | Path) -> Config:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return Config.model_validate(raw)
 

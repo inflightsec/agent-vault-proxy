@@ -21,7 +21,7 @@ set -euo pipefail
 # Keep in lockstep with the version CI's pinned action resolves to
 # (.github/workflows/security.yml → trufflesecurity/trufflehog). Bump both
 # together. The soft check below warns if the local binary drifts from this.
-EXPECTED_VERSION="3.95.5"
+EXPECTED_VERSION="3.95.6"
 
 if ! command -v trufflehog >/dev/null 2>&1; then
     cat >&2 <<EOF

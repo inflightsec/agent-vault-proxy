@@ -26,6 +26,8 @@ import stat
 import sys
 from pathlib import Path
 
+from agent_vault_proxy.config import build_backend, load_config
+
 # Default CA locations under the systemd confdir (HOME=/var/lib/agent-vault-proxy).
 # mitmproxy writes the CA on first proxied request to $HOME/.mitmproxy/.
 _DEFAULT_CONFDIR = "/var/lib/agent-vault-proxy/.mitmproxy"
@@ -207,18 +209,107 @@ def run_doctor(
     *,
     ca_cert_path: str | None = None,
     ca_key_path: str | None = None,
+    config_path: str | None = None,
+    probe_oauth: bool = False,
+    binding_filter: str | None = None,
+    do_exchange: bool = False,
 ) -> int:
-    """Execute the ``avp doctor`` CA regression checks. Prints human output
-    and returns 0 (clean) or 1 (at least one warning fired). Read-only."""
+    """Execute the ``avp doctor`` checks.
+
+    Always runs the CA regression checks (ADR-0012). When ``probe_oauth``
+    is set, ALSO runs the per-binding OAuth2 probes (ADR-0017 slice 8) —
+    the probes load ``config_path`` and build the configured backend,
+    then dispatch through :mod:`agent_vault_proxy.cli.doctor_oauth`. The
+    backend is NEVER built when ``probe_oauth`` is false so a missing or
+    mis-permissioned config can't break the CA-only flow.
+
+    Returns 0 (clean) or 1 (any FAIL — CA warning OR OAuth probe FAIL).
+    """
     all_warnings: list[str] = []
     all_warnings.extend(check_ca_not_in_trust_store(ca_cert_path))
     all_warnings.extend(check_ca_key_perms(ca_key_path))
 
+    any_oauth_fail = False
+    if probe_oauth:
+        any_oauth_fail = _run_oauth_probes(
+            config_path=config_path,
+            binding_filter=binding_filter,
+            do_exchange=do_exchange,
+        )
+
     if not all_warnings:
         print("avp doctor: CA checks passed (CA not in any OS trust store; key perms OK).")
-        return 0
+    else:
+        print(f"avp doctor: {len(all_warnings)} CA warning(s):", file=sys.stderr)
+        for w in all_warnings:
+            print(f"  - {w}", file=sys.stderr)
 
-    print(f"avp doctor: {len(all_warnings)} CA warning(s):", file=sys.stderr)
-    for w in all_warnings:
-        print(f"  - {w}", file=sys.stderr)
-    return 1
+    if all_warnings or any_oauth_fail:
+        return 1
+    return 0
+
+
+def _run_oauth_probes(
+    *,
+    config_path: str | None,
+    binding_filter: str | None,
+    do_exchange: bool,
+) -> bool:
+    """Drive the OAuth probe path and print results. Returns True if any
+    ``FAIL`` rolled up — caller folds into exit code.
+
+    Config / backend errors prior to the probes themselves print to
+    stderr and roll up as a FAIL so an unreadable config doesn't pass
+    silently.
+    """
+    # Defer import so loading the OAuth probe surface (urllib, the
+    # injector) doesn't happen on a plain `avp doctor` invocation.
+    from agent_vault_proxy.cli.doctor_oauth import probe_all_oauth_bindings
+
+    if config_path is None:
+        print(
+            "avp doctor --probe-oauth: --config <path> is required to load bindings.",
+            file=sys.stderr,
+        )
+        return True
+    try:
+        config = load_config(config_path)
+    except Exception as e:  # noqa: BLE001 - operator-facing CLI surface
+        print(
+            f"avp doctor --probe-oauth: cannot load config {config_path}: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return True
+    try:
+        backend, _ = build_backend(config)
+    except Exception as e:  # noqa: BLE001 - operator-facing CLI surface
+        print(
+            f"avp doctor --probe-oauth: cannot build backend: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return True
+
+    results, any_fail = probe_all_oauth_bindings(
+        config,
+        backend,
+        binding_filter=binding_filter,
+        do_exchange=do_exchange,
+    )
+
+    # Group results by binding for readable output.
+    by_binding: dict[str, list] = {}
+    for r in results:
+        by_binding.setdefault(r.binding_name, []).append(r)
+
+    print()
+    print("avp doctor --probe-oauth: results")
+    for name, items in by_binding.items():
+        print(f"  [{name}]")
+        for r in items:
+            print(f"    {r.status:5s} {r.check:24s} {r.message}")
+    print()
+    if any_fail:
+        print("avp doctor --probe-oauth: one or more FAIL results", file=sys.stderr)
+    else:
+        print("avp doctor --probe-oauth: all probes OK or WARN")
+    return any_fail

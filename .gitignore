@@ -75,3 +75,6 @@ coverage.xml
 local.yaml
 *.local.yaml
 .scratch/
+
+# Quality-gate scratch (Phase 1 advisory artifacts)
+.pai/

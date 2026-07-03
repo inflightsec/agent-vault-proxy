@@ -239,6 +239,36 @@ class CachingSecretsClient:
 
         return values
 
+    def update_secret(
+        self,
+        name: str,
+        value: str,
+        ctx: FetchContext | None = None,
+    ) -> None:
+        """Write-through update for the wrapped backend.
+
+        Delegates to ``backends.update_secret`` (which raises
+        :class:`BackendNotWritableError` for read-only adapters), then
+        flushes the cached read for ``name`` on success. Without the
+        flush, the existing TTL'd entry would shadow the just-written
+        value until expiry — and for refresh-token rotation that
+        translates directly to a lockout (the next exchange would use
+        the cached pre-rotation value and the upstream would reject
+        it). The flush also bumps the generation counter so any
+        in-flight singleflight fetch for ``name`` retries under the
+        new value rather than caching the pre-rotation one.
+
+        Failures (transient and structural) propagate; the caller
+        decides whether to absorb or surface them.
+        """
+        # Local import to avoid a circular import at module load time
+        # (backends imports caching for the StaticSecretsBackend
+        # parity test in some downstream consumers).
+        from agent_vault_proxy.backends import update_secret as _backend_update
+
+        _backend_update(self._backend, name, value, ctx)
+        self.flush(name)
+
     def flush(self, name: str | None = None) -> None:
         with self._lock:
             # Bump generation so any leader currently mid-fetch detects the

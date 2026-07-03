@@ -130,6 +130,44 @@ class BackendCannotListError(Exception):
     would look like "no secrets" instead of "this backend can't list")."""
 
 
+class BackendNotWritableError(BackendUnavailableError):
+    """The backend has no ``update`` method (read-only adapter), or its
+    update path is structurally unavailable. Subclasses
+    :class:`BackendUnavailableError` so the addon's existing fail-closed
+    catch-all already does the right thing for write-back paths — the
+    OAuth2 refresh-token rotation audit branch (slice 7) catches this
+    specifically to emit ``refresh_token_rotated:write_back_unavailable``.
+    """
+
+
+def update_secret(
+    backend: SecretsBackend,
+    name: str,
+    value: str,
+    ctx: FetchContext | None = None,
+) -> None:
+    """Persist ``value`` under ``name`` via ``backend``.
+
+    Dispatch: if ``backend`` implements its own ``update`` (BWS does;
+    third-party writable adapters can), call it. Otherwise raise
+    :class:`BackendNotWritableError` — the same opt-in shape
+    :func:`fetch_with_meta` uses, so adding a writable backend never
+    requires touching the dispatch helper, and a read-only backend
+    never silently no-ops a write.
+
+    The Static test backend stays intentionally read-only; production
+    callers wanting in-memory write-back should use a stub backend
+    declared writable.
+    """
+    own = getattr(type(backend), "update", None)
+    if not callable(own):
+        raise BackendNotWritableError(
+            f"backend {type(backend).__name__} does not implement update(); "
+            "this is a read-only adapter"
+        )
+    backend.update(name, value, ctx)  # type: ignore[attr-defined]
+
+
 def list_secret_names(backend: SecretsBackend) -> list[str]:
     """Return every secret name the backend can enumerate.
 
@@ -238,6 +276,7 @@ __all__ = [
     "BACKEND_REGISTRY",
     "BackendAuthLostError",
     "BackendCannotListError",
+    "BackendNotWritableError",
     "BackendUnavailableError",
     "FetchContext",
     "SecretNotFoundError",
@@ -245,4 +284,5 @@ __all__ = [
     "fetch_with_meta",
     "list_secret_names",
     "register_backend",
+    "update_secret",
 ]

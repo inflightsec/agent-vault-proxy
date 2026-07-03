@@ -23,12 +23,12 @@
 #
 # Usage:
 #   bash tests/pypi-smoke/run.sh <version>                                # install from PyPI
-#   bash tests/pypi-smoke/run.sh 0.6.0
-#   bash tests/pypi-smoke/run.sh 0.6.0 --keep                             # leave stack up after
-#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.6.0
+#   bash tests/pypi-smoke/run.sh 0.7.0
+#   bash tests/pypi-smoke/run.sh 0.7.0 --keep                             # leave stack up after
+#   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.7.0
 #
 #   bash tests/pypi-smoke/run.sh --local-wheel <path>                     # install from local wheel
-#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.6.0-py3-none-any.whl
+#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.7.0-py3-none-any.whl
 #
 # The --local-wheel form is the dry-run before tagging a release: build
 # the wheel locally (`python -m build`), smoke it through this harness,

@@ -885,13 +885,13 @@ def test_body_composite_resolver_uncaught_exception_fails_503(
     addon.client = _make_client(per_name={"KEY": "alice", "MSG": "ping"})
 
     # Force the addon's composite render to raise an unexpected type. We
-    # patch ``_fetch_and_render_composite`` itself rather than going through
-    # the render layer — the test is specifically about exception types the
-    # render layer's catches don't cover.
+    # patch ``CompositeResolver.fetch_and_render`` itself rather than going
+    # through the render layer — the test is specifically about exception
+    # types the render layer's catches don't cover.
     def _boom(**_kwargs: object) -> str | None:
         raise RuntimeError("synthetic test failure")
 
-    monkeypatch.setattr(addon, "_fetch_and_render_composite", _boom)
+    monkeypatch.setattr(addon._composite, "fetch_and_render", _boom)
 
     flow = _make_request(
         "hooks.example.com",

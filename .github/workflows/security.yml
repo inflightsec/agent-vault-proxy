@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
 
       - name: Run TruffleHog
-        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70 # v3.95.6
+        uses: trufflesecurity/trufflehog@f446421baf832d6356c42c1743d99abff52ff334 # v3.95.7
         with:
           # `--only-verified` filters out unverified findings (high signal-
           # to-noise) — TruffleHog confirms credentials by attempting a
@@ -146,7 +146,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
 
@@ -185,7 +185,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
 

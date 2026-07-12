@@ -8,6 +8,7 @@ from mitmproxy import http
 from mitmproxy.addonmanager import Loader
 
 from agent_vault_proxy._derived_token_cache import DerivedTokenCache
+from agent_vault_proxy._healthz import healthz_response, is_healthz_request
 from agent_vault_proxy.audit import (
     REASON_INVALID_BINDING_METADATA,
     REASON_NO_BINDING_IN_NOTES,
@@ -21,9 +22,9 @@ from agent_vault_proxy.config import (
 )
 from agent_vault_proxy.handlers import (
     BodyInjectionHandler,
-    BwsNotesActivator,
     CompositeResolver,
     HeaderInjectionHandler,
+    NotesActivator,
 )
 from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
 from agent_vault_proxy.policy import (
@@ -68,7 +69,7 @@ class AgentVaultProxyAddon:
             oauth_resolver=OauthResolver(),
         )
         self._body_handler = BodyInjectionHandler(composite=self._composite)
-        self._bws_activator = BwsNotesActivator()
+        self._notes_activator = NotesActivator()
 
     def load(self, loader: Loader) -> None:
         loader.add_option(
@@ -120,7 +121,7 @@ class AgentVaultProxyAddon:
         new_invalid: set[str] = set()
         new_companion_headers: dict[str, dict[str, str]] = {}
         if new_config.binding_source != "file":
-            self._bws_activator.activate(
+            self._notes_activator.activate(
                 new_config=new_config,
                 backend=backend,
                 config_path=config_path,
@@ -139,6 +140,13 @@ class AgentVaultProxyAddon:
         new_audit = AuditWriter(
             path=new_config.audit.path,
             fail_on_unwritable=new_config.audit.fail_on_unwritable,
+            # ADR-0019 §5: secret names flagged `honeytoken: true` so the
+            # writer auto-emits the follow-up tripwire event. Built from the
+            # merged secret set (notes activation above already ran), rebuilt
+            # on every reload.
+            honeytoken_names=frozenset(
+                name for name, spec in new_config.secrets.items() if spec.honeytoken
+            ),
         )
         # Reset the same-UUID warning set on reload — operator may have
         # corrected the misconfigured binding; let the warning re-fire
@@ -234,6 +242,19 @@ class AgentVaultProxyAddon:
         # secrets bind header + body on the same host. They never share
         # a secret in P0.6 — composite header+body injection lands with
         # MultiInjector in P0.7.
+        #
+        # Liveness/readiness probe (roadmap: Observability). Answered here,
+        # BEFORE the destination allow-list, so the probe is not 403'd as an
+        # unmatched destination; never proxied upstream and emits no audit
+        # (health polling would otherwise flood the log). Ready = fully
+        # configured (config + client + audit all published by configure()).
+        if is_healthz_request(flow):
+            flow.response = healthz_response(
+                ready=(
+                    self.config is not None and self.client is not None and self.audit is not None
+                )
+            )
+            return
         #
         # Snapshot (config, client, audit) at handler entry. Any concurrent
         # configure() publishes a new triple that this request will never see.

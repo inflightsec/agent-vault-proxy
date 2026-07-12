@@ -1,6 +1,6 @@
 [project]
 name = "agent-vault-proxy"
-version = "0.7.0"
+version = "0.8.0"
 description = "Loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -60,6 +60,12 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.13",
     "types-PyYAML",
+]
+gsm = [
+    # Google Secret Manager backend (backend.type: gsm). Keyless auth only —
+    # ADC / service-account impersonation / Workload Identity Federation. REST
+    # calls use stdlib urllib; google-auth only mints + refreshes access tokens.
+    "google-auth>=2.28",
 ]
 
 [project.scripts]
@@ -124,6 +130,7 @@ check_untyped_defs = true
 module = [
     "mitmproxy.*",
     "bitwarden_sdk.*",
+    "google.*",
     "yaml",
 ]
 ignore_missing_imports = true

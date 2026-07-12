@@ -1,0 +1,11 @@
+{
+  "name": "agent-vault-proxy",
+  "owner": { "name": "Radek Maciaszek" },
+  "plugins": [
+    {
+      "name": "avp",
+      "source": "./",
+      "description": "Broker API credentials through agent-vault-proxy (bundles the avp-bindings skill)."
+    }
+  ]
+}

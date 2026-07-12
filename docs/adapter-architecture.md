@@ -2,7 +2,7 @@
 
 How `agent-vault-proxy` talks to a secrets vault, and how to add a new one.
 
-**What ships today:** two backends. `bws` (Bitwarden Secrets Manager) is the production backend; `static` reads `{name: value}` pairs from a plaintext YAML file and exists only for development, testing, and the docker-e2e harness (it refuses world-readable files and warns loudly when selected, never use it in production). The `SecretsBackend` protocol, the registry, and the discriminated `backend: {type, config}` form in `bindings.yaml` are all live as of v0.4.0. The vault backends in the coverage matrix below are the design target, not yet shipped: the matrix exists to prove the protocol holds across substantially different vaults, and to give a contributor the map for adding one.
+**What ships today:** three backends. `bws` (Bitwarden Secrets Manager) and `gsm` (Google Secret Manager) are the production backends; `static` reads `{name: value}` pairs from a plaintext YAML file and exists only for development, testing, and the docker-e2e harness (it refuses world-readable files and warns loudly when selected, never use it in production). The `SecretsBackend` protocol, the registry, and the discriminated `backend: {type, config}` form in `bindings.yaml` are all live as of v0.4.0. The remaining vault backends in the coverage matrix below are the design target, not yet shipped: the matrix exists to prove the protocol holds across substantially different vaults, and to give a contributor the map for adding one.
 
 ## Why an adapter layer
 
@@ -112,7 +112,7 @@ Validation rules:
 
 ### Backend coverage matrix
 
-Of the vaults, only `bws` ships today (the `static` test backend aside). The rest are the design target: the matrix is the proof that one protocol plus a per-backend config block spans substantially different auth models (machine-account tokens, AppRole, IAM role chains, AAD credential chain, ADC).
+Of the vaults, `bws` and `gsm` ship today (the `static` test backend aside). The rest are the design target: the matrix is the proof that one protocol plus a per-backend config block spans substantially different auth models (machine-account tokens, AppRole, IAM role chains, AAD credential chain, ADC).
 
 | `backend.type` | `config:` fields (sketch) | Notes |
 |---|---|---|
@@ -122,7 +122,21 @@ Of the vaults, only `bws` ships today (the `static` test backend aside). The res
 | `hashicorp-vault` | `url`, `namespace?`, `auth: {type: approle, role_id_path, secret_id_path \| wrapping_token_path, token_type: batch}`, `secrets: {NAME: {path, field}}` OR `prefix: <path>` | Per-secret explicit map, OR prefix+convention shorthand (more idiomatic for Vault users). Uses **batch tokens** (current HashiCorp recommendation), so no renewal thread: the adapter re-logs-in on each token expiry. Supports wrapped `secret_id` delivery via `wrapping_token_path` + `sys.unwrap()`. |
 | `aws-secrets-manager` | `region`, `secrets: {NAME: {secret_id, json_pointer?}}` | Uses ambient AWS creds (IAM role / env). `json_pointer` handles SecretString JSON blobs. |
 | `azure-key-vault` | `vault_url`, `auth: {type: default-credential\|service-principal, ...}` | Bare names; uses Azure SDK credential chain. |
-| `gcp-secret-manager` | `project_id`, `version_alias` (default: `latest`) | Adapter formats the full resource path internally. |
+| `gsm` **(shipped)** | `project_id`, `version_alias`, `secret_prefix?`, `impersonate_service_account?`, `credential_config_path?`, `self_check`, `reject_ambient_key` | **Google Secret Manager.** Keyless auth only — ADC / SA-impersonation / Workload Identity Federation (**no key-file field**); boot-time deny-if-broad `self_check` (refuses to start under a broad identity); host binding via each secret's `avp-binding` annotation (bare host or flat-YAML) under `binding_source: notes`. REST over `google-auth`, not the gRPC SDK. See [ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md). |
+
+### The `gsm` backend's `avp-binding` annotation (host binding at the vault)
+
+With `backend.type: gsm` and `binding_source: notes`, each secret is bound to a destination host **by the secret itself** — no `secrets:` block needed. Put an `avp-binding` annotation on the GSM secret:
+
+- **Bare hostname** (the common case): `avp-binding: api.openai.com`. For a known provider the built-in exception table supplies a tight method/path scope; for an unknown host the default is `Authorization: Bearer <secret>`, any method.
+- **Flat-YAML** (when you need more): a small block with `host` (required) plus optional `header`, `format`, `methods`, `paths`:
+  ```yaml
+  host: api.internal.acme.com
+  methods: [POST]
+  paths: [/v1/ingest]
+  ```
+
+A secret with no `avp-binding` annotation resolves to *no binding* and is never injected — fail-closed by omission. Set it with `gcloud secrets update NAME --update-annotations="avp-binding=api.openai.com"`.
 
 ### Backends explicitly excluded
 

@@ -4,7 +4,7 @@ These drive the addon through configure() in bws_notes/both mode and then
 through a request, asserting:
 
   * a host-only note results in an injected real secret on the wire, audited
-    binding_source: bws_notes;
+    binding_source: notes;
   * a request carrying a no-binding secret's placeholder fails closed with
     reason no_binding_in_notes (and does NOT forward the real value);
   * a malformed note's placeholder fails closed with invalid_binding_metadata;
@@ -66,7 +66,7 @@ def _bws_notes_config(tmp_path: Path, audit_path: Path) -> Path:
     yaml = f"""
 version: 1
 secrets: {{}}
-binding_source: bws_notes
+binding_source: notes
 install_salt_path: {salt_path}
 unmatched_destination_policy: forward_unmodified
 audit:

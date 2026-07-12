@@ -45,6 +45,9 @@ class BitwardenBackend:
     until flush_name_map() is called.
     """
 
+    # Provenance label for notes-derived specs (read by runtime_bindings).
+    NOTES_SOURCE_LABEL = "bws_notes"
+
     def __init__(
         self,
         config: BwsConfig | None = None,

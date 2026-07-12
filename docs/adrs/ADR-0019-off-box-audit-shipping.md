@@ -1,16 +1,32 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-02
+implemented: 2026-07-03
 relates_to: docs/architecture.md (§4.1 process layout, §4.4 audit log, G4/G5/G6), ADR-0017 (audit event addition precedent), ADR-0011 (BWS-notes bindings)
 ---
 
 # ADR-0019: Off-box audit shipping + honeytoken tripwire
 
-> **Proposed — not yet implemented.** This ADR records the decision to forward AVP's
-> audit stream off each host to a central collector, and to add a first-class honeytoken
-> binding flag so a planted credential's use lights up fleet-wide. The design sections are
-> written in the future tense of a proposal; nothing here has landed. Flip to `accepted`
-> on operator sign-off; add an `implemented:` header when it ships, per the 0017 precedent.
+> **Accepted + implemented 2026-07-03.** This ADR records the decision to forward AVP's audit
+> stream off each host to a central collector, and to add a first-class honeytoken binding flag
+> so a planted credential's use lights up fleet-wide. The design sections below are written in
+> the future tense of the original proposal; the implementation is in the tree.
+>
+> **Built 2026-07-03.** Landed: audit contract v3 + the `honeytoken_triggered` event
+> (`audit.py`), the per-secret `honeytoken` flag (`config.py`), the Fluent Bit shipper via the
+> `agent_vault_proxy_shipper` selector — with an `agent_vault_proxy_shipper_extra_outputs`
+> passthrough for hosted log services (Datadog, Splunk, Elasticsearch, …) and first-class GCP
+> Cloud Logging — in the Ansible role, and the `avp-audit-collector` service
+> (`src/avp-audit-collector`). **Deltas from the plan:** (1) the `honeytoken` flag lives on the
+> **secret** (`SecretSpec`), not the inner host-scope `BindingSpec` — it is the AVP "binding"
+> the audit `binding_name` names, and matches ADR-0011's binding object; (2) the follow-up
+> event is emitted centrally inside `AuditWriter.emit()` rather than at each handler call site,
+> so it covers every `inject_decision` path (allowed, all denies, fail-closed 503s) with no
+> site missed and G6 preserved per record; (3) the Fluent Bit binary is pinned + checksum-
+> verified via role vars and **fails closed** if the sha256 is unset. The collector read-access
+> + retention policy (§Consequences → Bad) is enforced by restrictive file perms (0700/0600)
+> and the `AVP_COLLECTOR_RETENTION_DAYS` knob. Deployment (the pinned binary sha256, the
+> Ansible run, the tailnet collector, docker-e2e) remains an operator handoff.
 
 ## Context
 

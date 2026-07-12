@@ -16,6 +16,6 @@ ADRs (MADR-lite frontmatter + `Context` / `Decision` / `Consequences`) live here
 - New external-call surface (token endpoints, write paths to backends).
 - Schema change that breaks `apiVersion: v1` bindings.
 
-## Backfill policy
+## Sequence note
 
-Pre-existing AVP-relevant ADRs (0011 BWS-notes bindings, 0012 narrow-trust CA, 0013 declarative policy fixtures) currently live outside the repo for historical reasons. They get backfilled here as we touch the affected code paths — no big-bang migration.
+This repo's ADR sequence is AVP-local. Numbers 0011–0013 (BWS-notes bindings, narrow-trust CA, declarative policy fixtures) were authored before the in-repo `docs/adrs/` directory existed and have now been backfilled here; 0001–0010 and 0014–0016 belong to unrelated sequences and are intentionally not part of this repo. Numbering is contiguous from 0011 onward.

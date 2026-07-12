@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from agent_vault_proxy.bindings_resolver import (
     BindingsResolver,
-    BwsNotesSource,
     FileSource,
+    NotesSource,
 )
 
 _PH_A = "aaa_PLACEHOLDER_01HXY1234567890"
@@ -30,7 +30,7 @@ _PH_B = "bbb_PLACEHOLDER_01HXY1234567890"
 
 def test_bws_notes_source_builds_specs_from_notes() -> None:
     # name -> note map drives which secrets the source considers.
-    src = BwsNotesSource(
+    src = NotesSource(
         placeholders={"ANTHROPIC": _PH_A},
         notes={"ANTHROPIC": "host: api.anthropic.com"},
     )
@@ -42,7 +42,7 @@ def test_bws_notes_source_builds_specs_from_notes() -> None:
 
 
 def test_bws_notes_source_skips_secrets_with_no_binding() -> None:
-    src = BwsNotesSource(
+    src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": ""},  # empty -> NoBinding
     )
@@ -52,7 +52,7 @@ def test_bws_notes_source_skips_secrets_with_no_binding() -> None:
 def test_bws_notes_source_skips_malformed_but_records_diagnostic() -> None:
     """A malformed note yields no binding (fail closed) AND a recorded
     diagnostic the operator can inspect — never a silent unscoped binding."""
-    src = BwsNotesSource(
+    src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": "host: [unclosed"},
     )
@@ -66,7 +66,7 @@ def test_bws_notes_source_tracks_no_binding_distinctly() -> None:
     """A note with no host is no-binding, tracked separately from malformed so
     the two audit reasons (no_binding_in_notes vs invalid_binding_metadata)
     stay distinct."""
-    src = BwsNotesSource(
+    src = NotesSource(
         placeholders={"EMPTY": _PH_A, "NOHOST": _PH_B},
         notes={"EMPTY": "", "NOHOST": "format: 'Bearer {secret}'"},
     )
@@ -121,7 +121,7 @@ def test_bws_notes_wins_over_file_for_same_secret(tmp_path) -> None:
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)
-    notes_src = BwsNotesSource(
+    notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": "host: notes-host.example.com"},
     )
@@ -139,7 +139,7 @@ def test_file_used_when_no_notes_binding(tmp_path) -> None:
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)
-    notes_src = BwsNotesSource(
+    notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": ""},  # no binding in notes
     )
@@ -157,7 +157,7 @@ def test_invalid_notes_exclude_same_name_file_binding(tmp_path) -> None:
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)
-    notes_src = BwsNotesSource(
+    notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": "host: [unclosed"},
     )
@@ -169,7 +169,7 @@ def test_both_sources_share_validation(tmp_path) -> None:
     """Structural validation is identical regardless of source: a host-only
     note produces a SecretSpec whose BindingSpec.matches_scope behaves the
     same as a file-loaded one."""
-    notes_src = BwsNotesSource(
+    notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
         notes={"FOO": "host: api.example.com\nmethods: [GET]"},
     )

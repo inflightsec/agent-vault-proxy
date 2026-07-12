@@ -34,6 +34,27 @@ On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
 
 [![agent-vault-proxy demo: prompt injection vs. credential isolation](docs/demo.svg)](docs/demo.cast)
 
+## Add a secret with your AI agent — no config editing
+
+Onboarding a new brokered credential shouldn't mean hand-writing binding YAML. The bundled **[avp-bindings skill](skills/avp-bindings/)** lets an AI assistant (Claude Code, or any agent that loads skills) walk you through it: you say *"route the Acme API through AVP,"* it asks the auth shape and host, then tells you **exactly** what to add — the secret name plus the annotation to paste into the **Bitwarden Secrets Manager Notes field** (or the **Google Secret Manager `avp-binding` annotation**, or a future backend's per-secret metadata). No AVP config edit, no redeploy — and the assistant **never sees or stores the secret**; it proposes, you apply.
+
+### Install the skill
+
+**Claude Code (recommended)** — install it as a plugin, so it's available in every project and updates with `/plugin marketplace update`:
+
+```
+/plugin marketplace add inflightsec/agent-vault-proxy
+/plugin install avp@agent-vault-proxy
+```
+
+Invoke it as `/avp:avp-bindings`, or just say *"route the Acme API through AVP"* and it triggers on its own.
+
+**Manual (any agent that loads Anthropic-format skills)** — copy or symlink `skills/avp-bindings/` into your agent's skills directory; Claude Code reads `~/.claude/skills/`. A symlink keeps it current on `git pull`:
+
+```
+ln -s "$PWD/skills/avp-bindings" ~/.claude/skills/avp-bindings
+```
+
 ## Docs
 
 - **[Quickstart](docs/quickstart.md)** — 10-minute first run ending in a visible substitution
@@ -43,12 +64,14 @@ On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
 - **[Usage](docs/usage.md)** — pointing your agent at the proxy
 - **[Linux isolation](docs/linux-isolation.md)** — composing AVP with `bubblewrap` for filesystem sandboxing
 - **[bindings.example.yaml](bindings.example.yaml)** — full config schema
+- **[avp-bindings skill](skills/avp-bindings/)** — let an AI assistant author your notes/annotation bindings (propose-only, no config edit, no redeploy)
 - **[Architecture](docs/architecture.md)** — threat model, G1–G9 invariants, hardening, residual risks
-- **[Adapter architecture](docs/adapter-architecture.md)** — plug in another vault backend
+- **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden + Google Secret Manager ship today, `static` for dev) and how to add another
+- **[Google Secret Manager](docs/gcp-secret-manager.md)** — keep secrets in GSM: setup, keyless auth, and end-to-end testing
 - **[Comparison](docs/comparison.md)** — vs. Vault Agent, Doppler, `op run`, `superfly/tokenizer`
 - **[CHANGELOG](./CHANGELOG.md)** · **[SECURITY](./SECURITY.md)** · **[CONTRIBUTING](./CONTRIBUTING.md)** · **[CREDITS](./CREDITS.md)**
 
-The proxy never phones home. The only outbound connections it makes are to the BWS endpoint you configure and the upstream APIs your agent is calling. No telemetry. The audit log under `/var/log/agent-vault-proxy/audit.jsonl` is local-only.
+The proxy never phones home. The only outbound connections it makes are to the BWS endpoint you configure and the upstream APIs your agent is calling. No telemetry. The audit log under `/var/log/agent-vault-proxy/audit.jsonl` is local-only by default; optional [off-box shipping](docs/adrs/ADR-0019-off-box-audit-shipping.md) forwards it — from a separate sidecar, never the proxy — only to a collector you run and control.
 
 ## License
 

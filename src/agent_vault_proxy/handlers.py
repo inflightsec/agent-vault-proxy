@@ -592,7 +592,17 @@ class BodyInjectionHandler:
         return candidates
 
 
-class BwsNotesActivator:
+def _preserve_file_flags(spec: SecretSpec, file_spec: SecretSpec | None) -> SecretSpec:
+    """Carry operator-only file flags onto a notes-derived spec that replaces
+    it. A `honeytoken: true` file secret must stay armed even when a note/
+    annotation supplies its binding — a note cannot express the flag, so the
+    wholesale replace would otherwise silently disarm the tripwire (ADR-0019)."""
+    if file_spec is not None and file_spec.honeytoken and not spec.honeytoken:
+        return spec.model_copy(update={"honeytoken": True})
+    return spec
+
+
+class NotesActivator:
     """Resolves BWS-notes bindings and merges them into a fresh Config at load.
 
     Config-build helper only — no request-path state. Degrades to file-only
@@ -670,9 +680,33 @@ class BwsNotesActivator:
         else:
             merged = {}
         for name, (spec, _source, companion) in resolved.specs.items():
-            merged[name] = spec
+            # Notes specs replace the file spec wholesale; keep operator-only
+            # file flags (honeytoken) so the tripwire can't silently disarm.
+            merged[name] = _preserve_file_flags(spec, file_specs.get(name))
             if companion:
                 out_companion_headers[name] = dict(companion)
+        # Notes-derived specs bypass Config.enforce_wildcard_opt_in — that
+        # model_validator ran at load, BEFORE notes were merged in. Re-enforce
+        # the wildcard opt-in here so an `avp-binding` annotation (or a BWS
+        # note) cannot widen a credential's blast radius to `*.suffix` past
+        # `allow_wildcard_hosts: false`. Fail closed: drop the offending spec
+        # and attribute its placeholder as invalid_binding_metadata. (File
+        # specs already passed the load-time gate, so only notes specs match.)
+        if not new_config.allow_wildcard_hosts:
+            wildcarded = [
+                name
+                for name, spec in merged.items()
+                if any(b.host.startswith("*.") for b in spec.bindings)
+            ]
+            for name in wildcarded:
+                spec = merged.pop(name)
+                out_invalid.add(name)
+                out_placeholder_to_name[spec.placeholder] = name
+                _log.warning(
+                    "notes binding %r uses a wildcard host but allow_wildcard_hosts is "
+                    "false; rejecting (fail closed).",
+                    name,
+                )
         new_config.secrets = merged
         # Re-assert the placeholder invariants over the MERGED set. config-load
         # validated only the file secrets; in `both` mode a derived placeholder
@@ -709,6 +743,6 @@ class BwsNotesActivator:
             reason,
             degraded_to,
         )
-        if new_config.binding_source == "bws_notes":
+        if new_config.binding_source == "notes":
             new_config.secrets = {}
         new_config.rebuild_host_index()

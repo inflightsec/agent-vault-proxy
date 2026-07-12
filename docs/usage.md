@@ -52,6 +52,75 @@ secrets:
 
 Path globs: `*` matches one URL segment, `**` matches any number. Empty `methods: []` is rejected (deny-all-methods must be intentional: remove the binding instead). See [`bindings.example.yaml`](../bindings.example.yaml) for the full grammar and reference patterns for Anthropic, OpenAI, GitHub, Groq, Mistral, DigitalOcean, and others.
 
+### Honeytokens (tripwire bindings)
+
+Mark any binding `honeytoken: true` to turn it into a canary. Plant its placeholder somewhere tempting — a decoy `.env`, a fake `~/.aws/credentials` — and bind it to a trap host you control:
+
+```yaml
+secrets:
+  DECOY_AWS_PROD:
+    placeholder: "AKIA-PLACEHOLDER-DECOY-01HXY1234567890"
+    honeytoken: true
+    inject:
+      header: "Authorization"
+      format: "{DECOY_AWS_PROD}"
+    bindings:
+      - host: "canary.your-domain.example"
+```
+
+The agent only ever holds the *placeholder*, never the real secret (that is the whole point of the proxy), so the honeytoken's real value is never in the agent's address space. But the moment anything steers that placeholder anywhere, the proxy emits a `honeytoken_triggered` audit event alongside the normal decision — on *any* use (injected, denied, scope-violated, or aimed at the wrong host), before any real value moves. Shipped off-box (below), a single `honeytoken_triggered` anywhere in the fleet means that machine is being walked for credentials. The event carries no secret material (see [architecture §4.4](architecture.md)).
+
+### Off-box audit shipping
+
+The audit log is a local, fail-closed source of truth. To forward it to a central collector for fleet-wide alerting (honeytoken triggers, bursts of denied / exfil-attempt decisions), the Ansible role stands up a **separate** shipper sidecar — a distinct systemd unit and user with read-only access to the log. The proxy's own process, sandbox, and egress surface are untouched.
+
+Enable it per host in inventory:
+
+```yaml
+agent_vault_proxy_shipping_enabled: true
+agent_vault_proxy_shipper_collector_host: "collector.your-tailnet.ts.net"
+# Pinned + checksum-verified at provision time (never a runtime fetch):
+agent_vault_proxy_shipper_fluentbit_url: "https://.../fluent-bit"
+agent_vault_proxy_shipper_fluentbit_sha256: "<sha256>"
+```
+
+The default shipper is **Fluent Bit** (~15 MB, ~10% of the deployed footprint). Switching to Vector later is a per-host swap — set `agent_vault_proxy_shipper: vector` once that path lands; `vector` / `native` currently fail fast with a "not yet implemented" message so the seam is explicit. The design, transport (Tailscale node identity, no mTLS), and threat model are in [ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md).
+
+#### Shipping to a hosted log service
+
+Fluent Bit can fan out to the major log platforms at the same time as (or instead of) the collector. **GCP Cloud Logging** is first-class — just set the role vars:
+
+```yaml
+agent_vault_proxy_shipper_gcl_enabled: true
+agent_vault_proxy_shipper_gcl_project_id: "your-gcp-project"
+agent_vault_proxy_shipper_gcl_credentials_path: "/etc/avp-audit-shipper/gcl.json"
+```
+
+For any other service, paste the vendor's `[OUTPUT]` block into `agent_vault_proxy_shipper_extra_outputs` — one variable, any number of sinks, no per-vendor role code. Source tokens from vault (the rendered config is root-owned `0640`). **Datadog** and **Splunk**:
+
+```yaml
+agent_vault_proxy_shipper_extra_outputs: |
+  [OUTPUT]
+      Name        datadog
+      Match       avp.audit
+      Host        http-intake.logs.datadoghq.com
+      TLS         on
+      compress    gzip
+      apikey      YOUR_DATADOG_API_KEY        # from vault
+      dd_source   avp-audit
+      dd_service  agent-vault-proxy
+
+  [OUTPUT]
+      Name          splunk
+      Match         avp.audit
+      Host          your-hec.splunkcloud.com
+      Port          8088
+      TLS           on
+      Splunk_Token  YOUR_SPLUNK_HEC_TOKEN      # from vault
+```
+
+Elasticsearch (`Name es`), AWS CloudWatch (`Name cloudwatch_logs`), and the rest follow the same one-block pattern — see the [Fluent Bit outputs](https://docs.fluentbit.io/manual/pipeline/outputs) catalog.
+
 ## Recommended layout for ongoing changes
 
 After install, every new credential is "add to BWS + a few lines of YAML + restart." If you're using an AI coding agent (Claude Code, Codex, Cursor) to help write those bindings, you want a `git diff` review window between the agent's edit and your restart - that diff is what stops a prompt-injected edit from going live. (Threat: a single added `host:` entry under an existing binding can route a real secret to an attacker-controlled destination. See [`CLAUDE.md`](../CLAUDE.md) for the operating envelope.)
@@ -64,6 +133,6 @@ The repo itself is operational hygiene: version history, multi-host scale-out, a
 - **Path matters.** Put the repo where `npm` / `pip` / build tools don't traverse - typically not `~/projects/` and not the agent's CWD. Something like `~/.config/avp-bindings/` is fine. `chmod 0700` the directory so non-AVP-UID processes (like a postinstall hook from an unrelated `npm install`) can't read it.
 - **Diff review is mandatory.** The agent edits `bindings.yaml` in your repo; you read the diff before restarting. Restart is your job, never the agent's. Treat `.gitignore`, any deploy script, and any `bindings.*` file as part of the diff review surface, the daemon reads exactly one file (`bindings.yaml`), so if your deploy script reads more than that, you've widened the gate.
 - **No auto-restart.** Don't reach for `fswatch`, `inotify`, a `Makefile restart` target Claude can shell into, a post-commit hook, or a CI auto-deploy. All of them collapse the diff-review window to zero - exactly what the credential-isolation model relies on. If diff review feels tedious, the fix is better diff tooling, not automation around the restart.
-- **`.gitignore` always:** `secrets/bws-token`, `ca.pem`, anything containing real values. Real values stay in Bitwarden Secrets Manager: the whole point of this proxy.
+- **`.gitignore` always:** `secrets/bws-token`, `ca.pem`, anything containing real values. Real values stay in the configured backend (Bitwarden or Google Secret Manager): the whole point of this proxy.
 - **Multi-host:** branches or directories per host (e.g., `laptop/bindings.yaml`, `ci-runner/bindings.yaml`). Make sure your deploy command binds explicitly to the host it's targeting: accidentally shipping `laptop/bindings.yaml` to `ci-runner` cross-contaminates two hosts that were supposed to stay isolated.
 - **Deploy step:** whatever fits your setup - `scp` + `systemctl restart` for systemd, `docker compose restart` for Docker, `ansible-playbook` for fleet. Keep it a one-line script you run by hand. The manual step IS the review gate.

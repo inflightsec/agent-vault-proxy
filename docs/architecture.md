@@ -276,13 +276,14 @@ A request carrying a placeholder whose secret has **no binding** in its note fai
 
 JSONL, append-only via `chattr +a`. One event per line. Every record carries
 `v` — the audit JSON contract version (`AUDIT_CONTRACT_VERSION` in `audit.py`).
-**Current version: 2** (v2 added `binding_source` to `inject_decision` and the
-`no_binding_in_notes` reason, per ADR-0011). Bumping this version is a contract
-change: see hard constraint #3 in [`AGENTS.md`](../AGENTS.md).
+**Current version: 3** (v2 added `binding_source` to `inject_decision` and the
+`no_binding_in_notes` reason, per ADR-0011; v3 added the `honeytoken_triggered`
+event, per ADR-0019). Bumping this version is a contract change: see hard
+constraint #3 in [`AGENTS.md`](../AGENTS.md).
 
 ```json
-{"ts":"2026-05-17T14:32:11.123456+00:00","v":2,"type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","binding_source":"bws_notes","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
-{"ts":"2026-05-17T14:32:11.234567+00:00","v":2,"type":"upstream_response","request_id":"01HXY...","status":200}
+{"ts":"2026-05-17T14:32:11.123456+00:00","v":3,"type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","binding_source":"bws_notes","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
+{"ts":"2026-05-17T14:32:11.234567+00:00","v":3,"type":"upstream_response","request_id":"01HXY...","status":200}
 ```
 
 `binding_source` (`inject_decision` events) records which source supplied the
@@ -295,7 +296,7 @@ Rules:
 - `fail_on_unwritable: true` - disk full / attribute removed / permission flip = proxy returns 503 (G4 + G6)
 - Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
 - **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
-- Future direction: off-host shipping (rsyslog TLS or similar)
+- Off-host shipping: a separate tailer forwards this stream to a central collector (ADR-0019); the local log stays the fail-closed source of truth and is never in the shipper's failure path
 
 **Reason taxonomy on `inject_decision` events** (use these to filter and alert from the audit stream):
 
@@ -318,6 +319,12 @@ Rules:
 | `denied` | `no_binding_in_notes` | A BWS secret's notes blob carries NO binding (empty/missing note, or no `host`). Distinct from `invalid_binding_metadata` — the secret simply isn't bound yet, not typo'd (ADR-0011) |
 
 For multi-injector secrets (`inject.type: multi`), each substituted leaf emits its own event (one `binding_matched` per header leaf that fires, one `body_binding_matched` per body leaf that fires). `secret_name` is the parent secret's name; consumers parsing the stream see one substitution event per (request, leaf-that-fired).
+
+**`honeytoken_triggered` event (ADR-0019 §5).** When an `inject_decision` names a secret the operator flagged `honeytoken: true`, the writer emits a second record immediately after it (same synchronous fsync), so a fleet collector can alert on one unambiguous event type. It fires on ANY decision touching the honeytoken — `allowed` or any `denied` reason above — i.e. on any use of the planted placeholder, before any real value moves. Fields are a strict subset of the triggering event; no secret material, header, body, or query string is added.
+
+```json
+{"ts":"2026-05-17T14:32:11.345678+00:00","v":3,"type":"honeytoken_triggered","request_id":"01HXY...","binding_name":"DECOY_AWS_PROD","dest_host":"s3.amazonaws.com","underlying_reason":"destination_not_in_binding"}
+```
 
 ### 4.5 BWS integration
 

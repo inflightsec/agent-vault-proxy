@@ -1,0 +1,115 @@
+# Local (container-free) E2E bindings template.
+#
+# run.sh substitutes __SECRETS_YAML__ and __AUDIT_JSONL__ with paths inside a
+# per-run, mode-0700 temp dir. Every binding targets 127.0.0.1 (the local echo
+# upstream); the unbound negative test aims at host "localhost" instead, which
+# is a DIFFERENT host string and therefore off the allow-list.
+#
+# Contains only placeholders — never a real secret. The static secrets file is
+# generated at runtime with random values (see run.sh) and never committed.
+version: 1
+
+secrets:
+  # POS-HDR — Bearer header substitution.
+  TEST_API_KEY:
+    placeholder: "test-PLACEHOLDER-01HXY1234567890ABC"
+    inject:
+      header: "Authorization"
+      format: "Bearer {TEST_API_KEY}"
+    bindings:
+      - host: "127.0.0.1"
+        methods: [GET]
+        paths: ["/hdr"]
+
+  # POS-BODY — placeholder in the JSON body, substituted in-stream.
+  TEST_BODY_KEY:
+    placeholder: "body-PLACEHOLDER-01HXY1234567890BDY"
+    inject:
+      type: body
+      content_type: "application/json"
+      format: "{TEST_BODY_KEY}"
+    bindings:
+      - host: "127.0.0.1"
+        methods: [POST]
+        paths: ["/body"]
+
+  # POS-MULTI — one placeholder into a header AND the body on one request.
+  TEST_MULTI_KEY:
+    placeholder: "multi-PLACEHOLDER-01HXY1234567890MLT"
+    inject:
+      type: multi
+      injectors:
+        - type: header
+          header: "X-Multi-Key"
+          format: "{TEST_MULTI_KEY}"
+        - type: body
+          content_type: "application/json"
+          format: "{TEST_MULTI_KEY}"
+    bindings:
+      - host: "127.0.0.1"
+        methods: [POST]
+        paths: ["/multi"]
+
+  # POS-COMPOSITE-HEADER — two atomic secrets assembled via the sandboxed
+  # Jinja template into a Basic credential header.
+  COMPOSITE_HEADER:
+    placeholder: "cphdr-PLACEHOLDER-01HXY1234567890CH"
+    inject:
+      header: "Authorization"
+      template: "Basic {{ (E2E_USER + ':' + E2E_PASS) | b64encode }}"
+    compose:
+      - E2E_USER
+      - E2E_PASS
+    bindings:
+      - host: "127.0.0.1"
+        methods: [GET]
+        paths: ["/composite-header"]
+
+  # POS-COMPOSITE-BODY — same compose machinery rendered into the JSON body.
+  COMPOSITE_BODY:
+    placeholder: "cpbody-PLACEHOLDER-01HXY1234567890CB"
+    inject:
+      type: body
+      content_type: "application/json"
+      template: "{{ (E2E_USER + ':' + E2E_PASS) | b64encode }}"
+    compose:
+      - E2E_USER
+      - E2E_PASS
+    bindings:
+      - host: "127.0.0.1"
+        methods: [POST]
+        paths: ["/composite-body"]
+
+  # FAIL-CLOSED — bound, but its secret is deliberately ABSENT from the
+  # generated secrets file. A matching request fails the fetch → 503, never
+  # forwarded, and the failure is audited.
+  FAILCLOSED_KEY:
+    placeholder: "failclosed-PLACEHOLDER-01HXY1234567FC"
+    inject:
+      header: "Authorization"
+      format: "Bearer {FAILCLOSED_KEY}"
+    bindings:
+      - host: "127.0.0.1"
+        methods: [GET]
+        paths: ["/failclosed"]
+
+# Deny anything not listed above (the negative test aims at host "localhost").
+unmatched_destination_policy: deny
+
+cache:
+  ttl_seconds: 60
+  max_entries: 16
+  jitter_seconds: 5
+
+audit:
+  path: __AUDIT_JSONL__
+  fail_on_unwritable: true
+
+preflight:
+  fail_on_warning: false
+
+backend:
+  type: static
+  config:
+    type: static
+    path: __SECRETS_YAML__

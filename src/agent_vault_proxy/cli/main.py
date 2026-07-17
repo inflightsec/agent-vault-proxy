@@ -18,6 +18,7 @@ import sys
 
 from agent_vault_proxy.cli.doctor import run_doctor
 from agent_vault_proxy.cli.env import default_env_path, run_env
+from agent_vault_proxy.cli.gcp_setup import run_gcp_setup
 from agent_vault_proxy.cli.run import register_run_subparser, run_run
 from agent_vault_proxy.cli.secret import register_secret_subparser, run_secret
 from agent_vault_proxy.cli.setup import run_setup
@@ -112,6 +113,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    doctor_p.add_argument(
+        "--probe-gcp",
+        action="store_true",
+        help=(
+            "Read-only Google Secret Manager identity/scope report for a `gsm` "
+            "backend: keyless auth, enumeration scope, project-wide access, and "
+            "in-scope secret count. Never writes."
+        ),
+    )
+
     setup_p = sub.add_parser(
         "setup",
         help="Install the AVP service user, config, CA, and service definition.",
@@ -162,6 +173,39 @@ def _build_parser() -> argparse.ArgumentParser:
             "Bitwarden — no BWS token needed (development/testing only)."
         ),
     )
+    gcp_setup_p = sub.add_parser(
+        "gcp-setup",
+        help="Grant a service account PER-SECRET Google Secret Manager access.",
+        description=(
+            "Grant roles/secretmanager.secretAccessor on each named secret "
+            "individually (never project/folder/org level) so the gsm backend's "
+            "identity can read only its own secrets. Shells out to gcloud."
+        ),
+    )
+    gcp_setup_p.add_argument("--project", required=True, help="GCP project id or number.")
+    gcp_setup_p.add_argument(
+        "--member",
+        required=True,
+        help="IAM member, e.g. serviceAccount:avp-ro@PROJECT.iam.gserviceaccount.com.",
+    )
+    gcp_setup_p.add_argument(
+        "--secret",
+        dest="secrets",
+        action="append",
+        default=[],
+        help="Secret id to grant access on (repeatable).",
+    )
+    gcp_setup_p.add_argument(
+        "--scope",
+        default="secret",
+        help="Grant scope. Only 'secret' is allowed; broader scopes are refused.",
+    )
+    gcp_setup_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the gcloud commands without running them.",
+    )
+
     register_secret_subparser(sub)
     register_run_subparser(sub)
     return parser
@@ -187,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             probe_oauth=args.probe_oauth,
             binding_filter=args.binding,
             do_exchange=args.exchange,
+            probe_gcp=args.probe_gcp,
         )
     if args.command == "setup":
         return run_setup(
@@ -196,6 +241,14 @@ def main(argv: list[str] | None = None) -> int:
             allow_mutable_audit=args.allow_mutable_audit,
             no_service=args.no_service,
             static=args.static,
+        )
+    if args.command == "gcp-setup":
+        return run_gcp_setup(
+            project=args.project,
+            member=args.member,
+            secrets=args.secrets,
+            scope=args.scope,
+            dry_run=args.dry_run,
         )
     if args.command == "secret":
         return run_secret(args)

@@ -52,6 +52,8 @@ backend:
     state_path: ./bws-state.json
 ```
 
+> Prefer **Google Secret Manager**? Swap the `backend:` block for `type: gsm` (keyless auth; each secret is host-bound by its own `avp-binding` annotation under `binding_source: notes`). Full setup + testing walkthrough: [Google Secret Manager](gcp-secret-manager.md).
+
 Drop your machine-account token into the file `access_token_path` points at:
 
 ```bash

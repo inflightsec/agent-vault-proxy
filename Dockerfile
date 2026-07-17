@@ -121,8 +121,11 @@ CMD ["python", "-m", "agent_vault_proxy", \
      "--listen-host", "0.0.0.0", \
      "--set", "avp_config=/etc/agent-vault-proxy/bindings.yaml"]
 
-# Pure-Python TCP probe — no shell, no curl/nc dep, no external network.
-# 30s start_period gives mitmproxy's first-run CA generation room to finish
-# on slow hosts before health flapping starts.
+# Pure-Python liveness/readiness probe — no shell, no curl/nc dep, no external
+# network. Sends a plain-HTTP request THROUGH the proxy to the reserved
+# `/healthz` sentinel host; the addon answers 200 only once config, backend
+# client, and audit writer are all live (503 "starting" before that). Stronger
+# than the old bare-TCP probe, which only proved the socket was open — not that
+# AVP could actually broker. 30s start_period covers first-run CA generation.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 14322), timeout=2).close()"]
+    CMD ["python", "-c", "import http.client,sys; c=http.client.HTTPConnection('127.0.0.1',14322,timeout=2); c.request('GET','http://healthz.agent-vault-proxy.invalid/healthz',headers={'Host':'healthz.agent-vault-proxy.invalid'}); sys.exit(0 if c.getresponse().status==200 else 1)"]

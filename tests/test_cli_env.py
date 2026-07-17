@@ -144,13 +144,14 @@ def test_list_secret_names_uses_backend_helper() -> None:
 # --------------------------------------------------------------------------
 
 
-def _write_config(tmp_path, audit_path) -> str:
+def _write_config(tmp_path, audit_path, install_salt_path=None) -> str:
     secrets_file = tmp_path / "secrets.yaml"
     secrets_file.write_text("secrets:\n  A: secret-a\n  B: secret-b\n")
     secrets_file.chmod(0o600)
+    salt_line = f"install_salt_path: {install_salt_path}\n" if install_salt_path else ""
     yaml = f"""
 version: 1
-secrets:
+{salt_line}secrets:
   PLACEHOLDER_ONLY:
     placeholder: "avp-PLACEHOLDER-zzzzzzzzzzzzzzzzzzzzz"
     inject:
@@ -207,3 +208,38 @@ def test_run_env_print_only_does_not_write(tmp_path, capsys) -> None:
     assert not env_path.exists()
     out = capsys.readouterr().out
     assert "export A='avp-PLACEHOLDER-" in out
+
+
+def test_run_env_honors_config_install_salt_path(tmp_path) -> None:
+    # With no --salt, avp env must derive against the config's install_salt_path
+    # (the same value the daemon uses) — NOT $HOME — so the projected env file
+    # and the running proxy agree on the placeholder.
+    cfg_salt = tmp_path / "cfg-salt"
+    cfg_path = _write_config(tmp_path, tmp_path / "audit.jsonl", install_salt_path=str(cfg_salt))
+    env_path = tmp_path / "out-env"
+    rc = run_env(
+        config_path=cfg_path,
+        env_path=str(env_path),
+        salt_path=None,  # no --salt → fall back to config.install_salt_path
+        print_only=False,
+        refresh=True,
+    )
+    assert rc == 0
+    assert cfg_salt.exists(), "salt should be created at the config-pinned path"
+    assert "export A='avp-PLACEHOLDER-" in env_path.read_text()
+
+
+def test_run_env_explicit_salt_overrides_config(tmp_path) -> None:
+    cfg_salt = tmp_path / "cfg-salt"
+    explicit_salt = tmp_path / "explicit-salt"
+    cfg_path = _write_config(tmp_path, tmp_path / "audit.jsonl", install_salt_path=str(cfg_salt))
+    rc = run_env(
+        config_path=cfg_path,
+        env_path=str(tmp_path / "out-env"),
+        salt_path=str(explicit_salt),  # --salt wins over config
+        print_only=False,
+        refresh=True,
+    )
+    assert rc == 0
+    assert explicit_salt.exists()
+    assert not cfg_salt.exists(), "config path must be ignored when --salt is given"

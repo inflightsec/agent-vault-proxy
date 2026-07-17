@@ -189,6 +189,24 @@ def list_secret_names(backend: SecretsBackend) -> list[str]:
     )
 
 
+def list_secret_notes(backend: SecretsBackend) -> dict[str, str | None]:
+    """Return ``{secret_name: note | None}`` for every enumerable secret,
+    WITHOUT fetching values when the backend supports it.
+
+    Dispatch: a backend that can surface per-secret metadata without a value
+    read (GSM reads ``avp-binding`` annotations from the free ListSecrets pass)
+    implements ``list_secret_notes``. Backends that can't fall back to
+    ``list_secret_names`` + ``fetch_with_meta`` — which DOES read each value —
+    preserving existing bws/static behaviour. A backend failure propagates so
+    notes activation fails closed at configure() rather than serving a partial
+    binding view."""
+    own = getattr(type(backend), "list_secret_notes", None)
+    if callable(own) and own is not list_secret_notes:
+        result: dict[str, str | None] = backend.list_secret_notes()  # type: ignore[attr-defined]
+        return result
+    return {name: fetch_with_meta(backend, name)[1] for name in list_secret_names(backend)}
+
+
 # Registry: maps backend.type discriminator string → (BackendCls, ConfigCls).
 # Populated by register_backend() calls at import time.
 #
@@ -261,15 +279,18 @@ def _reset_registry_for_tests() -> None:
     """
     _registry.clear()
     from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
+    from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig
     from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
     register_backend("bws", BitwardenBackend, BwsConfig)
+    register_backend("gsm", GsmBackend, GsmConfig)
     register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
 
 
 # Import backend modules at package import time so their register_backend()
 # calls run. Order doesn't matter (each registers under a unique name).
 from agent_vault_proxy.backends import bws as _bws_module  # noqa: E402, F401
+from agent_vault_proxy.backends import gsm as _gsm_module  # noqa: E402, F401
 from agent_vault_proxy.backends import static as _static_module  # noqa: E402, F401
 
 __all__ = [
@@ -283,6 +304,7 @@ __all__ = [
     "SecretsBackend",
     "fetch_with_meta",
     "list_secret_names",
+    "list_secret_notes",
     "register_backend",
     "update_secret",
 ]

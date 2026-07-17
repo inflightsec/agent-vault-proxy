@@ -66,6 +66,8 @@ Each rule below is here because we broke it.
 
 3. **A CI fix is not done until you have watched the run go green.** After the operator pushes, pull the live result and confirm the *specific* previously-red job is now green: `gh api "repos/inflightsec/agent-vault-proxy/actions/runs?branch=main"` → the failing run's `/jobs` → `/actions/jobs/{id}/logs`. Identify which job + step is red *before* theorizing (the scheduled `security` workflow ≠ the `test` workflow's `audit-lockfile` job — they fail for different reasons). Never declare green from the diff alone.
 
+4. **`lockfile-drift` can fail with NO dependency change — that's the 7-day cooldown window sliding forward, not a mistake.** The gate re-resolves against `now − 7 days` on every run; when a dep releases just under the window and then ages past it, the committed lock goes stale and the pre-commit hook + CI redden even though nothing was touched. Fix is the same one command every time: `bash scripts/regen-lockfiles.sh`, then the operator commits (`chore(deps): rollforward lockfiles for 7-day cooldown`) + pushes — no version bump, this is dev/CI hygiene, not a release. Do **NOT** hand-roll `uv pip compile -o <lockfile>`: writing onto the existing lock makes uv read and *preserve* its stale pins, so it never converges (burned 3 attempts on a `ruff 0.15.19 → 0.15.20` rollforward exactly this way). `regen-lockfiles.sh` compiles to a tempfile with `--refresh` then moves it in — the only path whose bytes match the gate. Dry-run `bash scripts/check-lockfile-drift.sh` before committing to confirm it's absorbed.
+
 ## Releasing — STRICT RULES
 
 Full release loop in [`CONTRIBUTING.md` "Releasing"](./CONTRIBUTING.md#releasing). The mechanical sequence:

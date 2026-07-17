@@ -18,7 +18,7 @@ fork validation.
 
 from __future__ import annotations
 
-from agent_vault_proxy.bws_notes import (
+from agent_vault_proxy.notes_binding import (
     EXCEPTION_TABLE,
     InvalidBinding,
     NoBinding,
@@ -250,3 +250,14 @@ def test_unknown_host_falls_back_to_bearer_default() -> None:
     assert result.spec.bindings[0].methods is None
     assert result.spec.bindings[0].paths is None
     assert result.companion_headers == {}
+
+
+def test_non_string_yaml_key_is_invalid_not_crash() -> None:
+    # YAML permits non-string keys (`1: x`); the unknown-key diagnostic must
+    # str()-coerce before sorting, else sorting a mixed int/str set raises
+    # TypeError and escapes the parser instead of recording invalid metadata.
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="1: x\nhost: api.example.com"
+    )
+    assert isinstance(result, InvalidBinding)
+    assert "unknown note key" in result.diagnostic.lower()

@@ -57,6 +57,7 @@ ln -s "$PWD/skills/avp-bindings" ~/.claude/skills/avp-bindings
 
 ## Docs
 
+- **[Is AVP for you?](docs/is-it-for-you.md)** — what it does, what it deliberately does not do, why, and when to reach for it (start here if you're evaluating)
 - **[Quickstart](docs/quickstart.md)** — 10-minute first run ending in a visible substitution
 - **[Concepts](docs/concepts.md)** — placeholder, binding, the CA, fail-closed — in plain terms
 - **[Prerequisites](docs/prerequisites.md)** — Bitwarden Secrets Manager setup (do this first)

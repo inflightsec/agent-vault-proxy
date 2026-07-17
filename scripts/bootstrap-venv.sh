@@ -37,7 +37,15 @@ fi
 PY="${PY:-python3.12}"
 
 echo "── Wiping .venv ──"
-rm -rf .venv
+# .venv may be a per-host bind mount (ansible role avp-dev-venv-mount) so two
+# hosts sharing the NFS tree don't clobber each other's venv. `rm -rf .venv`
+# fails on a live mountpoint (busy) — clear the CONTENTS and keep the mountpoint
+# when it's mounted; otherwise remove it as before.
+if mountpoint -q .venv 2>/dev/null; then
+    find .venv -mindepth 1 -delete
+else
+    rm -rf .venv
+fi
 
 echo "── Creating .venv with $PY ──"
 uv venv .venv --python "$PY"

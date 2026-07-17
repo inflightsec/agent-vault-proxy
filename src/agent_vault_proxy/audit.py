@@ -31,6 +31,34 @@ REASON_INVALID_BINDING_METADATA = "invalid_binding_metadata"
 # contract (no secret material, no header/body/query).
 EVENT_HONEYTOKEN_TRIGGERED = "honeytoken_triggered"
 
+# ADR-0023: the CLOSED set of audit event types AVP may ever write. `emit()`
+# refuses any type outside this set, so a NEW event type cannot be shipped
+# without being added here CONSCIOUSLY — and that is the point where PR review
+# forces it to (a) carry no secret material and (b) gain stateful no-leak
+# coverage (test_addon*_noleak_stateful.py, whose invariant scans the whole
+# audit stream for secret bytes).
+#
+# Scope, stated honestly: this guard is TYPE-level, not field-level. It does not
+# by itself stop a value-bearing field being added to a *known* type — that is
+# caught by the no-leak state machines (which scan for secret bytes regardless of
+# field) plus the declared field allowlist pinned in test_audit_event_type_contract.py.
+# The three layers together are the "no secret in the audit" guarantee; this
+# frozenset is the type-closure layer. (A future hardening is typed event builders
+# or a field allowlist enforced here — see ADR-0023, deferred as it needs the
+# full optional-field enumeration and a careful pass over the G6 fsync path.)
+# Keep in sync with docs/adrs/ADR-0023 and the emit call sites.
+AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "inject_decision",
+        "deny",
+        "token_exchange",
+        "refresh_token_rotated",
+        EVENT_HONEYTOKEN_TRIGGERED,
+        "proxy_restart",
+        "upstream_response",
+    }
+)
+
 
 class AuditWriter:
     def __init__(
@@ -51,6 +79,26 @@ class AuditWriter:
         self._lock = threading.Lock()
 
     def emit(self, event: dict[str, Any]) -> None:
+        # ADR-0023 choke-point contract guard. Refuse any event whose `type`
+        # is not in the declared closed set. This is the single structural
+        # rule that keeps the audit stream provably free of unclassified
+        # records: every permitted type is covered by a stateful no-leak test
+        # that scans the whole stream for secret bytes, so a type that reaches
+        # this writer is guaranteed to be one that has been vetted to carry no
+        # secret material. Fail-closed and consistent with AVP's posture — an
+        # unrecognised type is a programming error (a new emit site that skipped
+        # the contract), and surfacing it loudly at the choke point is strictly
+        # safer than silently writing a record whose minimization nobody vetted.
+        # All current emit sites use a listed type, so this never fires on the
+        # existing hot paths.
+        event_type = event.get("type")
+        if event_type not in AUDIT_EVENT_TYPES:
+            raise ValueError(
+                f"audit event type {event_type!r} is not in AUDIT_EVENT_TYPES; "
+                "refusing to write an unclassified audit record. Add the type to "
+                "AUDIT_EVENT_TYPES in audit.py and bring it under no-leak test "
+                "coverage (see ADR-0023)."
+            )
         # Write the primary record (fsynced) first, then — if it is an
         # inject_decision naming a honeytoken secret — the follow-up
         # `honeytoken_triggered` event. The follow-up comes AFTER the

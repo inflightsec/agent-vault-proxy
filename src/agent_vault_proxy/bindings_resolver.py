@@ -2,7 +2,7 @@
 
 Two sources today:
 
-  * :class:`BwsNotesSource` — builds SecretSpecs from each BWS secret's
+  * :class:`NotesSource` — builds SecretSpecs from each BWS secret's
     ``notes`` field (via :func:`bws_notes.parse_notes_binding`).
   * :class:`FileSource`     — the existing ``bindings.yaml`` Config.
 
@@ -22,8 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agent_vault_proxy.bws_notes import InvalidBinding, ParsedBinding, parse_notes_binding
 from agent_vault_proxy.config import Config, SecretSpec
+from agent_vault_proxy.notes_binding import InvalidBinding, ParsedBinding, parse_notes_binding
 
 # (spec, source_label, companion_headers) — what each source yields per secret.
 ResolvedSpec = tuple[SecretSpec, str, dict[str, str]]
@@ -53,7 +53,7 @@ class FileSource:
 
 
 @dataclass
-class BwsNotesSource:
+class NotesSource:
     """Bindings from BWS secret notes.
 
     Inputs (assembled by the daemon from the BWS secret list — see ADR
@@ -69,6 +69,9 @@ class BwsNotesSource:
 
     placeholders: dict[str, str]
     notes: dict[str, str | None]
+    # Provenance label stamped onto each resolved spec + its audit event.
+    # "bws_notes" for BWS notes, "gsm_notes" for GSM `avp-binding` annotations.
+    source_label: str = "bws_notes"
     # name -> diagnostic, for malformed notes (audit `invalid_binding_metadata`).
     invalid: dict[str, str] = field(default_factory=dict)
     # names whose note carried no binding (audit `no_binding_in_notes`). A
@@ -84,8 +87,8 @@ class BwsNotesSource:
             note = self.notes.get(name)
             result = parse_notes_binding(secret_name=name, placeholder=placeholder, note=note)
             if isinstance(result, ParsedBinding):
-                result.spec.binding_source = "bws_notes"
-                out[name] = (result.spec, "bws_notes", result.companion_headers)
+                result.spec.binding_source = self.source_label
+                out[name] = (result.spec, self.source_label, result.companion_headers)
             elif isinstance(result, InvalidBinding):
                 # Record diagnostic, emit no binding (fail closed).
                 self.invalid[name] = result.diagnostic
@@ -101,7 +104,7 @@ class BindingsResolver:
     """Merge multiple sources with first-source-wins precedence.
 
     Callers order sources so the higher-precedence one comes first; per the
-    ADR that is ``[BwsNotesSource, FileSource]`` (BWS-notes wins over file
+    ADR that is ``[NotesSource, FileSource]`` (BWS-notes wins over file
     for the same secret).
     """
 

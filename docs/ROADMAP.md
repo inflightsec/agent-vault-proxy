@@ -15,6 +15,11 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
   requests keep their captured state, no restart needed.
 - Supply-chain gates — hash-pinned lockfiles, TruffleHog secret scan,
   `pip-audit`, and a pre-release checklist.
+- Honeytoken tripwire — a per-secret `honeytoken` flag emits a
+  `honeytoken_triggered` audit event on any use of a planted placeholder
+  ([ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md), `accepted`). The
+  off-box shipping half (Fluent Bit sidecar → central collector) lives in
+  separate repos, not here.
 
 ## Planned
 
@@ -36,12 +41,12 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
   an SBOM (CycloneDX/SPDX) so downstream consumers can verify provenance.
 
 ### Observability
-- **Off-box audit shipping** — tail the audit log to a central collector over
-  a mesh VPN, plus a per-binding honeytoken flag
-  ([ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md), `proposed`).
-- **Metrics + health endpoint** — hot-reload is done; still missing a
-  Prometheus-style metrics surface (exchange counts, cache hit rate, deny
-  reasons) and a `/healthz` liveness/readiness endpoint for orchestrators.
+- **Metrics endpoint** — the `/healthz` liveness/readiness probe has shipped
+  (a request through the proxy to the reserved
+  `healthz.agent-vault-proxy.invalid/healthz` sentinel returns `200` once AVP
+  is fully configured, `503` while starting; the Docker healthcheck uses it).
+  Still missing a Prometheus-style metrics surface (exchange counts, cache hit
+  rate, deny reasons).
 
 ### Injector types (schema-reserved, not yet implemented)
 

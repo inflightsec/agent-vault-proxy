@@ -221,6 +221,15 @@ class SecretSpec(BaseModel):
     # attribute, not part of the serialised contract.
     binding_source: str = Field(default="file", exclude=True)
 
+    # ADR-0019 §5: a honeytoken (canary) secret. When true, any inject_decision
+    # naming this secret auto-emits a follow-up `honeytoken_triggered` audit
+    # event (see audit.AuditWriter) so the fleet collector alerts on a single
+    # unambiguous type. The tripwire fires on ANY use of the planted
+    # placeholder — injected, denied, scope-violated, or aimed at the wrong
+    # destination — before any real value moves. Per-secret (the AVP "binding"
+    # the audit `binding_name` names); honored regardless of binding_source.
+    honeytoken: bool = False
+
     @field_validator("bindings")
     @classmethod
     def reject_empty_bindings(cls, v: list[BindingSpec]) -> list[BindingSpec]:
@@ -371,15 +380,18 @@ class Config(BaseModel):
     # Default `forward_unmodified`: AVP is a credential broker, not an
     # egress firewall. Operators opt into allow-listing with `deny`.
     unmatched_destination_policy: Literal["deny", "forward_unmodified"] = "forward_unmodified"
-    # Where binding policy comes from (ADR-0011). Default `both`: bindings
-    # resolve from BWS secret notes AND `secrets:` in this file, BWS-notes
-    # winning for the same secret. `bws_notes` = notes only; `file` = the
-    # pre-ADR-0011 file-only behaviour. Anything other than `file` requires
-    # a listable backend (bws/static).
-    binding_source: Literal["file", "bws_notes", "both"] = "both"
-    # Path to the per-install salt used to derive placeholders in
-    # bws_notes/both mode. Defaults to install-salt next to this file's
-    # directory; overridable for non-systemd layouts. Ignored in file mode.
+    # Where binding policy comes from (ADR-0011, ADR-0018). Default `both`:
+    # bindings resolve from the backend's per-secret metadata (BWS notes / GSM
+    # `avp-binding` annotations) AND `secrets:` in this file, notes winning for
+    # the same secret. `notes` = notes only; `file` = the pre-ADR-0011 file-only
+    # behaviour. Anything other than `file` requires a listable backend
+    # (bws/gsm/static). Legacy `bws_notes` / `gsm_notes` are accepted as
+    # deprecated aliases for `notes` (normalized below); the per-spec audit
+    # provenance stays backend-typed via NOTES_SOURCE_LABEL.
+    binding_source: Literal["file", "notes", "both"] = "both"
+    # Path to the per-install salt used to derive placeholders in notes/both
+    # mode. Defaults to install-salt next to this file's directory; overridable
+    # for non-systemd layouts. Ignored in file mode.
     install_salt_path: str | None = None
     # Wildcard binding hosts (`*.suffix`) are OFF by default. A wildcard widens
     # a credential's blast radius to every subdomain, so it must be a deliberate
@@ -391,6 +403,25 @@ class Config(BaseModel):
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
     backend: BackendBlock | None = None
+
+    @field_validator("binding_source", mode="before")
+    @classmethod
+    def _normalize_binding_source(cls, v: object) -> object:
+        """Accept the legacy per-backend values ``bws_notes`` / ``gsm_notes`` as
+        deprecated aliases for the generic ``notes`` mode — the activation
+        mechanism is backend-agnostic; audit provenance stays backend-typed via
+        NOTES_SOURCE_LABEL, not this config field."""
+        if v in ("bws_notes", "gsm_notes"):
+            import warnings
+
+            warnings.warn(
+                f"binding_source: {v!r} is a deprecated alias for 'notes'; "
+                "update bindings.yaml to `binding_source: notes`.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return "notes"
+        return v
 
     @model_validator(mode="before")
     @classmethod

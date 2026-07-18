@@ -99,9 +99,11 @@ class GsmConfig(BaseModel):
     impersonate_service_account: str | None = None   # ADC user creds impersonate this low-priv SA
     credential_config_path: str | None = None        # WIF *no-secret* cred-config JSON (NOT a key file)
 
-    # --- Secure-by-default guardrails (all default ON) ---
+    # --- Secure-by-default guardrails ---
+    # deny REQUIRES secret_prefix (model_validator) so the guard has a namespace
+    # to bound — a prefix-less deny would silently no-op. Org SA-key policy is
+    # asserted by `avp doctor` / the installer, not this runtime identity.
     self_check: Literal["deny", "warn", "off"] = "deny"   # boot deny-if-broad probe (§6)
-    assert_org_key_policy: bool = True                    # warn/deny if SA-key creation isn't org-blocked
     reject_ambient_key: bool = True                       # refuse if ADC resolves to a downloaded SA key
 ```
 
@@ -321,6 +323,124 @@ Vault, Secretless Broker, Arcade, Aembit), none of which read from GSM:
 - A backend-routing layer for true multi-backend (BWS for some names, GSM for others) — today one
   instance serves one backend.
 - Project-per-engineer automation (Terraform module) if F2 chooses hard isolation.
+
+## Implementation status (2026-07-03)
+
+Shipped and green — 830 tests pass, mypy + ruff clean (uncommitted; `google-auth` added to a `gsm`
+extra, so `scripts/regen-lockfiles.sh` must run before commit): `backends/gsm.py` (`fetch` /
+`list_secret_names` / `fetch_with_meta` / `list_secret_notes`, keyless auth, self_check), the
+bare-hostname note shorthand, and `gsm_notes` as a first-class `binding_source`. **Follow-ups since
+shipped** (see "Follow-ups shipped" below): `avp gcp-setup`, `avp doctor --probe-gcp`, the docs
+(README / adapter-architecture / bindings.example / quickstart / usage), the notes-layer refactor, and the
+project-level access probe. Still deferred: the `preflight binding_unscoped` advisory.
+
+The "fix the union bug" item in §1/§4 was found **unnecessary**: `handlers.py` already unions file+notes
+correctly in `both` mode. Locked with regression coverage instead.
+
+### Cross-vendor audit (Cato / GPT-5.4) — findings resolved
+
+| # | Finding | Resolution |
+|---|---------|-----------|
+| F1 (HIGH) | A `*.suffix` host arriving via a notes/annotation **bypassed** `allow_wildcard_hosts` — the Config validator runs at load, before notes merge (affects BWS notes too). | The activator re-enforces the wildcard opt-in over merged notes specs; a wildcard with the opt-in off is dropped and attributed `invalid_binding_metadata` (fail closed). §4 |
+| F2 | `self_check` treated ANY list error incl. transient 5xx as "scoped → pass" (fail **open**). | Distinguish 401/403 (denied → scoped → pass) from transient (deny → refuse to start; warn → continue). Documented as ENUMERATION-scoped. |
+| F3 | `self_check: deny` silently no-opped when `secret_prefix` was unset (the default). | `deny` now REQUIRES `secret_prefix` (config validator). Minimal secure config = `project_id` + `secret_prefix`. |
+| F4 | `assert_org_key_policy` was a declared-but-unenforced no-op (false assurance). | Field removed. Org SA-key policy belongs to `avp doctor` / the installer. |
+| F5 | Notes activation fetched every secret VALUE just to read its annotation (cost + all plaintext transits memory on reload + one disabled version bricked reload). | New `list_secret_notes` dispatch: GSM reads annotations from the free ListSecrets pass, no value fetch at configure; bws/static fall back unchanged. |
+
+**Residual:** self_check now runs BOTH an enumeration check AND a project-level `testIamPermissions`
+access probe (catches a project-wide `versions.access` grant even when list is denied) — so the
+enumeration-vs-access gap is closed for the common broad-grant case. A per-secret grant on a *foreign*
+secret still evades detection and stays an IAM-least-privilege duty. `reject_ambient_key` keys off
+`isinstance(creds, service_account.Credentials)` and fails safe (returns False) only on `ImportError`.
+
+### Second cross-vendor pass (Oracle / codex) — findings resolved
+
+An independent second review (different provider) after the Cato fixes raised 9 concerns; the actionable ones are fixed and tested:
+
+| # | Finding | Resolution |
+|---|---------|-----------|
+| C4 (HIGH) | Token acquisition (`_token_provider()`) ran OUTSIDE the try in `_request` — a google-auth refresh/impersonation error escaped raw, bypassing the fail-closed handling the addon/cache rely on. | Wrapped: any non-protocol exception → `BackendUnavailableError`. |
+| C2 | self_check treated any `BackendAuthLostError` (401 OR 403) as "enumeration denied → scoped → pass"; a 401 is broken auth, not proof of scope. | `_request` tags the error with `http_status`; self_check passes only on 403, treats 401 as inconclusive (deny → refuse). |
+| C5 | Provenance `source_label` came from the `binding_source` string, so `both` mode mislabeled GSM annotations `bws_notes`. | Derived from the backend TYPE (`NOTES_SOURCE_LABEL` class attr) — honest in every mode. |
+| C6 | `base64.b64decode` without `validate=True` silently dropped non-alphabet bytes. | `validate=True` — a mangled payload is rejected, not accepted. |
+| C7 | First-use init (provider build + self_check) was unsynchronized; concurrent first requests could double-run it. | `threading.Lock` + double-checked `_ready`. |
+| C8 | `project_id` was interpolated raw into every authenticated URL. | `field_validator` restricts it to a GCP project ID / numeric number (no slash/query/fragment/whitespace). |
+| C9 | Configless construction (token_provider only) crashed with `AssertionError` at first use. | `_ensure_ready` requires config, raises a protocol-shaped error. |
+
+C3 (keyless "configurable away") is handled by default — `reject_ambient_key` (default on) catches a
+service-account key loaded via EITHER `credential_config_path` or ADC; `false` is an explicit opt-out. C1
+restates the enumeration-vs-access residual above.
+
+### Third pass (Oracle codex + Grok, incl. the local-e2e harness) — resolved
+
+Two more independent models reviewed the post-fix backend + the new `tests/local-e2e/` harness. Both
+confirmed gsm.py is leak-clean and injection-safe; the incremental hardening:
+
+- **Access-boundary prefix enforcement** — `_assert_in_scope` refuses to *fetch* any name outside
+  `secret_prefix`, so a stray broad IAM grant still can't pull an out-of-namespace secret through the
+  backend (belt to the self_check braces).
+- **Malformed-response guards** — annotation / secret-list entries that aren't dicts are skipped, not
+  raised as raw `AttributeError`.
+- **self_check 404** — a ListSecrets 404 (wrong `project_id`) fails closed with a clear message.
+- **Honest wording** — the docstring now states self_check bounds *enumeration* breadth, not
+  `versions.access` breadth; a per-secret grant on a foreign secret is not detected, and the
+  `testIamPermissions` access-probe remains the tracked follow-up.
+- **Harness security** (test infra): the pytest wrapper owns the temp dir (removed on every path
+  including a timeout SIGKILL) and reaps the proxy via a process-group kill; secrets are redacted from any
+  failure output; the leak-scan covers the rendered composite credential; render is delimiter-safe.
+  Accepted-LOW residuals: annotation cache is lock-free (CPython/GIL-safe), self_check has no list
+  page-cap, port-pick is TOCTOU.
+
+### Fourth pass (Oracle codex) — resolved
+
+- **Annotation-write is a binding-control primitive (confused-deputy).** On GCP,
+  `secretmanager.secrets.update` (edit annotations) and `secretmanager.versions.access`
+  (read the value) are *independently grantable* permissions. Under `binding_source:
+  notes`/`both`, a principal who can edit the `avp-binding` annotation but **cannot read
+  the secret** can point it at a host they control; AVP then reads the value with its own
+  identity and injects it there — exfiltrating a secret the attacker could never read
+  directly. `_assert_in_scope` does not mitigate this (it bounds the secret *name*, not the
+  destination host). **Decision:** the annotation channel is a **trust boundary** — whoever
+  can write `avp-binding` must be as trusted as whoever can read the secret. Operators MUST
+  restrict `secretmanager.secrets.update` to the value-read trust tier; `avp doctor
+  --probe-gcp` now emits an `annotation-trust` WARN whenever annotations are load-bearing.
+  A structural file-side host allowlist (annotations may only *narrow* scope, never add a
+  host) is the stronger fix, tracked as a follow-up for split-IAM / multi-tenant deployments.
+  (Not exploitable on BWS, which does not separate note-write from value-read; moot in a
+  single-operator project where one identity holds both perms.)
+- **Read-only enforcement (`self_check` write/admin guard).** AVP is a read-only broker, so
+  it must not hold `secretmanager.secrets.update` / `versions.add` / `secrets.delete`. The
+  boot self-check now runs a third `testIamPermissions` probe for these and refuses to start
+  (`deny`) / warns when the identity holds any — bounding a *compromised proxy's* ability to
+  tamper with the vault or rewrite the routing annotations. Same best-effort posture as the
+  access probe: an inconclusive probe (API disabled / denied / transient) never hard-blocks.
+  Defence-in-depth; it does **not** close the confused-deputy above (that abuses AVP's
+  *legitimate read* access, not any write grant).
+
+### Notes-layer generalization (de-BWS-ify refactor)
+
+The notes-binding layer is backend-agnostic (it serves BWS `notes` AND GSM
+`avp-binding` annotations), so its BWS naming was retired: module `bws_notes.py`
+→ `notes_binding.py` (with a back-compat re-export shim), classes
+`BwsNotesSource` / `BwsNotesActivator` → `NotesSource` / `NotesActivator`, and the
+`binding_source` enum collapses `bws_notes` / `gsm_notes` into one generic
+`notes` value. The legacy values are accepted as **deprecated aliases** at
+config-load (normalized to `notes` with a `DeprecationWarning`), so existing
+`bindings.yaml` keeps working unchanged. Per-spec audit **provenance stays
+backend-typed** via `NOTES_SOURCE_LABEL` (`bws_notes` / `gsm_notes`) — the config
+*mode* generalized; the audit label did not.
+
+### Follow-ups shipped (docs · refactor · security feature)
+
+- **Docs.** GSM is now documented end-to-end: the README backend line, the `docs/adapter-architecture.md`
+  coverage matrix (flipped `gcp-secret-manager` → the shipped `gsm` row with full config + an `avp-binding`
+  annotation guide), a commented `gsm` block in `bindings.example.yaml`, and `quickstart.md` / `usage.md`.
+- **Refactor.** The notes-binding layer was de-BWS-ified (see above); `binding_source` collapses to a
+  generic `notes` with `bws_notes` / `gsm_notes` accepted as deprecated aliases.
+- **Security feature.** `self_check` gained a project-level `testIamPermissions` access probe (closes the
+  enumeration-vs-access gap for project-wide grants). New operator CLIs: `avp gcp-setup` (grants per-secret
+  `secretAccessor`, **refuses** project/folder/org binds) and `avp doctor --probe-gcp` (read-only identity
+  scope report via `GsmBackend.diagnose()`).
 
 ## References
 

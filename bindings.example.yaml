@@ -246,6 +246,23 @@ secrets:
       - host: "www.googleapis.com"
         methods: [GET, POST]
 
+  # ─── Honeytoken (canary) binding — ADR-0019 §5 ───────────────────────────
+  # A trap credential. `honeytoken: true` makes ANY use of this placeholder
+  # emit a `honeytoken_triggered` audit event (in addition to the normal
+  # decision) — injected, denied, scope-violated, or aimed at the wrong host.
+  # Plant the placeholder somewhere tempting (a decoy `.env`, a fake
+  # `~/.aws/credentials`) and bind it to a trap host you control. The agent
+  # never holds the real value, so the tripwire fires on INTENT, before any
+  # secret moves. Shipped off-box, one trigger anywhere = a walked machine.
+  DECOY_AWS_PROD:
+    placeholder: "AKIA-PLACEHOLDER-DECOY-01HXY1234567890"
+    honeytoken: true
+    inject:
+      header: "Authorization"
+      format: "{DECOY_AWS_PROD}"
+    bindings:
+      - host: "canary.your-domain.example"
+
 # Example opts into allow-list behavior. Set `forward_unmodified` to
 # behave as a transparent forwarder for unrelated egress.
 unmatched_destination_policy: deny
@@ -283,3 +300,21 @@ backend:
     # Self-hosted Bitwarden uses vault.example.com/{api,identity}; private-CA
     # trust setup in docs/prerequisites.md "Self-hosted Bitwarden".
     # Vaultwarden does NOT implement the BWS Secrets Manager API.
+
+# ─── Alternative backend: Google Secret Manager (type: gsm) ──────────────────
+# Keyless by design — there is NO key-file field. Authenticate with ADC +
+# service-account impersonation, or a Workload-Identity cred-config. With
+# `binding_source: notes`, each GSM secret is host-bound by its own
+# `avp-binding` annotation (bare host or flat-YAML), so no `secrets:` block is
+# needed. See docs/adapter-architecture.md + docs/adrs/ADR-0018.
+# binding_source: notes
+# backend:
+#   type: gsm
+#   config:
+#     type: gsm
+#     project_id: "123456789012"             # project NUMBER preferred
+#     secret_prefix: "avp-owner-"            # scopes list + the self_check guard
+#     impersonate_service_account: "avp-ro@PROJECT.iam.gserviceaccount.com"
+#     # credential_config_path: /etc/agent-vault-proxy/gcp-wif.json   # WIF instead
+#     self_check: deny                        # refuse to start under a broad identity
+#     reject_ambient_key: true                # refuse a downloaded SA key via ADC

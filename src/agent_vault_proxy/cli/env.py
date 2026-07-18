@@ -125,12 +125,21 @@ def write_env_file(env_path: str | Path, lines: list[str]) -> None:
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
 
-def _resolve_salt_path(config_path: str, explicit: str | None) -> str:
-    """Resolve the install-salt path via the shared daemon/CLI helper."""
+def _resolve_salt_path(config_salt_path: str | None, explicit: str | None) -> str:
+    """Resolve the install-salt path, mirroring the DAEMON's precedence so
+    ``avp env`` derives the SAME placeholders the running proxy enforces:
+    explicit ``--salt`` > the config's ``install_salt_path`` > the
+    ``$AVP_CONFDIR`` / ``$HOME`` fallback.
+
+    The daemon resolves via ``resolve_install_salt_path(config.install_salt_path)``
+    (handlers.py). Passing the CLI ``--salt`` (if any) ahead of the config value
+    keeps an explicit override working while otherwise defaulting to the config —
+    so when the config pins ``install_salt_path``, no ``--salt`` flag is needed
+    and ``avp env`` can't silently derive against the wrong salt (e.g. a sudo
+    shell's ``$HOME`` instead of the daemon's state dir)."""
     from agent_vault_proxy.placeholders import resolve_install_salt_path
 
-    del config_path  # path no longer participates in fallback selection.
-    return resolve_install_salt_path(explicit)
+    return resolve_install_salt_path(explicit or config_salt_path)
 
 
 def run_env(
@@ -155,7 +164,7 @@ def run_env(
     backend, _ = build_backend(config)
     names = list_secret_names(backend)
 
-    resolved_salt = _resolve_salt_path(config_path, salt_path)
+    resolved_salt = _resolve_salt_path(config.install_salt_path, salt_path)
     salt = load_or_create_install_salt(resolved_salt)
 
     lines, skipped = build_export_lines(names, salt)

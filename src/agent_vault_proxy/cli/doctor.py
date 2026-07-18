@@ -213,6 +213,7 @@ def run_doctor(
     probe_oauth: bool = False,
     binding_filter: str | None = None,
     do_exchange: bool = False,
+    probe_gcp: bool = False,
 ) -> int:
     """Execute the ``avp doctor`` checks.
 
@@ -237,6 +238,12 @@ def run_doctor(
             do_exchange=do_exchange,
         )
 
+    any_gcp_fail = False
+    if probe_gcp:
+        from agent_vault_proxy.cli.doctor_gcp import run_gcp_probe
+
+        any_gcp_fail = run_gcp_probe(config_path=config_path)
+
     if not all_warnings:
         print("avp doctor: CA checks passed (CA not in any OS trust store; key perms OK).")
     else:
@@ -244,7 +251,7 @@ def run_doctor(
         for w in all_warnings:
             print(f"  - {w}", file=sys.stderr)
 
-    if all_warnings or any_oauth_fail:
+    if all_warnings or any_oauth_fail or any_gcp_fail:
         return 1
     return 0
 

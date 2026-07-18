@@ -1,7 +1,7 @@
 """Daemon-side activation of BWS-notes bindings (ADR-0011 item 3).
 
 Where :mod:`agent_vault_proxy.bindings_resolver` is the pure merge logic and
-:mod:`agent_vault_proxy.bws_notes` is the pure note parser, THIS module is
+:mod:`agent_vault_proxy.notes_binding` is the pure note parser, THIS module is
 the glue that runs at daemon configure() time: it lists the BWS secrets,
 derives each one's salted placeholder, fetches+parses each note, and merges
 the result (honouring BWS-notes-over-file precedence) into a single resolved
@@ -27,12 +27,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from agent_vault_proxy.backends import fetch_with_meta, list_secret_names
+from agent_vault_proxy.backends import list_secret_notes
 from agent_vault_proxy.bindings_resolver import (
     BindingsResolver,
     BindingsSource,
-    BwsNotesSource,
     FileSource,
+    NotesSource,
     ResolvedSpec,
 )
 from agent_vault_proxy.config import Config
@@ -61,15 +61,15 @@ class ResolvedRuntimeBindings:
 def resolve_runtime_bindings(
     *,
     backend: object,
-    binding_source: Literal["file", "bws_notes", "both"],
+    binding_source: Literal["file", "notes", "both"],
     install_salt: bytes,
     file_config: Config | None,
 ) -> ResolvedRuntimeBindings:
     """Resolve bindings for the daemon at configure() time.
 
-    ``backend`` must be listable (bws/static) for bws_notes/both modes.
+    ``backend`` must be listable (bws/static) for notes/both modes.
     ``file_config`` carries the file-source bindings (used in `both` mode;
-    ignored in `bws_notes`). ``file`` mode should not call this function —
+    ignored in `notes`). ``file`` mode should not call this function —
     the addon keeps its existing file-only path for that.
 
     Raises:
@@ -78,24 +78,28 @@ def resolve_runtime_bindings(
         BackendCannotListError: the backend can't enumerate names.
     """
     if binding_source == "file":  # pragma: no cover - addon never calls in file mode
-        raise ValueError("resolve_runtime_bindings is for bws_notes/both modes only")
+        raise ValueError("resolve_runtime_bindings is for notes/both modes only")
 
-    names = list_secret_names(backend)  # type: ignore[arg-type]
+    # Notes (policy metadata) for every enumerable secret. Where the backend
+    # supports it (GSM: annotations from the free ListSecrets pass), NO secret
+    # value is fetched here — so a config reload never pulls every plaintext,
+    # and a disabled/denied secret VERSION does not brick the reload. Backends
+    # without a note-only path fall back to list + fetch_with_meta. A backend
+    # failure propagates so configure() fails closed rather than serving a
+    # partial binding view.
+    notes: dict[str, str | None] = list_secret_notes(backend)  # type: ignore[arg-type]
+    names = list(notes.keys())
     # Derive ALL placeholders up front so a collision fails before any note
     # is parsed (collision is a config-wide invariant, not a per-secret one).
     placeholders = derive_placeholder_map(names, install_salt)
 
-    # Fetch each note (policy metadata only). A backend failure on one
-    # secret's note must not silently drop it: re-raise so configure() fails
-    # closed rather than serving a partial binding view.
-    notes: dict[str, str | None] = {}
-    for name in names:
-        _value, note = fetch_with_meta(backend, name)  # type: ignore[arg-type]
-        notes[name] = note
-
-    notes_source = BwsNotesSource(
+    notes_source = NotesSource(
         placeholders=placeholders,
         notes=notes,
+        # Label specs by the backend TYPE, not the binding_source string, so the
+        # inject_decision audit is honest even in `both` mode: GSM annotations
+        # read gsm_notes, BWS notes read bws_notes. Same mechanism either way.
+        source_label=getattr(type(backend), "NOTES_SOURCE_LABEL", "bws_notes"),
     )
 
     sources: list[BindingsSource] = [notes_source]

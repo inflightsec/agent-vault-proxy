@@ -1,0 +1,10 @@
+{
+  "name": "avp",
+  "displayName": "Agent Vault Proxy",
+  "description": "Broker API credentials through agent-vault-proxy. Bundles the avp-bindings skill, which walks you through authoring notes/annotation bindings so a new secret is proxied with no config edit and no redeploy.",
+  "version": "0.8.0",
+  "author": { "name": "Radek Maciaszek" },
+  "homepage": "https://github.com/inflightsec/agent-vault-proxy",
+  "repository": "https://github.com/inflightsec/agent-vault-proxy",
+  "license": "MIT"
+}

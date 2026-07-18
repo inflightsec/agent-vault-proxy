@@ -1,11 +1,15 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-11
+implemented: 2026-07-13
 security_review: "Cato (cross-vendor) + Silas (red-team) + Oracle (cross-model) 2026-07-11 — v1 FAIL (C1 critical); v3 below folds all findings"
 relates_to: ADR-0011-bws-notes-bindings, ADR-0017-oauth2-refresh-injector, ADR-0018-gcp-secret-manager-backend, ADR-0020-service-templates-zero-config-onboarding
 ---
 
 # ADR-0021: Notes bindings reach `secrets:` parity — bounded by a note trust profile
+
+> **Implemented in v0.8.0.** Multi-host `host:` lists (and the `hosts:` alias) land in
+> `notes_binding.py`; behaviour pinned by `tests/test_bws_notes_multihost.py`.
 
 ## Context
 

@@ -68,7 +68,22 @@ class FakeBackend:
             raise SecretNotFoundError(f"missing secret {name!r}")
         return self._values[name]
 
-    def update(self, name: str, value: str, ctx: FetchContext | None = None) -> None:
+    def update(
+        self,
+        name: str,
+        value: str,
+        ctx: FetchContext | None = None,
+        *,
+        expected_current_value: str | None = None,
+    ) -> None:
+        # Mirror BitwardenBackend's value-precondition semantics (ADR-0017
+        # hardening series) so conflict paths are testable against the fake.
+        if expected_current_value is not None and self._values.get(name) != expected_current_value:
+            from agent_vault_proxy.backends import BackendWriteConflictError
+
+            raise BackendWriteConflictError(
+                f"secret {name!r} changed since read; refusing to overwrite"
+            )
         self.updates.append((name, value))
         self._values[name] = value
 
@@ -105,14 +120,22 @@ class UpdateFailsBackend(FakeBackend):
         super().__init__(values)
         self._update_error = error or BackendUnavailableError("vault down for update")
 
-    def update(self, name: str, value: str, ctx: FetchContext | None = None) -> None:
+    def update(
+        self,
+        name: str,
+        value: str,
+        ctx: FetchContext | None = None,
+        *,
+        expected_current_value: str | None = None,
+    ) -> None:
         raise self._update_error
 
 
 class FakeResp:
-    # geturl_value=None makes geturl() return None, which production treats
-    # as "no redirect happened" and skips the post-call SSRF re-check —
-    # matching mocks that don't model the redirect path.
+    # Redirects are refused at the opener itself (_NoRedirectHandler in
+    # oauth2_refresh) — there is no post-call geturl() check any more, so
+    # fakes never need to model the redirect path; a redirect in tests is
+    # simulated by the patched transport raising HTTPError(code=3xx).
     def __init__(
         self,
         body: bytes,

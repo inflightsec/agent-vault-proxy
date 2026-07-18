@@ -49,8 +49,9 @@ never sets it, so a consumer must discover it. The config pins `install_salt_pat
 resolves the daemon's own salt on its own — the command is a flagless one-liner (run on the AVP host):
 
 ```bash
-sudo /opt/agent-vault-proxy/.venv/bin/avp env --print | grep <SECRET_NAME>
+sudo avp env --print | grep <SECRET_NAME>
 # → export <SECRET_NAME>='avp-PLACEHOLDER-...'
+# (source installs without avp on PATH: /opt/agent-vault-proxy/.venv/bin/avp)
 ```
 
 **How the skill wires it (the value is a sentinel, NOT a secret — safe for the agent to fetch,

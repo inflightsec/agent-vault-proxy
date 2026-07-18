@@ -20,12 +20,11 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
   ([ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md), `accepted`). The
   off-box shipping half (Fluent Bit sidecar → central collector) lives in
   separate repos, not here.
+- Google Secret Manager backend (`backend.type: gsm`) — keyless auth,
+  per-secret least privilege, `avp-binding` annotation bindings
+  ([ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md), shipped 0.8.0).
 
 ## Planned
-
-### Backends
-- **Google Secret Manager backend** — second first-class backend alongside
-  BWS ([ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md), `proposed`).
 
 ### Security posture
 - **Scope TLS termination to bound hosts** — today AVP TLS-terminates *every*

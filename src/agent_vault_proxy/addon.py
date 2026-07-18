@@ -10,6 +10,7 @@ from mitmproxy.addonmanager import Loader
 from agent_vault_proxy._derived_token_cache import DerivedTokenCache
 from agent_vault_proxy._healthz import healthz_response, is_healthz_request
 from agent_vault_proxy.audit import (
+    REASON_HOST_NOT_IN_ALLOWLIST,
     REASON_INVALID_BINDING_METADATA,
     REASON_NO_BINDING_IN_NOTES,
     AuditWriter,
@@ -52,6 +53,12 @@ class AgentVaultProxyAddon:
         self._placeholder_to_name: dict[str, str] = {}
         self._no_binding_names: set[str] = set()
         self._invalid_names: set[str] = set()
+        # ADR-0024: names whose notes binding was dropped WHOLE by the
+        # file-side notes_host_allowlist (no approved host remained) — the
+        # pre-step attributes their placeholders as host_not_in_allowlist.
+        # Partial rejections live on the header handler's
+        # allowlist_rejected_hosts map instead (spec stays live).
+        self._allowlist_rejected_names: set[str] = set()
         self._companion_headers: dict[str, dict[str, str]] = {}
         # Derived-token cache for the oauth2_refresh resolution step
         # (ADR-0017 §3 / §11). Sibling of ``self.client`` — vault secrets
@@ -119,6 +126,8 @@ class AgentVaultProxyAddon:
         new_placeholder_to_name: dict[str, str] = {}
         new_no_binding: set[str] = set()
         new_invalid: set[str] = set()
+        new_allowlist_rejected: set[str] = set()
+        new_allowlist_rejected_hosts: dict[str, set[str]] = {}
         new_companion_headers: dict[str, dict[str, str]] = {}
         if new_config.binding_source != "file":
             self._notes_activator.activate(
@@ -129,6 +138,8 @@ class AgentVaultProxyAddon:
                 out_no_binding=new_no_binding,
                 out_invalid=new_invalid,
                 out_companion_headers=new_companion_headers,
+                out_allowlist_rejected=new_allowlist_rejected,
+                out_allowlist_rejected_hosts=new_allowlist_rejected_hosts,
             )
 
         new_client = CachingSecretsClient(
@@ -160,6 +171,10 @@ class AgentVaultProxyAddon:
         self._placeholder_to_name = new_placeholder_to_name
         self._no_binding_names = new_no_binding
         self._invalid_names = new_invalid
+        self._allowlist_rejected_names = new_allowlist_rejected
+        # Partial-rejection map rides on the header handler (consulted at
+        # the deny site); atomic attribute swap, same publish ordering.
+        self._header_handler.allowlist_rejected_hosts = new_allowlist_rejected_hosts
         self._companion_headers = new_companion_headers
         self.client = new_client
         self.audit = new_audit
@@ -366,6 +381,7 @@ class AgentVaultProxyAddon:
             return
         no_binding = self._no_binding_names
         invalid = self._invalid_names
+        allowlist_rejected = self._allowlist_rejected_names
         seen: set[str] = set()
         for value in flow.request.headers.values():
             if not value:
@@ -377,6 +393,10 @@ class AgentVaultProxyAddon:
                     continue
                 if secret_name in invalid:
                     reason = REASON_INVALID_BINDING_METADATA
+                elif secret_name in allowlist_rejected:
+                    # ADR-0024: every host in this secret's note was outside
+                    # the file-side allowlist — the binding never activated.
+                    reason = REASON_HOST_NOT_IN_ALLOWLIST
                 elif secret_name in no_binding:
                     reason = REASON_NO_BINDING_IN_NOTES
                 else:

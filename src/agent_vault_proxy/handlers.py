@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from mitmproxy import http
 
 from agent_vault_proxy._fail_closed import emit_denial_and_503
-from agent_vault_proxy.audit import AuditWriter
+from agent_vault_proxy.audit import REASON_HOST_NOT_IN_ALLOWLIST, AuditWriter
 from agent_vault_proxy.backends import (
     BackendCannotListError,
     BackendUnavailableError,
@@ -33,6 +33,7 @@ from agent_vault_proxy.config import (
 )
 from agent_vault_proxy.injectors.body import _build_body_replacer
 from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
+from agent_vault_proxy.matching import host_matches_pattern
 from agent_vault_proxy.policy import matched_binding
 from agent_vault_proxy.template import TemplateRenderError
 
@@ -197,6 +198,12 @@ class HeaderInjectionHandler:
     """Executes the header verdict from :func:`agent_vault_proxy.policy.decide`."""
 
     def __init__(self, *, composite: CompositeResolver, oauth_resolver: OauthResolver) -> None:
+        # ADR-0024: name -> hosts the file-side allowlist REMOVED from that
+        # secret's notes binding (partial rejection — siblings stayed live).
+        # Swapped atomically by the addon on every configure(); consulted in
+        # _audit_deny so a request to a removed host attributes precisely as
+        # host_not_in_allowlist instead of a generic unbound-destination.
+        self.allowlist_rejected_hosts: dict[str, set[str]] = {}
         self._composite = composite
         self._oauth_resolver = oauth_resolver
 
@@ -338,12 +345,21 @@ class HeaderInjectionHandler:
             return True
 
         if decision.reason == "destination_not_in_binding":
+            # ADR-0024: if this exact host was stripped from the secret's
+            # notes binding by the file-side allowlist, say so precisely —
+            # "someone tried to route this secret somewhere un-approved" is
+            # a different operator signal than an ordinary unbound
+            # destination. The destination field names the host either way.
+            reason = "destination_not_in_binding"
+            name = decision.secret_name
+            if name is not None and target_host in self.allowlist_rejected_hosts.get(name, ()):
+                reason = REASON_HOST_NOT_IN_ALLOWLIST
             audit.emit(
                 {
                     "type": "inject_decision",
                     "request_id": request_id,
                     "decision": "denied",
-                    "reason": "destination_not_in_binding",
+                    "reason": reason,
                     "secret_name": decision.secret_name,
                     "destination": {"host": target_host, "port": flow.request.port},
                 }
@@ -592,6 +608,85 @@ class BodyInjectionHandler:
         return candidates
 
 
+def _host_in_allowlist(host: str, allow: list[str]) -> bool:
+    """ADR-0024 membership: exact entry match, or a `*.suffix` entry (only
+    present when ``allow_wildcard_hosts`` passed config-load) matching via
+    the same one-label matcher the request path uses. A wildcard NOTE host
+    matches only an identical wildcard ENTRY — the note side can never
+    broaden an exact allowlist entry."""
+    for entry in allow:
+        if host == entry:
+            return True
+        if (
+            entry.startswith("*.")
+            and not host.startswith("*.")
+            and host_matches_pattern(host, entry)
+        ):
+            return True
+    return False
+
+
+def _apply_notes_host_allowlist(
+    *,
+    allow: list[str],
+    notes_names: list[str],
+    merged: dict[str, SecretSpec],
+    file_specs: dict[str, SecretSpec],
+    out_placeholder_to_name: dict[str, str],
+    out_allowlist_rejected: set[str] | None,
+    out_allowlist_rejected_hosts: dict[str, set[str]] | None,
+) -> None:
+    """Enforce the file-side host allowlist over NOTES-sourced specs (ADR-0024).
+
+    Annotations/notes may only NARROW scope — they can never route a secret to a
+    host the file didn't pre-approve (the GSM confused-deputy fix:
+    ``secretmanager.secrets.update`` and ``versions.access`` are independently
+    grantable, so an annotation-only writer must not control egress). Only names
+    that came from notes (``notes_names``) are checked; file ``secrets:`` entries
+    are the trusted tier. A host the file already binds for the same secret is
+    exempt (covers ``both``-mode unions). Per the ADR-0021 fan-out, hosts are
+    judged individually: a disallowed host drops only its own binding entry
+    (recorded in ``out_allowlist_rejected_hosts`` for precise request-time
+    attribution); a spec left with NO allowed host is dropped whole and its name
+    added to ``out_allowlist_rejected``. Mutates ``merged`` in place."""
+    for name in notes_names:
+        spec = merged.get(name)
+        if spec is None:
+            continue
+        file_spec = file_specs.get(name)
+        file_hosts = {b.host for b in file_spec.bindings} if file_spec is not None else set()
+
+        def _ok(host: str, _fh: set[str] = file_hosts) -> bool:
+            return host in _fh or _host_in_allowlist(host, allow)
+
+        kept = [b for b in spec.bindings if _ok(b.host)]
+        rejected = sorted(b.host for b in spec.bindings if not _ok(b.host))
+        if not rejected:
+            continue
+        if kept:
+            merged[name] = spec.model_copy(update={"bindings": kept})
+            if out_allowlist_rejected_hosts is not None:
+                out_allowlist_rejected_hosts[name] = set(rejected)
+            _log.warning(
+                "notes binding %r: host(s) %s not in notes_host_allowlist; dropping those "
+                "fan-out entries (fail closed), keeping %d allowed host(s).",
+                name,
+                rejected,
+                len(kept),
+            )
+        else:
+            dropped = merged.pop(name)
+            if out_allowlist_rejected is not None:
+                out_allowlist_rejected.add(name)
+            out_placeholder_to_name[dropped.placeholder] = name
+            _log.warning(
+                "notes binding %r: no host in notes_host_allowlist (%s rejected); dropping "
+                "the binding entirely (fail closed).",
+                name,
+                rejected,
+            )
+
+
 def _preserve_file_flags(spec: SecretSpec, file_spec: SecretSpec | None) -> SecretSpec:
     """Carry operator-only file flags onto a notes-derived spec that replaces
     it. A `honeytoken: true` file secret must stay armed even when a note/
@@ -610,7 +705,7 @@ class NotesActivator:
     listing is unusable, rather than serving guessed state.
     """
 
-    def activate(
+    def activate(  # noqa: C901 — config-build orchestrator; heavy branches extracted to module helpers
         self,
         *,
         new_config: Config,
@@ -620,6 +715,8 @@ class NotesActivator:
         out_no_binding: set[str],
         out_invalid: set[str],
         out_companion_headers: dict[str, dict[str, str]],
+        out_allowlist_rejected: set[str] | None = None,
+        out_allowlist_rejected_hosts: dict[str, set[str]] | None = None,
     ) -> None:
         """Resolve BWS-notes bindings and merge them into ``new_config``.
 
@@ -707,6 +804,17 @@ class NotesActivator:
                     "false; rejecting (fail closed).",
                     name,
                 )
+        # File-side host allowlist over NOTES-sourced specs (ADR-0024).
+        if new_config.notes_host_allowlist is not None:
+            _apply_notes_host_allowlist(
+                allow=new_config.notes_host_allowlist,
+                notes_names=list(resolved.specs.keys()),
+                merged=merged,
+                file_specs=file_specs,
+                out_placeholder_to_name=out_placeholder_to_name,
+                out_allowlist_rejected=out_allowlist_rejected,
+                out_allowlist_rejected_hosts=out_allowlist_rejected_hosts,
+            )
         new_config.secrets = merged
         # Re-assert the placeholder invariants over the MERGED set. config-load
         # validated only the file secrets; in `both` mode a derived placeholder

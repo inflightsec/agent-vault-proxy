@@ -232,7 +232,9 @@ def test_binding_filter_restricts_scope(tmp_path: Path) -> None:
 def test_exchange_success_no_rotation(tmp_path: Path) -> None:
     cfg = load_config(_config_with_oauth(tmp_path))
     body = json.dumps({"access_token": "at-PROBE", "expires_in": 3600}).encode()
-    with patch("urllib.request.urlopen", return_value=FakeResp(body)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)
+    ):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )
@@ -250,7 +252,9 @@ def test_exchange_success_with_rotation_warns_about_consumed_token(tmp_path: Pat
     body = json.dumps(
         {"access_token": "at-PROBE", "expires_in": 3600, "refresh_token": "rtok-NEW"}
     ).encode()
-    with patch("urllib.request.urlopen", return_value=FakeResp(body)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)
+    ):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )
@@ -270,7 +274,7 @@ def test_exchange_invalid_grant_fails(tmp_path: Path) -> None:
         hdrs=None,  # type: ignore[arg-type]
         fp=__import__("io").BytesIO(json.dumps({"error": "invalid_grant"}).encode()),
     )
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )

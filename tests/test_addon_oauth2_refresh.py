@@ -50,7 +50,10 @@ def test_cache_miss_exchange_success_injects_and_audits(tmp_path: Path) -> None:
     addon, audit_path = _build_addon(tmp_path)
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
-    with patch("urllib.request.urlopen", return_value=FakeResp(_ok_response_body())):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        return_value=FakeResp(_ok_response_body()),
+    ):
         addon.requestheaders(flow)
 
     # Header rewritten with the exchanged access token.
@@ -76,7 +79,10 @@ def test_token_exchange_event_carries_expected_metadata(tmp_path: Path) -> None:
     addon, audit_path = _build_addon(tmp_path)
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
-    with patch("urllib.request.urlopen", return_value=FakeResp(_ok_response_body())):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        return_value=FakeResp(_ok_response_body()),
+    ):
         addon.requestheaders(flow)
     events = oh.read_audit(audit_path)
     te = next(e for e in events if e["type"] == "token_exchange")
@@ -111,7 +117,9 @@ def test_cache_hit_skips_exchange_and_token_exchange_audit(tmp_path: Path) -> No
         call_count += 1
         return FakeResp(_ok_response_body())
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         for _ in range(2):
             flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
             addon.http_connect(flow)
@@ -146,7 +154,7 @@ def test_invalid_grant_denies_and_audits(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     err = _http_err(400, json.dumps({"error": "invalid_grant"}).encode())
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         addon.requestheaders(flow)
 
     assert flow.response is not None
@@ -166,7 +174,13 @@ def test_network_failure_denies_and_audits(tmp_path: Path) -> None:
     from urllib.error import URLError
 
     # urlopen retries once on URLError; mock sleeps.
-    with patch("urllib.request.urlopen", side_effect=URLError("refused")), patch("time.sleep"):
+    with (
+        patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            side_effect=URLError("refused"),
+        ),
+        patch("time.sleep"),
+    ):
         addon.requestheaders(flow)
     events = oh.read_audit(audit_path)
     te = next(e for e in events if e["type"] == "token_exchange")
@@ -194,7 +208,7 @@ def test_ssrf_rebound_url_blocks_before_urlopen(
     addon.http_connect(flow)
     urlopen_called: list[bool] = []
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True),
     ):
         addon.requestheaders(flow)
@@ -227,7 +241,7 @@ def test_vault_input_unavailable_denies_before_exchange(tmp_path: Path) -> None:
     addon.http_connect(flow)
     urlopen_called: list[bool] = []
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True),
     ):
         addon.requestheaders(flow)
@@ -254,7 +268,10 @@ def test_reload_resets_derived_token_cache(tmp_path: Path) -> None:
     # First request seeds the cache.
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
-    with patch("urllib.request.urlopen", return_value=FakeResp(_ok_response_body())):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        return_value=FakeResp(_ok_response_body()),
+    ):
         addon.requestheaders(flow)
     assert flow.request.headers["Authorization"] == "Bearer at-FRESH"
 
@@ -285,7 +302,9 @@ def test_reload_resets_derived_token_cache(tmp_path: Path) -> None:
 
     flow2 = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow2)
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         addon.requestheaders(flow2)
     assert call_count == 1
     assert flow2.request.headers["Authorization"] == "Bearer at-AFTER-RELOAD"

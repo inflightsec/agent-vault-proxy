@@ -1,13 +1,14 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-02
+implemented: 2026-07-03
 relates_to: docs/adapter-architecture.md (backend coverage matrix), docs/architecture.md (G1-G10), ADR-0011 (BWS-notes bindings)
 ---
 
 # ADR-0018: Google Secret Manager backend (`backend.type: gsm`)
 
-> **Status: proposed.** The four operator-facing forks in §0 await sign-off before this flips to
-> `accepted`. Design sections are written in the future tense of the decision.
+> **Status: accepted — implemented 2026-07-03** with the draft defaults for the §0 forks
+> (see "Implementation status" below). Design sections retain their original future tense.
 
 ## Context
 

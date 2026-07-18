@@ -19,6 +19,9 @@ relates_to: docs/architecture.md (G1-G10), CHANGELOG.md (v0.5.0 discriminated-un
 > (see §1 and Out of scope). Multi-AVP-instance rotation coordination remains out of scope.
 > The design sections that follow are preserved verbatim as the record of the decision; they
 > read in the future tense they were written in.
+>
+> **Hardening series closed 2026-07-18** — the five deferred post-review items are done; see
+> the Amendment at the end of this document.
 
 ## Context
 
@@ -291,3 +294,41 @@ These are scoped to v0.7. Each adds ~0.5-1 day. Total v0.7 estimate: ~8 days acr
 - `src/agent_vault_proxy/audit.py` — schema v2 → v3 (this ADR adds two event types).
 - ADR-0011 (BWS-notes bindings — this injector type also honours both binding sources).
 - ADR-0013 (declarative policy fixtures — this ADR's tests use the same fixture format).
+
+## Amendment (2026-07-18) — deferred hardening series closed
+
+The five items the v0.7.0 CHANGELOG tracked as "hardening patch series remaining" are
+closed; each shipped with tests in the same change:
+
+1. **SsrfBlockedError swallow.** The IP-literal short-circuit in
+   `_ssrf_guard.check_url_not_internal` now parses first and block-checks second, so the
+   `except ValueError` can no longer swallow a block verdict. Pinned by tests asserting a
+   blocked literal raises with NO DNS consultation. The `ValueError` inheritance itself is
+   retained deliberately — Pydantic needs it to surface config-load rejections as
+   validation errors rather than crashes; the swallow site was the bug, not the hierarchy.
+2. **Pending-before-write (Oracle F2).** `refresh_token_rotated:pending` is fsynced BEFORE
+   the backend PUT; exactly one final outcome follows. A crash inside the write window
+   leaves a pending-with-no-final pair — "attempted, outcome unknown" is now
+   distinguishable from "never attempted". The reverse (a final event for a write that
+   never happened) stays structurally impossible.
+3. **Revision precondition (Oracle F3) — implemented as a VALUE precondition.** The BWS
+   SDK has no conditional-PUT primitive, and `revisionDate` also moves on note/metadata
+   edits (false conflicts). Instead, `update(..., expected_current_value=)` compares the
+   vault's CURRENT value against the refresh token the exchange actually consumed; on
+   mismatch the new `BackendWriteConflictError` is raised, the write is refused, and the
+   audit reads `write_back_conflict` — an operator's manual mid-flight rotation survives.
+   Residual: the compare happens at the adapter's GET, so the TOCTOU window shrinks to the
+   GET→PUT gap rather than vanishing (a true conditional PUT needs SDK support).
+4. **Per-binding write-back rate limit (Oracle F4).** `write_back_min_interval_seconds`
+   (default 60, `0` disables) floors the interval between PUTs per binding; excess
+   rotations audit `write_back_rate_limited` and are not persisted, bounding vault write
+   pressure under a forced-rotation storm.
+5. **Redirects disabled, not post-checked.** The exchange transport is a no-redirect
+   opener (`_NoRedirectHandler`): ANY 3xx surfaces as `token_endpoint_status:<code>`, is
+   never retried, and the Location target is never contacted. Replaces the `resp.geturl()`
+   post-check, which could only distrust a redirect AFTER the redirected host had been
+   visited on the wire. Pinned by an on-the-wire test against a live local server.
+
+New audit outcome VALUES on `refresh_token_rotated`: `pending`, `write_back_rate_limited`,
+`write_back_conflict` — additions to §7's outcome taxonomy, not new event types; no audit
+contract-version bump (same precedent as `write_back_rejected_malformed`).

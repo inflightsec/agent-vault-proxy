@@ -345,6 +345,15 @@ class Oauth2RefreshInjector(BaseModel):
     # operator must rotate manually.
     refresh_token_write_back: bool = True
 
+    # Per-binding floor between write-back PUTs (ADR-0017 hardening
+    # series — bounds vault write pressure when a hostile or broken
+    # upstream forces a rotation on every exchange). ``0`` disables.
+    # A rate-limited rotation is NOT persisted (audit outcome
+    # ``write_back_rate_limited``); the next exchange uses the vault's
+    # previous token and surfaces ``invalid_grant`` if the upstream
+    # really revoked it — the audit trail is the operator's cue.
+    write_back_min_interval_seconds: int = Field(default=60, ge=0, le=3600)
+
     def render_value(self, *, access_token: str) -> str:
         """Substitute ``{access_token}`` in :attr:`format` with the
         exchanged token. Mirrors :meth:`HeaderInjector.render_value`'s

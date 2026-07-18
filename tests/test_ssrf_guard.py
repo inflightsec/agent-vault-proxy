@@ -275,3 +275,36 @@ def test_oauth_provider_preset_skips_ssrf_check_for_known_urls() -> None:
             "audit": {"path": "/tmp/x.jsonl"},
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# IP-literal short-circuit — the block verdict must PROPAGATE, never be
+# swallowed by the "not an IP literal" parse guard (SsrfBlockedError IS-A
+# ValueError; ADR-0017 hardening series closure).
+
+
+def test_blocked_ip_literal_short_circuits_without_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked IP literal must raise straight from the short-circuit.
+    DNS must not be consulted at all — the old combined try/except sent
+    the (already-blocked) literal down the getaddrinfo path."""
+
+    def dns_must_not_be_called(*_args: object, **_kw: object) -> list:
+        raise AssertionError("getaddrinfo consulted for an IP-literal URL")
+
+    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
+    with pytest.raises(SsrfBlockedError, match=r"169\.254\.169\.254"):
+        check_url_not_internal("https://169.254.169.254/latest/meta-data/")
+
+
+def test_public_ip_literal_short_circuits_without_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A public IP literal passes via the short-circuit alone."""
+
+    def dns_must_not_be_called(*_args: object, **_kw: object) -> list:
+        raise AssertionError("getaddrinfo consulted for an IP-literal URL")
+
+    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
+    check_url_not_internal("https://8.8.8.8/token")  # must not raise

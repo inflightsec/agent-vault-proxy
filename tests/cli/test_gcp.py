@@ -173,3 +173,41 @@ def test_probe_gcp_no_annotation_warn_in_file_mode(tmp_path, capsys, monkeypatch
     )
     run_gcp_probe(config_path=str(p))
     assert "annotation-trust" not in capsys.readouterr().out
+
+
+def test_probe_gcp_annotation_trust_downgrades_with_allowlist(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    # ADR-0024: with notes_host_allowlist set, annotation-write can only
+    # NARROW scope — the confused-deputy advisory downgrades WARN -> OK.
+    salt = tmp_path / "salt"
+    salt.write_bytes(b"\x11" * 32)
+    salt.chmod(0o600)
+    p = tmp_path / "bindings.yaml"
+    p.write_text(
+        "version: 1\n"
+        "secrets: {}\n"
+        "binding_source: both\n"
+        'notes_host_allowlist: ["api.example.com"]\n'
+        f"install_salt_path: {salt}\n"
+        f"audit:\n  path: {tmp_path / 'a.jsonl'}\n"
+        "backend:\n"
+        "  type: gsm\n"
+        "  config:\n"
+        "    type: gsm\n"
+        "    project_id: myproj\n"
+        "    secret_prefix: avp-\n"
+        '    self_check: "off"\n'
+    )
+
+    class _Stub:
+        def diagnose(self):
+            return [("OK", "auth", "ok")]
+
+    monkeypatch.setattr(
+        "agent_vault_proxy.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None)
+    )
+    run_gcp_probe(config_path=str(p))
+    out = capsys.readouterr().out
+    assert "annotations can only narrow scope" in out
+    assert "WARN  annotation-trust" not in out

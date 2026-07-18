@@ -170,9 +170,11 @@ The other backends use the name as-is (BWS looks it up by secret name; Doppler u
 # src/agent_vault_proxy/backends/__init__.py
 def _register_builtins() -> None:
     from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
+    from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig
     from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
     register_backend("bws", BitwardenBackend, BwsConfig)
+    register_backend("gsm", GsmBackend, GsmConfig)
     register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
     # future: register_backend("doppler", ...), ("hashicorp-vault", ...), ...
 ```

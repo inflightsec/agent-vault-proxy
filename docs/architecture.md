@@ -19,11 +19,11 @@ Requests whose destinations aren't bound to any secret are forwarded unmodified,
 Scope:
 
 - **In scope:** static API keys (Anthropic, OpenAI, GitHub PAT, etc.); BWS as backing store; per-secret destination bindings; sandbox-only CA; structured audit log.
-- **Out of scope:** OAuth refresh-token flows, AWS SigV4 signing, kernel-level egress enforcement, multi-tenant routing.
+- **Out of scope:** AWS SigV4 signing, kernel-level egress enforcement, multi-tenant routing. (OAuth refresh-token flows shipped in v0.7 as `inject.type: oauth2_refresh` — ADR-0017.)
 
 The implementation is a few thousand lines of Python (≈2,500 statements across ~20 modules — the credential hot path is concentrated in `addon.py`) plus a systemd unit. Operational complexity stays small: one daemon, one config file, one audit log.
 
-> Design records cited as **ADR-NNNN** (e.g. ADR-0011/0012/0013) live in the maintainer's external design-doc archive, not this repo — per the project's "the repo carries the result, not the deliberation" rule (see `AGENTS.md`).
+> Design records cited as **ADR-NNNN** live in [`docs/adrs/`](adrs/) (0011 onward; see that directory's README for the sequence note).
 
 ## 2. Threat model
 
@@ -189,6 +189,8 @@ Whitelisted callables (anything else is rejected at config-load):
 | `urlencode` | filter | `str → str` | Percent-encode per RFC 3986, no safe characters. |
 | `hmac_sha256` | function | `(key: str, msg: str) → str` | Lowercase hex HMAC-SHA256. |
 | `hmac_sha512` | function | `(key: str, msg: str) → str` | Lowercase hex HMAC-SHA512. |
+| `hmac_sha1` | function | `(key: str, msg: str) → str` | Lowercase hex HMAC-SHA1 (legacy APIs). |
+| `totp` | function | `(secret_b32: str) → str` | RFC 6238 TOTP, SHA-1/30 s/6 digits. The one non-deterministic helper (wall clock). |
 
 **Operator language:** variable references (compose names), string literals, the `+` operator (string concat only), filter pipes `|`, and function calls. Nothing else - no `if`/`for`/`set`/comparison/subscript/attribute access/arithmetic/`__class__` walking, no `format`/`xmlattr`/`attr` filters. Templates and compose lists are validated at config-load: bad syntax, unknown name, wrong filter arity → AVP refuses to start. See [`bindings.example.yaml`](../bindings.example.yaml) for more examples.
 
@@ -217,11 +219,11 @@ Bindings can come from the `bindings.yaml` file (above), from each BWS secret's 
 
 | value | behaviour |
 |---|---|
-| `file` (default) | Bindings come ONLY from `secrets:` in `bindings.yaml`. Identical to pre-ADR-0011; no BWS listing happens. Existing installs are unaffected. |
-| `bws_notes` | Bindings are resolved from each BWS secret's `notes` field. The daemon lists the project's secrets, derives each one's salted placeholder, fetches and parses its note, and enforces the result. `secrets:` in the file is ignored (leave it `{}`). |
-| `both` | Resolve from BOTH. For a secret defined in both, the **BWS-notes binding wins** (it's closer to the secret). |
+| `file` | Bindings come ONLY from `secrets:` in `bindings.yaml`. Identical to pre-ADR-0011; no backend listing happens. |
+| `notes` | Bindings are resolved from each secret's per-secret metadata (BWS `notes` field, GSM `avp-binding` annotation). The daemon lists the backend's secrets, derives each one's salted placeholder, fetches and parses its note, and enforces the result. `secrets:` in the file is ignored (leave it `{}`). The legacy values `bws_notes` / `gsm_notes` are accepted as deprecated aliases (normalized to `notes` with a `DeprecationWarning`). |
+| `both` (default) | Resolve from BOTH, unioned. For a secret defined in both, the **notes binding wins** (it's closer to the secret). |
 
-In `bws_notes`/`both` mode, placeholders are not hand-authored — they are derived deterministically from a per-install salt:
+In `notes`/`both` mode, placeholders are not hand-authored — they are derived deterministically from a per-install salt:
 
 ```
 avp-PLACEHOLDER-<base32(HMAC-SHA256(install_salt, secret_name))[:21]>
@@ -231,7 +233,9 @@ The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-own
 
 A request carrying a placeholder whose secret has **no binding** in its note fails closed and audits `no_binding_in_notes`; a **malformed** note audits `invalid_binding_metadata`. Both forward the placeholder verbatim (no real value injected).
 
-> Listing secrets requires a listable backend (`bws`, `static`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file); per-request credential VALUE fetches still honour `cache.ttl_seconds`.
+**Notes host allowlist (`notes_host_allowlist`, ADR-0024).** Opt-in top-level key that bounds where notes/annotation bindings may route: **annotations may only narrow scope, never add a host.** When absent (default), nothing changes. When set, a notes/annotation host outside the list has its binding dropped fail-closed and a request toward it audits the distinct reason `host_not_in_allowlist`. Motive: on GCP, `secretmanager.secrets.update` (edit the `avp-binding` annotation) and `versions.access` (read the value) are independently grantable, so without this an annotation-only writer could route a secret to a host they control (confused deputy). Multi-host notes (ADR-0021) are judged per host — a disallowed host drops only its own fan-out entry. `*.suffix` allowlist entries ride the `allow_wildcard_hosts` opt-in. File `secrets:` bindings are the trusted tier and exempt. IAM hygiene (restricting annotation-write) remains the primary GCP control; this is the structural backstop.
+
+> Listing secrets requires a listable backend (`bws`, `gsm`, `static`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file); per-request credential VALUE fetches still honour `cache.ttl_seconds`.
 
 ### 4.3 Request lifecycle
 
@@ -287,15 +291,18 @@ constraint #3 in [`AGENTS.md`](../AGENTS.md).
 ```
 
 `binding_source` (`inject_decision` events) records which source supplied the
-binding: `file` (a `bindings.yaml` entry) or `bws_notes` (the binding metadata
-in the BWS secret's notes field). When both define the same secret, BWS-notes
-wins (ADR-0011) and the event reads `bws_notes`.
+binding: `file` (a `bindings.yaml` entry), `bws_notes` (BWS notes metadata), or
+`gsm_notes` (a GSM `avp-binding` annotation) — audit provenance stays
+backend-typed even though the config mode is the generic `notes`. When file and
+notes both define the same secret, notes wins (ADR-0011) and the event carries
+the notes label.
 
 Rules:
 
 - `fail_on_unwritable: true` - disk full / attribute removed / permission flip = proxy returns 503 (G4 + G6)
 - Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
 - **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
+- **Closed event-type set (ADR-0023):** `AUDIT_EVENT_TYPES` in `audit.py` enumerates every `type` the stream may carry; `AuditWriter.emit()` raises on any unlisted type. A new event type cannot ship without a conscious edit there plus no-leak test coverage.
 - Off-host shipping: a separate tailer forwards this stream to a central collector (ADR-0019); the local log stays the fail-closed source of truth and is never in the shipper's failure path
 
 **Reason taxonomy on `inject_decision` events** (use these to filter and alert from the audit stream):
@@ -317,8 +324,11 @@ Rules:
 | `denied` | `composite_render_unexpected_error:<ExcName>` | Body composite resolver raised an exception type that `_fetch_and_render_composite` doesn't catch (closure-capture bug, `MemoryError`, `RecursionError`); G6 fail-closed catch-all at the body-streaming layer |
 | `denied` | `invalid_binding_metadata` | A BWS secret's notes blob is MALFORMED (bad YAML, unknown key, bad value). Fail closed; a precise diagnostic is surfaced via `avp doctor` (ADR-0011) |
 | `denied` | `no_binding_in_notes` | A BWS secret's notes blob carries NO binding (empty/missing note, or no `host`). Distinct from `invalid_binding_metadata` — the secret simply isn't bound yet, not typo'd (ADR-0011) |
+| `denied` | `host_not_in_allowlist` | A notes/annotation host was rejected by the file-side `notes_host_allowlist` — the note tried to route the secret to a host the file didn't pre-approve. Distinct from `invalid_binding_metadata` (the note is well-formed; the destination is un-approved). The confused-deputy control (ADR-0024) |
 
 For multi-injector secrets (`inject.type: multi`), each substituted leaf emits its own event (one `binding_matched` per header leaf that fires, one `body_binding_matched` per body leaf that fires). `secret_name` is the parent secret's name; consumers parsing the stream see one substitution event per (request, leaf-that-fired).
+
+**OAuth2 events (ADR-0017).** `oauth2_refresh` bindings add two event types. `token_exchange` fires after an upstream RFC 6749 §6 token exchange returns (cache hits emit nothing), fsynced before the proxied request bytes leave AVP; it carries `binding_name`, `token_url_host`, an `outcome` (`success` or a failure class — full taxonomy in ADR-0017 §7), and cache-lifetime metadata. `refresh_token_rotated` fires when the upstream issues a *different* refresh token; it carries `binding_name`, `refresh_token_secret` (the reference name), and a write-back `outcome`. Ordering per request: `token_exchange` → `refresh_token_rotated` → `inject_decision`. Neither event ever carries a token value, old or new.
 
 **`honeytoken_triggered` event (ADR-0019 §5).** When an `inject_decision` names a secret the operator flagged `honeytoken: true`, the writer emits a second record immediately after it (same synchronous fsync), so a fleet collector can alert on one unambiguous event type. It fires on ANY decision touching the honeytoken — `allowed` or any `denied` reason above — i.e. on any use of the planted placeholder, before any real value moves. Fields are a strict subset of the triggering event; no secret material, header, body, or query string is added.
 
@@ -504,7 +514,7 @@ Because there's no kernel egress lock to "leave on," the rollback model is simpl
 ## 10. Open questions
 
 - **AWS access:** SigV4 isn't a static header. Deferred - needs a dedicated signer injector.
-- **gh CLI OAuth path:** OAuth refresh tokens land in `~/.config/gh/hosts.yml`. Out of scope until the first concrete OAuth need surfaces.
+- **gh CLI OAuth path:** OAuth refresh tokens land in `~/.config/gh/hosts.yml`. The `oauth2_refresh` injector (ADR-0017) covers the grant itself; wiring gh's device-flow tokens through it is still open.
 - **Admin port form factor:** Unix socket, filesystem-touch protocol, or local-MCP server? Deferred to burn-in feedback.
 
 ## 11. Out of scope (re-stated)
@@ -512,7 +522,6 @@ Because there's no kernel egress lock to "leave on," the rollback model is simpl
 - Host root resistance
 - Same-UID attacker resistance (proxy UID is the new vault; intentionally accepted)
 - **Egress filtering / kernel-level network policy**: the host's firewall handles this
-- OAuth refresh-token handling
 - AWS SigV4 / other request-signing schemes
 - K8s deployment (single-host design)
 - Cross-agent multi-tenancy

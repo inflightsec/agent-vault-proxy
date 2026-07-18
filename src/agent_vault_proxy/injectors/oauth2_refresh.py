@@ -41,6 +41,7 @@ from agent_vault_proxy._ssrf_guard import SsrfBlockedError, check_url_not_intern
 from agent_vault_proxy.backends import (
     BackendNotWritableError,
     BackendUnavailableError,
+    BackendWriteConflictError,
     SecretNotFoundError,
 )
 from agent_vault_proxy.config import Oauth2RefreshInjector, SecretSpec
@@ -116,6 +117,32 @@ class ExchangeResult:
 _SHARED_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="avp-oauth-exchange")
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse ALL 3xx from the token endpoint (ADR-0017 hardening series).
+
+    A redirecting token endpoint is misconfigured or hostile (SSRF
+    pivot); following it — even with a post-hoc check on the final URL —
+    means the redirected host was already contacted on the wire.
+    Returning ``None`` makes urllib raise ``HTTPError(code=3xx)``, which
+    :func:`exchange` maps to ``token_endpoint_status:<3xx>`` without
+    retry. Replaces the former ``resp.geturl()`` post-check."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        return None
+
+
+def _transport_open(req: urllib.request.Request, timeout: float) -> Any:
+    """Single egress seam for the token exchange — tests patch THIS name.
+
+    Builds a fresh no-redirect opener per call (no global opener state,
+    no cross-test leakage). The scheme is https-only by construction
+    (config-load validator) and the URL is SSRF-re-checked immediately
+    before each call in :func:`exchange`."""
+    opener = urllib.request.build_opener(_NoRedirectHandler)
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    return opener.open(req, timeout=timeout)  # noqa: S310  # nosec
+
+
 def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent to the spec
     spec: Oauth2RefreshInjector,
     client_id: str,
@@ -173,38 +200,28 @@ def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent t
         headers=headers,
         method="POST",
     )
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    _urlopen = urllib.request.urlopen
-
-    # One initial attempt; one retry only on 5xx.
+    # One initial attempt; one retry only on 5xx. Transport goes through
+    # the module-level no-redirect seam: a 3xx is never followed and
+    # surfaces as ``HTTPError`` below (ADR-0017 hardening series — this
+    # replaces the former ``resp.geturl()`` post-check, which could only
+    # distrust a redirected response AFTER the redirected host had
+    # already been contacted).
     for attempt in (0, 1):
         try:
-            with _urlopen(req, timeout=timeout_seconds) as resp:  # noqa: S310  # nosec
-                # Post-call SSRF re-check on the final URL. ``urllib`` follows
-                # 3xx by default; the SSRF guard ran ONCE on the configured
-                # ``token_url``, so a malicious/MITM'd token endpoint that
-                # redirected to a private address would have been contacted
-                # already. Reject the response if the final URL doesn't match
-                # the configured one — at least we don't TRUST the redirected
-                # response. (A fully-redirect-disabling fix needs broader test
-                # refactoring; tracked in the hardening patch series.)
-                # ``getattr(...)`` guards test mocks that don't implement
-                # ``geturl()``; production HTTPResponse always provides it.
-                geturl = getattr(resp, "geturl", None)
-                final_url = geturl() if callable(geturl) else None
-                if final_url is not None and final_url != str(spec.token_url):
-                    try:
-                        check_url_not_internal(final_url)
-                    except SsrfBlockedError as redirect_err:
-                        _log.warning(
-                            "token endpoint redirected to SSRF-blocked URL: %s",
-                            redirect_err,
-                        )
-                        return ExchangeResult(outcome="ssrf_blocked")
+            with _transport_open(req, timeout=timeout_seconds) as resp:
                 return _parse_success(resp.read(), refresh_token, spec)
         except HTTPError as e:
             status = e.code
             body_bytes = _safe_read(e)
+            if 300 <= status < 400:
+                # Redirect refused at the opener, never followed. A
+                # redirecting token endpoint is deterministic misconfig
+                # or hostility — no retry.
+                _log.warning(
+                    "token endpoint answered %d redirect; refused (never followed)",
+                    status,
+                )
+                return _parse_error(status, body_bytes)
             if 400 <= status < 500:
                 return _parse_error(status, body_bytes)
             # 5xx — retry once with backoff.
@@ -376,6 +393,20 @@ class OauthResolver:
     ``refresh_token_rotated``) alongside the existing
     ``inject_decision`` under the G6 audit-before-action ordering."""
 
+    def __init__(self) -> None:
+        import threading
+
+        # Per-binding floor between write-back PUTs (ADR-0017 hardening
+        # series). Keyed by secret name; survives config reloads
+        # deliberately — a reload must not reset the bound on vault
+        # write pressure. Mutated from the exchange thread pool, so the
+        # check-then-set below MUST be atomic under this lock — without it
+        # N concurrent rotations of one binding all read a stale timestamp
+        # and each issue a PUT, defeating the rate limit (concurrency-audit
+        # surface 4).
+        self._write_back_last: dict[str, float] = {}
+        self._write_back_lock = threading.Lock()
+
     def resolve(  # noqa: C901
         self,
         *,
@@ -499,28 +530,39 @@ class OauthResolver:
         except OauthExchangeFailedError as exc:
             result = exc.result
         else:
-            # Success path — capture for the audit, refresh-token rotation
-            # write-back (ADR-0017 slice 7), then inject. Ordering:
-            # token_exchange (the call happened) → refresh_token_rotated
-            # (only when the upstream issued a new refresh token) →
-            # inject_decision (G6 audit-before-action).
-            result = exchange_result_holder[0]
-            self._emit_token_exchange_audit(
-                audit=audit,
-                request_id=request_id,
-                secret_name=secret_name,
-                oauth_injector=oauth_injector,
-                result=result,
-            )
-            if result.new_refresh_token is not None:
-                self._handle_rotation(
-                    client=client,
+            # Success path. Ordering: token_exchange (the call happened) →
+            # refresh_token_rotated (only when the upstream issued a new
+            # refresh token) → inject_decision (G6 audit-before-action).
+            #
+            # ONLY the leader — the caller whose ``_fetch_for_cache``
+            # actually ran — has a populated holder and owns the
+            # token_exchange audit + rotation write-back. A concurrent
+            # caller that waited on the leader's in-flight future receives
+            # the access token with an EMPTY holder and must only inject:
+            # the leader's audit already records the one real upstream
+            # call. (Indexing the empty holder here used to raise
+            # IndexError out of the addon hook for every follower in a
+            # cold refresh-storm — pinned by
+            # test_concurrent_cold_requests_all_inject.)
+            if exchange_result_holder:
+                result = exchange_result_holder[0]
+                self._emit_token_exchange_audit(
                     audit=audit,
                     request_id=request_id,
                     secret_name=secret_name,
                     oauth_injector=oauth_injector,
-                    new_refresh_token=result.new_refresh_token,
+                    result=result,
                 )
+                if result.new_refresh_token is not None:
+                    self._handle_rotation(
+                        client=client,
+                        audit=audit,
+                        request_id=request_id,
+                        secret_name=secret_name,
+                        oauth_injector=oauth_injector,
+                        new_refresh_token=result.new_refresh_token,
+                        old_refresh_token=refresh_token_value,
+                    )
             self._inject_header(
                 flow=flow,
                 audit=audit,
@@ -599,14 +641,24 @@ class OauthResolver:
         secret_name: str,
         oauth_injector: Oauth2RefreshInjector,
         new_refresh_token: str,
+        old_refresh_token: str,
     ) -> None:
         """Persist a rotated refresh token back to the vault (ADR-0017 §11
-        slice 7). Five outcomes, each a single ``refresh_token_rotated``
-        audit event: ``success``, ``write_back_disabled``,
-        ``write_back_unavailable`` (read-only backend),
-        ``write_back_failed`` (transient), ``write_back_rejected_malformed``
-        (Silas F1 / #2 vault-poisoning defense — a compromised token
-        endpoint would otherwise PUT junk into BWS with no live backup).
+        slice 7 + hardening series). Outcomes, each a single
+        ``refresh_token_rotated`` audit event: ``pending`` is emitted
+        BEFORE the backend PUT (a crash inside the write window leaves a
+        pending-with-no-final pair, so the operator can distinguish
+        "write attempted, outcome unknown" from "never attempted" — the
+        reverse, a final event for a write that never happened, stays
+        structurally impossible), then exactly one of ``success``,
+        ``write_back_disabled``, ``write_back_unavailable`` (read-only
+        backend), ``write_back_rate_limited`` (per-binding PUT floor,
+        ``write_back_min_interval_seconds``), ``write_back_conflict``
+        (vault value changed since read — operator-side rotation; we
+        refuse to clobber), ``write_back_failed`` (transient), or
+        ``write_back_rejected_malformed`` (Silas F1 / #2 vault-poisoning
+        defense — a compromised token endpoint would otherwise PUT junk
+        into BWS with no live backup).
 
         Best-effort semantics: on any failure, the access token is STILL
         served on THIS request (we already hold it; killing a valid-token
@@ -636,8 +688,57 @@ class OauthResolver:
                 outcome="write_back_disabled",
             )
             return
+        # Per-binding PUT floor (hardening series). Checked before the
+        # pending emit — a rate-limited rotation never enters the write
+        # window, so it gets one event, not a pending/final pair. The
+        # read-and-claim is atomic under the lock so concurrent rotations
+        # of the same binding can't all slip past the floor (surface 4).
+        interval = oauth_injector.write_back_min_interval_seconds
+        now = time.monotonic()
+        with self._write_back_lock:
+            last = self._write_back_last.get(secret_name)
+            rate_limited = interval > 0 and last is not None and (now - last) < interval
+            if not rate_limited:
+                self._write_back_last[secret_name] = now
+        if rate_limited:
+            self._emit_rotated_audit(
+                audit=audit,
+                request_id=request_id,
+                secret_name=secret_name,
+                oauth_injector=oauth_injector,
+                outcome="write_back_rate_limited",
+            )
+            return
+        # Pending BEFORE the PUT (hardening series, Oracle F2): the
+        # fsynced pending record closes the mid-write crash ordering gap.
+        self._emit_rotated_audit(
+            audit=audit,
+            request_id=request_id,
+            secret_name=secret_name,
+            oauth_injector=oauth_injector,
+            outcome="pending",
+        )
         try:
-            client.update_secret(oauth_injector.refresh_token_secret, new_refresh_token)
+            client.update_secret(
+                oauth_injector.refresh_token_secret,
+                new_refresh_token,
+                expected_current_value=old_refresh_token,
+            )
+        except BackendWriteConflictError as e:
+            _log.warning(
+                "refresh-token write-back conflict for %s: vault value changed "
+                "since read (operator-side rotation?); not overwriting",
+                secret_name,
+            )
+            self._emit_rotated_audit(
+                audit=audit,
+                request_id=request_id,
+                secret_name=secret_name,
+                oauth_injector=oauth_injector,
+                outcome="write_back_conflict",
+                error_type=type(e).__name__,
+            )
+            return
         except BackendNotWritableError as e:
             self._emit_rotated_audit(
                 audit=audit,

@@ -115,7 +115,14 @@ class BitwardenBackend:
         note = None if raw_note is None or not str(raw_note).strip() else str(raw_note)
         return value, note
 
-    def update(self, name: str, value: str, ctx: Any = None) -> None:  # noqa: ARG002
+    def update(
+        self,
+        name: str,
+        value: str,
+        ctx: Any = None,  # noqa: ARG002
+        *,
+        expected_current_value: str | None = None,
+    ) -> None:
         """Persist ``value`` under ``name`` (ADR-0017 slice 3).
 
         Reads the current secret to capture ``note`` and ``project_ids``,
@@ -123,6 +130,19 @@ class BitwardenBackend:
         note would lose binding-yaml-blob metadata on every refresh-
         token rotation — that's not acceptable behaviour for a write
         the operator never asked about.
+
+        ``expected_current_value`` (ADR-0017 hardening series, the
+        revision-precondition item): when supplied, the GET's current
+        value must equal it or the write is refused with
+        :class:`BackendWriteConflictError`. This detects operator-side
+        manual rotation mid-flight — the caller derived ``value`` from a
+        credential the vault no longer holds, so persisting it would
+        clobber the operator's newer secret. A VALUE compare is used
+        instead of BWS's ``revisionDate`` deliberately: the SDK has no
+        conditional-PUT primitive, and revisionDate also moves on
+        note/metadata edits (false conflicts); the value compare fires
+        exactly when the credential itself changed. TOCTOU window
+        shrinks to the GET→PUT gap.
 
         The SDK's ``secrets().update`` is the BWS PUT-by-id endpoint.
         Org id and secret id are looked up identically to the fetch
@@ -134,9 +154,8 @@ class BitwardenBackend:
 
         **Known limitations:**
 
-        * **No ETag/version preconditions.** The BWS SDK exposes no
-          conditional-PUT primitive. A concurrent edit to ``note`` or
-          ``project_ids`` between this method's GET and PUT is
+        * **No true conditional PUT.** The precondition is enforced at
+          the GET; a concurrent edit inside the GET→PUT gap is still
           silently overwritten. Single-host single-instance AVP keeps
           this rare; multi-instance coordination is its own ADR.
         * **No retry on stale name→id map.** ``_ensure_name_map`` is
@@ -148,6 +167,7 @@ class BitwardenBackend:
         """
         from agent_vault_proxy.backends import (
             BackendUnavailableError,
+            BackendWriteConflictError,
             SecretNotFoundError,
         )
 
@@ -158,6 +178,15 @@ class BitwardenBackend:
             raise SecretNotFoundError(f"secret '{name}' not in BWS organization")
         try:
             current = self._sdk_client.secrets().get(secret_id)
+            if (
+                expected_current_value is not None
+                and str(current.data.value) != expected_current_value
+            ):
+                # No secret material in the message — names only.
+                raise BackendWriteConflictError(
+                    f"secret '{name}' changed in the vault since it was read "
+                    "(operator-side rotation?); refusing to overwrite"
+                )
             note = getattr(current.data, "note", None)
             project_ids = getattr(current.data, "project_ids", None)
             self._sdk_client.secrets().update(

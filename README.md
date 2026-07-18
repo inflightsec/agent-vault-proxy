@@ -26,7 +26,7 @@ $ avp run claude                             # auto-loads ~/.config/avp/env, set
 
 `avp run` reads the placeholder env file itself, so the real key never enters your shell — not even as a placeholder. Add more secrets later by repeating `secret add` + `avp env`.
 
-No Bitwarden account? `--static` keeps secrets in a local YAML file owned by the service user. Upgrade later by re-running `sudo avp setup` without `--static`.
+No Bitwarden account? `--static` keeps secrets in a local YAML file owned by the service user. Upgrade later by editing `backend:` in `/etc/agent-vault-proxy/bindings.yaml` (setup never overwrites an existing config).
 
 On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
 

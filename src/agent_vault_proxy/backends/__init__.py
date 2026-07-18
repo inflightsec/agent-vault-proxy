@@ -140,11 +140,24 @@ class BackendNotWritableError(BackendUnavailableError):
     """
 
 
+class BackendWriteConflictError(BackendUnavailableError):
+    """The backend's CURRENT value no longer matches the value the caller
+    read before deriving its update (operator-side rotation mid-flight).
+    Refusing the write prevents clobbering a manual rotation with a value
+    derived from the superseded credential (ADR-0017 hardening series).
+    Subclasses :class:`BackendUnavailableError` so untouched fail-closed
+    catch-alls keep doing the right thing; the OAuth2 write-back path
+    catches it specifically to audit ``refresh_token_rotated:
+    write_back_conflict``."""
+
+
 def update_secret(
     backend: SecretsBackend,
     name: str,
     value: str,
     ctx: FetchContext | None = None,
+    *,
+    expected_current_value: str | None = None,
 ) -> None:
     """Persist ``value`` under ``name`` via ``backend``.
 
@@ -154,6 +167,12 @@ def update_secret(
     :func:`fetch_with_meta` uses, so adding a writable backend never
     requires touching the dispatch helper, and a read-only backend
     never silently no-ops a write.
+
+    ``expected_current_value``: optional write precondition. Passed to
+    the backend ONLY when set, so writable backends that don't support
+    preconditions (and simple test stubs) keep their two-positional
+    signature. Backends that do support it raise
+    :class:`BackendWriteConflictError` on mismatch.
 
     The Static test backend stays intentionally read-only; production
     callers wanting in-memory write-back should use a stub backend
@@ -165,7 +184,12 @@ def update_secret(
             f"backend {type(backend).__name__} does not implement update(); "
             "this is a read-only adapter"
         )
-    backend.update(name, value, ctx)  # type: ignore[attr-defined]
+    if expected_current_value is None:
+        backend.update(name, value, ctx)  # type: ignore[attr-defined]
+    else:
+        backend.update(  # type: ignore[attr-defined]
+            name, value, ctx, expected_current_value=expected_current_value
+        )
 
 
 def list_secret_names(backend: SecretsBackend) -> list[str]:

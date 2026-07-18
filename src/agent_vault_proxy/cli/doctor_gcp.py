@@ -55,15 +55,30 @@ def run_gcp_probe(*, config_path: str | None) -> bool:
     # itself read (confused deputy). Lock annotation-write to the value-read
     # trust tier. Only relevant when annotations are load-bearing.
     if config.binding_source in ("notes", "both"):
-        rows.append(
-            (
-                "WARN",
-                "annotation-trust",
-                "bindings come from `avp-binding` annotations — restrict "
-                "secretmanager.secrets.update to principals already trusted to read these "
-                "secrets (annotation-write == binding-control)",
+        if config.notes_host_allowlist is not None:
+            # ADR-0024: the file-side allowlist makes annotation-write
+            # structurally unable to ADD an egress host — annotations can
+            # only narrow. IAM hygiene still applies, but it is no longer
+            # the only line of defense.
+            rows.append(
+                (
+                    "OK",
+                    "annotation-trust",
+                    f"notes_host_allowlist pins {len(config.notes_host_allowlist)} host(s) — "
+                    "annotations can only narrow scope, never add a host (ADR-0024)",
+                )
             )
-        )
+        else:
+            rows.append(
+                (
+                    "WARN",
+                    "annotation-trust",
+                    "bindings come from `avp-binding` annotations — restrict "
+                    "secretmanager.secrets.update to principals already trusted to read these "
+                    "secrets (annotation-write == binding-control), or set "
+                    "`notes_host_allowlist` so annotations can only narrow (ADR-0024)",
+                )
+            )
     print()
     print("avp doctor --probe-gcp: GSM identity scope")
     for status, check, msg in rows:

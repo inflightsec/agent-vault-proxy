@@ -25,6 +25,13 @@ AUDIT_CONTRACT_VERSION = 3
 REASON_NO_BINDING_IN_NOTES = "no_binding_in_notes"
 REASON_INVALID_BINDING_METADATA = "invalid_binding_metadata"
 
+# ADR-0024: a notes/annotation-supplied host was rejected by the file-side
+# `notes_host_allowlist` (annotations may only NARROW scope, never add a
+# host — the GSM confused-deputy structural fix). Distinct from
+# `invalid_binding_metadata` (malformed note) so operators can tell "someone
+# tried to route a secret somewhere un-approved" from "operator typo'd".
+REASON_HOST_NOT_IN_ALLOWLIST = "host_not_in_allowlist"
+
 # ADR-0019 §5: the follow-up event type emitted when an inject_decision fires
 # on a binding the operator flagged `honeytoken: true`. Carries only fields
 # already present on the triggering inject_decision — same minimization

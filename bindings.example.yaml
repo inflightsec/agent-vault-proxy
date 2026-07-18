@@ -7,6 +7,20 @@ version: 1
 # like `*.com` / `*.co.uk` are rejected even with this enabled.
 allow_wildcard_hosts: true
 
+# Notes host allowlist (ADR-0024) — OPT-IN, off by default (commented out).
+# Only relevant with `binding_source: notes`/`both`. When set, a host named in
+# a BWS note or GSM `avp-binding` annotation must appear here (exact, or a
+# `*.suffix` entry under allow_wildcard_hosts) or that binding is dropped
+# fail-closed and audited `host_not_in_allowlist`. Annotations can then only
+# NARROW scope (methods/paths within an allowed host), never ADD a host —
+# closing the GCP confused-deputy where a principal who can edit annotations
+# but not read the secret could route it to a host they control. File
+# `secrets:` bindings below are the trusted tier and exempt. Leave commented
+# to keep the zero-config notes flow unchanged.
+# notes_host_allowlist:
+#   - api.anthropic.com
+#   - api.openai.com
+
 secrets:
   # Each entry: <SECRET_NAME>:placeholder + inject + bindings. The
   # `{<SECRET_NAME>}` slot in inject.format gets replaced with the real
@@ -212,6 +226,12 @@ secrets:
   # backend or explicitly opt-out with ``refresh_token_write_back:
   # false`` (accepting that the binding will lock out on the next
   # upstream rotation).
+  #
+  # ``write_back_min_interval_seconds`` (default 60; 0 disables) floors
+  # the gap between write-back PUTs per binding, so a hostile or broken
+  # upstream forcing a rotation on every exchange cannot storm the
+  # vault. Excess rotations audit ``write_back_rate_limited`` and are
+  # not persisted.
   #
   # ``avp doctor --probe-oauth --binding GOOGLE_OAUTH`` validates SSRF,
   # vault inputs, and write-back capability without making a proxied

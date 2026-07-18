@@ -108,6 +108,31 @@ You'll get a scope report — auth, whether you can enumerate outside your prefi
 whether you hold project-wide access, and how many secrets are in scope. This
 proves AVP can reach GSM and see your secret, without sending any traffic.
 
+### The annotation trust boundary (and how to close it)
+
+Because the host lives in the `avp-binding` annotation, whoever can **edit** a
+secret's annotations controls where it's sent — and on GCP,
+`secretmanager.secrets.update` (edit annotations) and `secretmanager.versions.access`
+(read the value) are **independently grantable**. So a principal who can write
+annotations but not read a secret could point it at a host they control and let
+AVP inject it there (a confused deputy). `avp doctor --probe-gcp` flags this with an
+`annotation-trust` warning.
+
+Two ways to close it, ideally both:
+
+1. **IAM (primary):** restrict `secretmanager.secrets.update` on these secrets to
+   the same principals trusted to read them.
+2. **`notes_host_allowlist` (structural backstop, ADR-0024):** set a top-level list
+   of trusted hosts in `bindings.yaml`. An annotation host outside the list is
+   rejected fail-closed (audit reason `host_not_in_allowlist`); annotations can then
+   only **narrow** scope, never add a host. With it set, the doctor `annotation-trust`
+   check flips from WARN to OK.
+   ```yaml
+   notes_host_allowlist:
+     - api.openai.com
+     - api.internal.acme.com
+   ```
+
 ## 5. Test injection end-to-end
 
 Start the proxy (listens on `127.0.0.1:14322`):

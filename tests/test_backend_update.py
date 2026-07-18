@@ -20,6 +20,7 @@ import pytest
 from agent_vault_proxy.backends import (
     BackendNotWritableError,
     BackendUnavailableError,
+    BackendWriteConflictError,
     FetchContext,
     SecretNotFoundError,
     update_secret,
@@ -217,3 +218,49 @@ def test_static_backend_is_not_writable() -> None:
     backend = StaticSecretsBackend(secrets={"FOO": "v1"})
     with pytest.raises(BackendNotWritableError):
         update_secret(backend, "FOO", "v2")
+
+
+# ---------------------------------------------------------------------------
+# Value-precondition (ADR-0017 hardening series — revision item, value variant)
+# ---------------------------------------------------------------------------
+
+
+def test_bws_update_conflict_when_vault_value_changed(
+    bws_with_one_secret: tuple[BitwardenBackend, _FakeSecretsClient],
+) -> None:
+    """The caller states what it READ; the vault holds something else
+    (operator rotated manually mid-flight). The PUT must be refused so
+    the operator's newer secret survives — and the error message must
+    carry no secret material."""
+    backend, sdk = bws_with_one_secret
+    with pytest.raises(BackendWriteConflictError) as excinfo:
+        update_secret(
+            backend,
+            "FOO",
+            "v2-derived-from-stale",
+            expected_current_value="stale-value-the-caller-read",
+        )
+    assert sdk.last_update_args is None  # PUT never issued
+    msg = str(excinfo.value)
+    assert "v1" not in msg
+    assert "stale-value-the-caller-read" not in msg
+    assert "v2-derived-from-stale" not in msg
+
+
+def test_bws_update_succeeds_when_precondition_matches(
+    bws_with_one_secret: tuple[BitwardenBackend, _FakeSecretsClient],
+) -> None:
+    backend, sdk = bws_with_one_secret
+    update_secret(backend, "FOO", "v2-rotated", expected_current_value="v1")
+    assert sdk.last_update_args is not None
+    assert sdk.last_update_args[3] == "v2-rotated"
+
+
+def test_bws_update_without_precondition_never_conflicts(
+    bws_with_one_secret: tuple[BitwardenBackend, _FakeSecretsClient],
+) -> None:
+    """Omitting the precondition preserves the pre-hardening contract:
+    the adapter writes unconditionally (metadata-preserving GET+PUT)."""
+    backend, sdk = bws_with_one_secret
+    update_secret(backend, "FOO", "v3-unconditional")
+    assert sdk.last_update_args is not None

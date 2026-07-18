@@ -26,6 +26,7 @@ import pytest
 from agent_vault_proxy.config import Config, Oauth2RefreshInjector
 from agent_vault_proxy.injectors.oauth2_refresh import (
     ExchangeResult,
+    _transport_open,
     exchange,
     exchange_async,
 )
@@ -134,7 +135,9 @@ def _capture(calls: list[Any]) -> Any:
 
 def test_body_post_success(spec_body_post: Oauth2RefreshInjector) -> None:
     calls: list[Any] = []
-    with patch("urllib.request.urlopen", side_effect=_capture(calls)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "success"
     assert result.access_token == "at-A"
@@ -158,7 +161,9 @@ def test_basic_auth_success(spec_basic_auth: Oauth2RefreshInjector) -> None:
     """Basic auth method — credentials in Authorization header, NOT in
     body. ``scopes`` is forwarded in the form body."""
     calls: list[Any] = []
-    with patch("urllib.request.urlopen", side_effect=_capture(calls)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)
+    ):
         result = exchange(spec_basic_auth, "cid", "csec", "rtok")
     assert result.outcome == "success"
     req, _ = calls[0]
@@ -197,7 +202,9 @@ def test_rotated_refresh_token_captured(spec_body_post: Oauth2RefreshInjector) -
             ).encode()
         )
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok-OLD")
     assert result.outcome == "success"
     assert result.new_refresh_token == "rtok-NEW"
@@ -221,7 +228,9 @@ def test_same_refresh_token_returned_not_rotation(
             ).encode()
         )
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok-SAME")
     assert result.outcome == "success"
     assert result.new_refresh_token is None  # echoed = no rotation
@@ -238,7 +247,9 @@ def test_expires_in_missing_uses_default_with_flag(
     def side_effect(req: Any, timeout: float | None = None) -> _FakeResponse:
         return _FakeResponse(json.dumps({"access_token": "at-A"}).encode())
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "success"
     assert result.access_token == "at-A"
@@ -260,7 +271,7 @@ def test_invalid_grant_400_categorised(spec_body_post: Oauth2RefreshInjector) ->
         400,
         json.dumps({"error": "invalid_grant", "error_description": "Token expired"}).encode(),
     )
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_grant"
     assert result.access_token is None
@@ -269,7 +280,7 @@ def test_invalid_grant_400_categorised(spec_body_post: Oauth2RefreshInjector) ->
 
 def test_invalid_client_401_categorised(spec_body_post: Oauth2RefreshInjector) -> None:
     err = _make_http_error(401, json.dumps({"error": "invalid_client"}).encode())
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_client"
 
@@ -280,7 +291,7 @@ def test_arbitrary_oauth_error_code_passes_through(
     """Any RFC 6749 §5.2 error code surfaces in the outcome verbatim.
     The taxonomy isn't restricted — providers extend it."""
     err = _make_http_error(400, json.dumps({"error": "invalid_scope"}).encode())
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_scope"
 
@@ -289,7 +300,7 @@ def test_4xx_without_json_body_falls_back_to_status(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
     err = _make_http_error(403, b"Forbidden")
-    with patch("urllib.request.urlopen", side_effect=err):
+    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_status:403"
 
@@ -318,7 +329,9 @@ def test_5xx_retried_once_then_success(spec_body_post: Oauth2RefreshInjector) ->
         return item
 
     with (
-        patch("urllib.request.urlopen", side_effect=side_effect),
+        patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+        ),
         patch("time.sleep") as sleep_mock,
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -338,7 +351,12 @@ def test_5xx_twice_does_not_retry_third(spec_body_post: Oauth2RefreshInjector) -
         call_count += 1
         raise _make_http_error(500, b"err")
 
-    with patch("urllib.request.urlopen", side_effect=side_effect), patch("time.sleep"):
+    with (
+        patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+        ),
+        patch("time.sleep"),
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert call_count == 2  # one initial + one retry
     assert result.outcome == "token_endpoint_status:500"
@@ -354,7 +372,9 @@ def test_4xx_does_not_retry(spec_body_post: Oauth2RefreshInjector) -> None:
         call_count += 1
         raise _make_http_error(400, json.dumps({"error": "invalid_grant"}).encode())
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert call_count == 1
     assert result.outcome == "token_endpoint_error:invalid_grant"
@@ -365,7 +385,7 @@ def test_connection_refused_categorised_unreachable(
 ) -> None:
     with (
         patch(
-            "urllib.request.urlopen",
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
             side_effect=URLError("connection refused"),
         ),
         patch("time.sleep"),
@@ -377,7 +397,10 @@ def test_connection_refused_categorised_unreachable(
 
 def test_timeout_categorised_unreachable(spec_body_post: Oauth2RefreshInjector) -> None:
     with (
-        patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")),
+        patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            side_effect=TimeoutError("timed out"),
+        ),
         patch("time.sleep"),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -391,7 +414,7 @@ def test_timeout_categorised_unreachable(spec_body_post: Oauth2RefreshInjector) 
 
 def test_non_json_response_parse_failed(spec_body_post: Oauth2RefreshInjector) -> None:
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: _FakeResponse(b"<html>not json</html>"),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -402,7 +425,7 @@ def test_json_without_access_token_parse_failed(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: _FakeResponse(
             json.dumps({"token_type": "Bearer", "expires_in": 3600}).encode()
         ),
@@ -430,7 +453,7 @@ def test_request_time_ssrf_blocks_dns_rebound_url(
     monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
     urlopen_called: list[bool] = []
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True) or _FakeResponse(b""),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -461,7 +484,9 @@ def test_exchange_async_uses_run_in_executor(
 
     async def runner() -> ExchangeResult:
         loop_thread_id.append(threading.get_ident())
-        with patch("urllib.request.urlopen", side_effect=side_effect):
+        with patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+        ):
             return await exchange_async(spec_body_post, "cid", "csec", "rtok")
 
     result = asyncio.run(runner())
@@ -471,72 +496,82 @@ def test_exchange_async_uses_run_in_executor(
 
 
 # ---------------------------------------------------------------------------
-# Hardening: redirect-followed to internal URL is rejected (post-call check)
+# Hardening: redirects are refused at the opener — never followed
 # ---------------------------------------------------------------------------
 
 
-def test_redirect_to_internal_url_rejected_post_call(
-    spec_body_post: Oauth2RefreshInjector,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """urllib follows 3xx by default. If a compromised token endpoint
-    302s to a hostname that resolves to a private IP, the redirect has
-    already been followed by the time the addon sees the response. The
-    post-call ``geturl()`` check rejects the response as ``ssrf_blocked``
-    so the addon doesn't TRUST upstream content fetched from a private
-    address. (The on-the-wire visit to the bad URL still happened; a
-    fully-redirect-disabling fix is tracked in the hardening series.)
-
-    Note: this test uses a hostname (not an IP literal) for the
-    redirect target to dodge a pre-existing bug in
-    ``_ssrf_guard.check_url_not_internal`` where the IP-literal
-    short-circuit's ``except ValueError`` catches the SsrfBlockedError
-    raised by ``_check_ip_string`` (because SsrfBlockedError IS-A
-    ValueError). That bug is unrelated to slice 9 and is tracked
-    separately."""
-    # Redirect-target hostname resolves to a link-local IP.
-    monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
-        lambda host, *a, **kw: (
-            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 0))]
-            if host == "evil-redirect.example.com"
-            else [
-                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
-            ]
-        ),
-    )
-
-    class _RedirectedResp(_FakeResponse):
-        def geturl(self) -> str:
-            return "https://evil-redirect.example.com/sucker"
-
-    with patch(
-        "urllib.request.urlopen",
-        return_value=_RedirectedResp(b'{"access_token":"at-X","expires_in":3600}'),
-    ):
-        result = exchange(spec_body_post, "cid", "csec", "rtok")
-    assert result.outcome == "ssrf_blocked"
-
-
-def test_redirect_to_public_url_is_accepted(
+def test_redirect_refused_never_followed(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
-    """A 3xx redirect that lands on a public address is still trusted
-    (best-effort: avoids breaking real upstreams that legitimately
-    redirect their token endpoint — e.g. account.example.com →
-    auth.example.com). Only redirects to INTERNAL ranges are rejected."""
+    """The no-redirect opener surfaces ANY 3xx as ``HTTPError``;
+    ``exchange`` maps it to ``token_endpoint_status:<code>`` with NO
+    retry — the Location target is never contacted, public or private
+    alike (ADR-0017 hardening series; replaces the former post-call
+    ``geturl()`` check, which could only distrust a redirect AFTER the
+    redirected host had been visited on the wire)."""
+    import io
 
-    class _PublicRedirectResp(_FakeResponse):
-        def geturl(self) -> str:
-            return "https://auth.example.com/token"  # different, but still public
+    calls: list[object] = []
+
+    def refuse(req: object, timeout: float | None = None) -> object:
+        calls.append(req)
+        raise HTTPError(
+            "https://token.example.com/oauth2/token",
+            302,
+            "Found",
+            None,  # type: ignore[arg-type]
+            io.BytesIO(b"<html>moved</html>"),
+        )
 
     with patch(
-        "urllib.request.urlopen",
-        return_value=_PublicRedirectResp(b'{"access_token":"at-Y","expires_in":3600}'),
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=refuse,
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
-    assert result.outcome == "success"
-    assert result.access_token == "at-Y"
+    assert result.outcome == "token_endpoint_status:302"
+    assert len(calls) == 1  # deterministic refusal — no retry on 3xx
+
+
+def test_transport_opener_refuses_redirect_on_the_wire() -> None:
+    """Drive the REAL opener against a live local server answering 302:
+    ``_transport_open`` must raise ``HTTPError(302)`` and must NOT fetch
+    the Location target — the on-the-wire proof that redirects are
+    disabled at the transport, not post-checked."""
+    import threading
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    hits = {"redirect": 0, "target": 0}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/target":
+                hits["target"] += 1
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"should never be fetched")
+            else:
+                hits["redirect"] += 1
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/target")
+                self.end_headers()
+
+        def log_message(self, *args: object) -> None:  # silence test noise
+            return
+
+    srv = HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{srv.server_port}/start")
+        with pytest.raises(HTTPError) as excinfo:
+            _transport_open(req, timeout=5.0)
+        assert excinfo.value.code == 302
+        assert hits["redirect"] == 1
+        assert hits["target"] == 0, "redirect Location was followed — opener must refuse"
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def test_token_type_bearer_accepted_case_insensitive(
@@ -548,7 +583,10 @@ def test_token_type_bearer_accepted_case_insensitive(
         body = json.dumps(
             {"access_token": "at-A", "token_type": variant, "expires_in": 3600}
         ).encode()
-        with patch("urllib.request.urlopen", return_value=_FakeResponse(body)):
+        with patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            return_value=_FakeResponse(body),
+        ):
             result = exchange(spec_body_post, "cid", "csec", "rtok")
         assert result.outcome == "success", f"variant {variant!r} should succeed"
 
@@ -566,7 +604,10 @@ def test_token_type_non_bearer_rejected(
         body = json.dumps(
             {"access_token": "at-A", "token_type": bad_type, "expires_in": 3600}
         ).encode()
-        with patch("urllib.request.urlopen", return_value=_FakeResponse(body)):
+        with patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            return_value=_FakeResponse(body),
+        ):
             result = exchange(spec_body_post, "cid", "csec", "rtok")
         assert result.outcome == "unsupported_token_type", (
             f"token_type {bad_type!r} should be rejected, got {result.outcome}"
@@ -583,7 +624,10 @@ def test_token_type_omitted_accepted_with_warning(
     security gain (we only know how to inject Bearer anyway, so the
     assumption is implicit either way)."""
     body = json.dumps({"access_token": "at-A", "expires_in": 3600}).encode()
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(body)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        return_value=_FakeResponse(body),
+    ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "success"
     assert result.access_token == "at-A"
@@ -602,6 +646,8 @@ def test_request_carries_avp_user_agent(
         captured.append(req.get_header("User-agent"))
         return _FakeResponse(b'{"access_token":"at-Z","expires_in":3600}')
 
-    with patch("urllib.request.urlopen", side_effect=side_effect):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
+    ):
         exchange(spec_body_post, "cid", "csec", "rtok")
     assert captured == ["agent-vault-proxy/oauth2-refresh"]

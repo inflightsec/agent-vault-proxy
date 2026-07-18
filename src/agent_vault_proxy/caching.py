@@ -244,6 +244,8 @@ class CachingSecretsClient:
         name: str,
         value: str,
         ctx: FetchContext | None = None,
+        *,
+        expected_current_value: str | None = None,
     ) -> None:
         """Write-through update for the wrapped backend.
 
@@ -266,7 +268,9 @@ class CachingSecretsClient:
         # parity test in some downstream consumers).
         from agent_vault_proxy.backends import update_secret as _backend_update
 
-        _backend_update(self._backend, name, value, ctx)
+        _backend_update(
+            self._backend, name, value, ctx, expected_current_value=expected_current_value
+        )
         self.flush(name)
 
     def flush(self, name: str | None = None) -> None:

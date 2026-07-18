@@ -185,7 +185,9 @@ class OAuth2NoLeakMachine(RuleBasedStateMachine):
                 ).encode()
             return FakeResp(body, geturl_value="https://oauth2-noleak.example.com/token")
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch(
+            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=fake_urlopen
+        ):
             self.addon.http_connect(flow)
             if flow.response is None:
                 self.addon.requestheaders(flow)

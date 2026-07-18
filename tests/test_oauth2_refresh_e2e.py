@@ -244,7 +244,7 @@ def test_e2e_happy_path_plaintext_transport(
     flow = _make_flow({"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "urllib.request.urlopen",
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(mock_token_endpoint._server.server_port),
     ):
         addon.requestheaders(flow)
@@ -285,7 +285,10 @@ def test_e2e_cache_hit_skips_second_exchange(
     mock_token_endpoint.responses.append((200, oh.ok_body(access_token="at-CACHED")))
 
     port = mock_token_endpoint._server.server_port
-    with patch("urllib.request.urlopen", side_effect=_urlopen_to_local(port)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=_urlopen_to_local(port),
+    ):
         for _ in range(2):
             flow = _make_flow({"Authorization": f"Bearer {PLACEHOLDER}"})
             addon.http_connect(flow)
@@ -320,15 +323,19 @@ def test_e2e_rotation_persists_to_vault(
     flow = _make_flow({"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
-    with patch("urllib.request.urlopen", side_effect=_urlopen_to_local(port)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=_urlopen_to_local(port),
+    ):
         addon.requestheaders(flow)
 
     assert flow.request.headers["Authorization"] == "Bearer at-R1"
     # Vault now holds the rotated refresh token.
     assert backend.values["GOOGLE_OAUTH_REFRESH_TOKEN"] == "rtok-ROTATED-1"
     assert backend.update_count == 1
-    # Audit shape: token_exchange:success → refresh_token_rotated:success →
-    # inject_decision:allowed.
+    # Audit shape: token_exchange:success → refresh_token_rotated:pending
+    # → refresh_token_rotated:success → inject_decision:allowed (the
+    # pending record is fsynced BEFORE the vault PUT — hardening series).
     events = oh.read_audit(audit_path)
     interesting = [
         e
@@ -336,9 +343,14 @@ def test_e2e_rotation_persists_to_vault(
         if e["type"] in ("token_exchange", "refresh_token_rotated", "inject_decision")
     ]
     types = [e["type"] for e in interesting]
-    assert types == ["token_exchange", "refresh_token_rotated", "inject_decision"]
-    rot = next(e for e in events if e["type"] == "refresh_token_rotated")
-    assert rot["outcome"] == "success"
+    assert types == [
+        "token_exchange",
+        "refresh_token_rotated",
+        "refresh_token_rotated",
+        "inject_decision",
+    ]
+    rot = [e for e in events if e["type"] == "refresh_token_rotated"]
+    assert [e["outcome"] for e in rot] == ["pending", "success"]
     # Rotated bytes NEVER appear in the audit (substring + allowlist).
     blob = audit_path.read_text()
     assert "rtok-ORIGINAL" not in blob
@@ -359,7 +371,10 @@ def test_e2e_invalid_grant_denies_request(
     flow = _make_flow({"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
-    with patch("urllib.request.urlopen", side_effect=_urlopen_to_local(port)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=_urlopen_to_local(port),
+    ):
         addon.requestheaders(flow)
 
     assert flow.response is not None
@@ -393,7 +408,10 @@ def test_e2e_request_forwarded_unmodified_when_no_placeholder(
     headers_before = {k.lower(): v for k, v in flow.request.headers.items()}
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
-    with patch("urllib.request.urlopen", side_effect=_urlopen_to_local(port)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=_urlopen_to_local(port),
+    ):
         addon.requestheaders(flow)
 
     # Drain any deferred work that a future pre-warm-cache path might
@@ -479,7 +497,10 @@ unmatched_destination_policy: deny
         (200, oh.rotation_body(access_token="at-DOC", refresh_token="rtok-ROTATED-BY-PROBE"))
     )
     port = mock_token_endpoint._server.server_port
-    with patch("urllib.request.urlopen", side_effect=_urlopen_to_local(port)):
+    with patch(
+        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        side_effect=_urlopen_to_local(port),
+    ):
         rc = run_doctor(
             ca_cert_path="/nonexistent/cert",
             ca_key_path="/nonexistent/key",

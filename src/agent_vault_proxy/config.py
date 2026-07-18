@@ -399,6 +399,19 @@ class Config(BaseModel):
     # enabled, public-suffix wildcards (`*.co.uk`, `*.com`) are still rejected
     # at the field level. When false (default), any `*.` host fails config-load.
     allow_wildcard_hosts: bool = False
+    # File-side host allowlist for NOTES-sourced bindings (ADR-0024).
+    # OPT-IN: when None (default, key absent), behavior is unchanged — the
+    # zero-config notes flow (add secret + note/annotation, `host:` alone
+    # suffices) is untouched. When set, a notes/annotation-supplied host
+    # must match an entry (exact string, or a `*.suffix` entry under
+    # `allow_wildcard_hosts`) or that binding entry is rejected fail-closed
+    # with audit reason `host_not_in_allowlist`. Closes the GSM
+    # confused-deputy: a principal holding `secretmanager.secrets.update`
+    # but not `versions.access` can no longer ADD an egress host via the
+    # `avp-binding` annotation — annotations can only NARROW scope. File
+    # `secrets:` entries are the trusted tier and exempt. An explicit empty
+    # list means "no notes host is approved" (notes fully fenced off).
+    notes_host_allowlist: list[str] | None = None
     cache: CacheSpec = Field(default_factory=CacheSpec)
     audit: AuditSpec
     preflight: PreflightSpec = Field(default_factory=PreflightSpec)
@@ -574,6 +587,50 @@ class Config(BaseModel):
                 "secret's blast radius to every subdomain; set `allow_wildcard_hosts: true` "
                 "at the top level to permit them, or bind to exact hosts."
             )
+        return self
+
+    @field_validator("notes_host_allowlist")
+    @classmethod
+    def _validate_notes_host_allowlist_entries(cls, v: list[str] | None) -> list[str] | None:
+        """ADR-0024: allowlist entries are bare hostnames (optionally a
+        one-label `*.suffix` wildcard, gated by ``allow_wildcard_hosts``
+        in the model validator below). No scheme, port, path, bare `*`,
+        or whitespace — the same shape binding hosts take.
+
+        Entries are lowercased to match the host invariant everywhere else:
+        notes hosts are lowercased when parsed and binding hosts at load
+        (`normalize_and_validate_host`), and request-time matching is
+        case-insensitive. Without this, a mixed-case allowlist entry (e.g.
+        ``API.Corp.Internal``) would never equal the lowercased note host in
+        the exact-match membership check, silently rejecting every legitimate
+        notes binding with `host_not_in_allowlist` (fail-closed, but it
+        breaks the control the operator just enabled)."""
+        if v is None:
+            return v
+        for entry in v:
+            if not isinstance(entry, str) or not entry or entry != entry.strip():
+                raise ValueError(
+                    f"notes_host_allowlist: invalid entry {entry!r} — bare hostnames only"
+                )
+            if entry == "*" or any(c in entry for c in "/: "):
+                raise ValueError(
+                    f"notes_host_allowlist: invalid entry {entry!r} — bare hostnames only "
+                    "(no scheme, port, path, or bare '*')"
+                )
+        return [entry.lower() for entry in v]
+
+    @model_validator(mode="after")
+    def _allowlist_wildcards_require_opt_in(self) -> Config:
+        """ADR-0024 + the wildcard opt-in: a `*.suffix` ALLOWLIST entry
+        widens what notes may bind just like a wildcard binding host
+        does, so it rides the same explicit flag."""
+        if self.notes_host_allowlist and not self.allow_wildcard_hosts:
+            wild = sorted(e for e in self.notes_host_allowlist if e.startswith("*."))
+            if wild:
+                raise ValueError(
+                    f"notes_host_allowlist entries {wild} use wildcards but "
+                    "allow_wildcard_hosts is false — enable the opt-in or list exact hosts."
+                )
         return self
 
     @model_validator(mode="after")

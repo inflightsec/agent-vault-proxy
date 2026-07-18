@@ -128,13 +128,21 @@ def check_url_not_internal(url: str | Url | HttpUrl) -> None:
     if host is None:
         raise SsrfBlockedError(f"token_url has no hostname: {url!r}")
 
-    # Direct-IP URL — no DNS needed.
+    # Direct-IP URL — no DNS needed. Parse FIRST, block-check SECOND:
+    # only the parse failure means "not an IP literal, fall through to
+    # DNS". The block-check raises SsrfBlockedError, which IS-A
+    # ValueError (Pydantic surfaces it at config-load) — a single
+    # combined try here used to swallow the block verdict and send
+    # blocked literals down the DNS path (closed by the ADR-0017
+    # hardening series; pinned by
+    # test_blocked_ip_literal_short_circuits_without_dns).
     try:
-        _check_ip_string(host)
-        return
+        ipaddress.ip_address(host)
     except ValueError:
-        # Not a valid IP literal — fall through to DNS resolution.
-        pass
+        pass  # not an IP literal — fall through to DNS resolution
+    else:
+        _check_ip_string(host)  # SsrfBlockedError propagates
+        return
 
     try:
         records = socket.getaddrinfo(host, None)

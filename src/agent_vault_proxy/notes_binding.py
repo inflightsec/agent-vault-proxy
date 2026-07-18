@@ -38,6 +38,7 @@ a bad bindings.yaml entry.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import yaml
@@ -55,6 +56,22 @@ _NOTE_SECRET_TOKEN = "{secret}"  # noqa: S105  # nosec B105 — substitution tok
 # the nested file schema — but the VALUES still go through config.py
 # validators, so semantics stay identical across sources.
 _ALLOWED_NOTE_KEYS = {"host", "hosts", "header", "format", "methods", "paths"}
+
+# The bare-string shorthand (`api.openai.com` as the whole note, ADR-0018 §4
+# Tier 0) may ONLY fire when the string is actually shaped like a hostname.
+# Vault secrets routinely carry a free-text human DESCRIPTION in their note
+# ("HackerOne API identifier", "GCP project ID", "Sentry API token (scope
+# unknown)"). Treating such a description as a host manufactures a garbage
+# binding, and under binding_source `both` (notes win per secret) that garbage
+# host shadows the real bindings.yaml host — the secret then silently stops
+# injecting. This pattern requires ≥2 dot-separated DNS labels (FQDN, IPv4, or
+# a `*.`-wildcard); anything with whitespace/punctuation or a single label is a
+# description, not a host, and carries no binding. Explicit `host:` mappings
+# bypass this gate entirely.
+_BARE_HOSTNAME_RE = re.compile(
+    r"^(?:\*\.)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"
+)
 
 _DEFAULT_HEADER = "Authorization"
 _DEFAULT_FORMAT = f"Bearer {_NOTE_SECRET_TOKEN}"
@@ -175,6 +192,11 @@ def _load_note_mapping(secret_name: str, note: str) -> dict | NoBinding | Invali
         # A blank/whitespace string is no binding, NOT malformed.
         stripped = raw.strip()
         if not stripped:
+            return NoBinding(secret_name)
+        # A free-text description ("HackerOne API identifier") is not a host and
+        # carries no binding — never let it become a garbage host that shadows
+        # the real file binding under binding_source `both` (see _BARE_HOSTNAME_RE).
+        if not _BARE_HOSTNAME_RE.match(stripped):
             return NoBinding(secret_name)
         return {"host": stripped}
     if not isinstance(raw, dict):

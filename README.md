@@ -28,7 +28,7 @@ $ avp run claude                             # auto-loads ~/.config/avp/env, set
 
 No Bitwarden account? `--static` keeps secrets in a local YAML file owned by the service user. Upgrade later by editing `backend:` in `/etc/agent-vault-proxy/bindings.yaml` (setup never overwrites an existing config).
 
-On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
+On Mac: `brew install inflightsec/avp/agent-vault-proxy`
 
 ## See it in action
 

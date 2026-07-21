@@ -273,7 +273,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...v0.7.0
 [0.4.3]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.3

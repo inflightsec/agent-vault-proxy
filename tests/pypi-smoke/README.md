@@ -14,13 +14,13 @@ If a published wheel ever stops doing what it's supposed to do — broken metada
 
 ```bash
 # Smoke the version that's published right now on PyPI:
-bash tests/pypi-smoke/run.sh 0.8.0
+bash tests/pypi-smoke/run.sh 0.9.0
 
 # Smoke against TestPyPI:
-PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.8.0
+PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.9.0
 
 # Leave the stack up for debugging:
-bash tests/pypi-smoke/run.sh 0.8.0 --keep
+bash tests/pypi-smoke/run.sh 0.9.0 --keep
 # Then: docker compose -f tests/pypi-smoke/docker-compose.yml logs avp
 # Tear down: cd tests/pypi-smoke && docker compose down -v
 ```
@@ -36,7 +36,7 @@ Before tagging a release, you can run the same harness against a wheel you've ju
 rm -rf dist && python -m build
 
 # 2. Smoke it through the same harness CI will run
-bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.8.0-py3-none-any.whl
+bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.9.0-py3-none-any.whl
 
 # 3. If green, push the tag — CI runs the same harness against the
 #    published PyPI artifact, which exercises the identical code path.

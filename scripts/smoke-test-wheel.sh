@@ -29,7 +29,7 @@
 # Usage:
 #
 #   bash scripts/smoke-test-wheel.sh                 # build + test local tree
-#   bash scripts/smoke-test-wheel.sh --pypi 0.8.0    # test the already-published version
+#   bash scripts/smoke-test-wheel.sh --pypi 0.9.0    # test the already-published version
 #
 # No host Python touched; runs entirely in a throwaway container.
 
@@ -43,7 +43,7 @@ PYPI_VERSION=""
 
 if [ "${1:-}" = "--pypi" ]; then
     MODE="pypi"
-    PYPI_VERSION="${2:?--pypi requires a version, e.g. --pypi 0.8.0}"
+    PYPI_VERSION="${2:?--pypi requires a version, e.g. --pypi 0.9.0}"
 fi
 
 # Source of truth for expected version: pyproject.toml. The smoke test

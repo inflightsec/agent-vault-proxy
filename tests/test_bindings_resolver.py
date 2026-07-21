@@ -32,7 +32,7 @@ def test_bws_notes_source_builds_specs_from_notes() -> None:
     # name -> note map drives which secrets the source considers.
     src = NotesSource(
         placeholders={"ANTHROPIC": _PH_A},
-        notes={"ANTHROPIC": "host: api.anthropic.com"},
+        notes={"ANTHROPIC": "# avp-binding\nhost: api.anthropic.com"},
     )
     specs = src.resolve()
     assert "ANTHROPIC" in specs
@@ -54,7 +54,7 @@ def test_bws_notes_source_skips_malformed_but_records_diagnostic() -> None:
     diagnostic the operator can inspect — never a silent unscoped binding."""
     src = NotesSource(
         placeholders={"FOO": _PH_A},
-        notes={"FOO": "host: [unclosed"},
+        notes={"FOO": "# avp-binding\nhost: [unclosed"},
     )
     assert src.resolve() == {}
     assert "FOO" in src.invalid
@@ -68,7 +68,7 @@ def test_bws_notes_source_tracks_no_binding_distinctly() -> None:
     stay distinct."""
     src = NotesSource(
         placeholders={"EMPTY": _PH_A, "NOHOST": _PH_B},
-        notes={"EMPTY": "", "NOHOST": "format: 'Bearer {secret}'"},
+        notes={"EMPTY": "", "NOHOST": "# avp-binding\nformat: 'Bearer {secret}'"},
     )
     assert src.resolve() == {}
     assert src.no_binding == {"EMPTY", "NOHOST"}
@@ -123,7 +123,7 @@ def test_bws_notes_wins_over_file_for_same_secret(tmp_path) -> None:
     file_src = FileSource(config=cfg)
     notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
-        notes={"FOO": "host: notes-host.example.com"},
+        notes={"FOO": "# avp-binding\nhost: notes-host.example.com"},
     )
     resolver = BindingsResolver(sources=[notes_src, file_src])
     merged = resolver.resolve()
@@ -159,7 +159,7 @@ def test_invalid_notes_exclude_same_name_file_binding(tmp_path) -> None:
     file_src = FileSource(config=cfg)
     notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
-        notes={"FOO": "host: [unclosed"},
+        notes={"FOO": "# avp-binding\nhost: [unclosed"},
     )
     merged = BindingsResolver(sources=[notes_src, file_src]).resolve()
     assert "FOO" not in merged
@@ -171,7 +171,7 @@ def test_both_sources_share_validation(tmp_path) -> None:
     same as a file-loaded one."""
     notes_src = NotesSource(
         placeholders={"FOO": _PH_A},
-        notes={"FOO": "host: api.example.com\nmethods: [GET]"},
+        notes={"FOO": "# avp-binding\nhost: api.example.com\nmethods: [GET]"},
     )
     merged = BindingsResolver(sources=[notes_src]).resolve()
     spec, _src, _companion = merged["FOO"]

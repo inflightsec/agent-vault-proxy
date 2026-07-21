@@ -287,6 +287,13 @@ secrets:
 # behave as a transparent forwarder for unrelated egress.
 unmatched_destination_policy: deny
 
+# ADR-0026: which destinations AVP TLS-terminates (MITM). `bound` (default):
+# terminate + inject ONLY bound hosts; every other CONNECT is an opaque
+# passthrough (no decryption — AVP never holds plaintext it won't broker), and
+# a `tls_passthrough` audit event records the tunneled host. `all`: terminate
+# everything (max observability; the pre-ADR-0026 behaviour).
+tls_termination: bound
+
 cache:
   ttl_seconds: 300
   max_entries: 100
@@ -325,8 +332,10 @@ backend:
 # Keyless by design — there is NO key-file field. Authenticate with ADC +
 # service-account impersonation, or a Workload-Identity cred-config. With
 # `binding_source: notes`, each GSM secret is host-bound by its own
-# `avp-binding` annotation (bare host or flat-YAML), so no `secrets:` block is
-# needed. See docs/adapter-architecture.md + docs/adrs/ADR-0018.
+# `avp-binding` annotation — first line the exact marker `# avp-binding`
+# (ADR-0025; an unmarked note is a description, not a binding), then a bare
+# host or flat-YAML — so no `secrets:` block is needed.
+# See docs/adapter-architecture.md + docs/adrs/ADR-0018 + ADR-0025.
 # binding_source: notes
 # backend:
 #   type: gsm

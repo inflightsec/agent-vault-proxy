@@ -63,6 +63,11 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         EVENT_HONEYTOKEN_TRIGGERED,
         "proxy_restart",
         "upstream_response",
+        # ADR-0026: a TLS connection tunneled un-terminated because its
+        # destination is unbound (tls_termination: bound). Carries the dest
+        # host + reason only — the connection was never decrypted, so there is
+        # no secret material to leak. Gives exfil visibility in passthrough mode.
+        "tls_passthrough",
     }
 )
 

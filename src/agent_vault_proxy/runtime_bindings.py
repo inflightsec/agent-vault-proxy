@@ -109,13 +109,151 @@ def resolve_runtime_bindings(
     resolver = BindingsResolver(sources=sources)
     specs = resolver.resolve()
 
+    # ADR-0029: a note may pin a STORED placeholder (spec.placeholder then
+    # differs from the salt-derived one). Uniqueness across the whole
+    # resolved view is a fail-closed invariant — enforced here, where every
+    # secret is visible, never guessed per-note.
+    invalid = dict(notes_source.invalid)
+    dropped = _enforce_placeholder_uniqueness(specs, placeholders, invalid)
+
     # placeholder -> name for EVERY listed secret (so unbound/invalid
-    # placeholders are still attributable at request time).
+    # placeholders are still attributable at request time). Stored
+    # placeholders are added on top: the DERIVED entry stays too, so a
+    # consumer still wired to the old derived placeholder fails closed with
+    # an attributable audit line instead of an anonymous passthrough.
     placeholder_to_name = {ph: name for name, ph in placeholders.items()}
+    for name, (spec, _src, _comp) in specs.items():
+        if spec.placeholder != placeholders.get(name):
+            placeholder_to_name[spec.placeholder] = name
+    # Dropped stored claims stay attributable too (never injectable — their
+    # specs are gone — but a request carrying one audits with a named secret
+    # instead of forwarding as an anonymous string). Surviving claims win.
+    for ph, name in dropped.items():
+        placeholder_to_name.setdefault(ph, name)
 
     return ResolvedRuntimeBindings(
         specs=specs,
         placeholder_to_name=placeholder_to_name,
         no_binding=set(notes_source.no_binding),
-        invalid=dict(notes_source.invalid),
+        invalid=invalid,
     )
+
+
+def _enforce_placeholder_uniqueness(
+    specs: dict[str, ResolvedSpec],
+    derived: dict[str, str],
+    invalid: dict[str, str],
+) -> dict[str, str]:
+    """Drop (fail closed) every spec whose placeholder is ambiguous (ADR-0029).
+
+    Three ambiguity classes, all resolved by REMOVING the affected specs and
+    recording a diagnostic (they surface through the same
+    ``invalid_binding_metadata`` audit/doctor path as a malformed note):
+
+    * the same placeholder claimed by >1 resolved spec (stored/stored, or
+      stored colliding with a file-source operator placeholder in ``both``
+      mode);
+    * a stored placeholder equal to ANOTHER secret's derived placeholder;
+    * a stored placeholder that is a SUBSTRING/SUPERSTRING of another spec's
+      placeholder. This one is load-bearing: the merge-level
+      ``validate_placeholder_invariants`` refuses substring overlaps by
+      RAISING, which would fail the whole configure()/reload — a crafted
+      overlapping note would then be a metadata-write DoS against every
+      secret. Dropping the illegitimate claimant here keeps the failure
+      per-secret.
+
+    Thief-loses: a claimant is legitimate when the claim is its own derived
+    placeholder or comes from the file source; illegitimate claimants drop
+    alone when a single legitimate one exists. Between a file-source and a
+    derived claimant (both legitimate — a pre-existing configuration
+    condition, not creatable from a note), the merge validator retains
+    arbitration.
+
+    Mutates ``specs`` and ``invalid`` in place. Returns ``{placeholder:
+    secret_name}`` for every dropped claim so the caller can keep them
+    attributable in the request path.
+    """
+    dropped_ph: dict[str, str] = {}
+    # Sequential: the overlap pass runs over the exact pass's survivors.
+    for finder in (_exact_collision_drops, _overlap_drops):
+        for name, diagnostic in finder(specs, derived).items():
+            dropped_ph.setdefault(specs[name][0].placeholder, name)
+            specs.pop(name, None)
+            invalid[name] = diagnostic
+    return dropped_ph
+
+
+def _is_legitimate(name: str, ph: str, source: str, derived: dict[str, str]) -> bool:
+    """A claim is LEGITIMATE when it is the claimant's own derived
+    placeholder, or comes from the file source (root-owned config — higher
+    trust than vault-writable notes)."""
+    return derived.get(name) == ph or source == "file"
+
+
+def _exact_collision_drops(
+    specs: dict[str, ResolvedSpec], derived: dict[str, str]
+) -> dict[str, str]:
+    """Equal-placeholder contests -> {name: diagnostic} to drop."""
+    claimed: dict[str, list[str]] = {}
+    for name, (spec, _src, _comp) in specs.items():
+        claimed.setdefault(spec.placeholder, []).append(name)
+
+    derived_owner = {ph: name for name, ph in derived.items()}
+    to_drop: dict[str, str] = {}
+    for ph, names in claimed.items():
+        legitimate = [n for n in names if _is_legitimate(n, ph, specs[n][1], derived)]
+        owner = derived_owner.get(ph)
+        if len(names) > 1:
+            if len(legitimate) == 1:
+                for name in (n for n in names if n != legitimate[0]):
+                    to_drop[name] = (
+                        f"stored placeholder {ph!r} on secret {name!r} collides "
+                        f"with the placeholder of secret {legitimate[0]!r}. Mint "
+                        "a fresh placeholder (`avp binding new`) for it."
+                    )
+            else:
+                diagnostic = (
+                    f"placeholder {ph!r} is claimed by multiple secrets "
+                    f"{sorted(names)}; injection would be ambiguous. Mint a "
+                    "fresh placeholder (`avp binding new`) for all but one."
+                )
+                for name in names:
+                    to_drop[name] = diagnostic
+        elif owner is not None and owner != names[0] and not legitimate:
+            to_drop[names[0]] = (
+                f"stored placeholder {ph!r} on secret {names[0]!r} collides "
+                f"with the derived placeholder of secret {owner!r}. Mint a "
+                "fresh placeholder (`avp binding new`) for it."
+            )
+    return to_drop
+
+
+def _overlap_drops(specs: dict[str, ResolvedSpec], derived: dict[str, str]) -> dict[str, str]:
+    """Substring/superstring contests -> {name: diagnostic} to drop (see
+    _enforce_placeholder_uniqueness docstring: keeps a crafted overlap a
+    per-secret drop instead of a global raise in the merge validator).
+    O(n^2) over BOUND secrets — dozens, not thousands; deterministic order
+    for stable diagnostics."""
+    remaining = sorted(specs.items())
+    to_drop: dict[str, str] = {}
+    for i, (name_a, (spec_a, src_a, _ca)) in enumerate(remaining):
+        for name_b, (spec_b, src_b, _cb) in remaining[i + 1 :]:
+            pa, pb = spec_a.placeholder, spec_b.placeholder
+            if pa == pb or (pa not in pb and pb not in pa):
+                continue
+            a_legit = _is_legitimate(name_a, pa, src_a, derived)
+            b_legit = _is_legitimate(name_b, pb, src_b, derived)
+            if a_legit and b_legit:
+                continue  # pre-existing config condition; merge validator arbitrates
+            for name, legit, ph, other in (
+                (name_a, a_legit, pa, name_b),
+                (name_b, b_legit, pb, name_a),
+            ):
+                if not legit:
+                    to_drop[name] = (
+                        f"stored placeholder {ph!r} on secret {name!r} is a "
+                        f"substring/superstring of the placeholder of secret "
+                        f"{other!r}; `in`-matching would be ambiguous. Mint a "
+                        "fresh placeholder (`avp binding new`)."
+                    )
+    return to_drop

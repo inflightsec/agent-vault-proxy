@@ -23,16 +23,16 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
 - Google Secret Manager backend (`backend.type: gsm`) — keyless auth,
   per-secret least privilege, `avp-binding` annotation bindings
   ([ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md), shipped 0.8.0).
+- TLS termination scoped to bound hosts — `tls_termination: bound` (default)
+  MITM-terminates + injects only bound hosts; every other CONNECT tunnels
+  opaquely (no decryption, real-PKI end-to-end), logged via `tls_passthrough`.
+  `all` restores full termination ([ADR-0026](adrs/ADR-0026-tls-termination-scoping.md),
+  accepted).
 
 ## Planned
 
 ### Security posture
-- **Scope TLS termination to bound hosts** — today AVP TLS-terminates *every*
-  destination the agent routes through it and injects only on bound hosts, so
-  it decrypts traffic to hosts it never touches. Add a mitmproxy `next_layer`
-  hook that does **TLS passthrough** for unbound destinations (intercept only
-  what has a binding), shrinking the decryption surface to what injection
-  actually needs. Warrants its own ADR.
+- *(Shipped — see above: TLS termination scoping, [ADR-0026](adrs/ADR-0026-tls-termination-scoping.md).)*
 
 ### Supply chain
 - **Artifact signing + SBOM** — the gates above cover *inputs*; still to add
@@ -47,14 +47,12 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
   Still missing a Prometheus-style metrics surface (exchange counts, cache hit
   rate, deny reasons).
 
-### Injector types (schema-reserved, not yet implemented)
+### Injector types — COMPLETE
 
-These parse but fail config-load with a "not yet implemented" error until they ship.
-
-| Type | Purpose |
-|---|---|
-| `github_app` | GitHub App installation-token minting |
-| `oauth2_client_credentials` | RFC 6749 §4.4 client-credentials grant |
-| `jwt_bearer` | RFC 7523 JWT bearer assertion |
-| `sigv4` | AWS SigV4 request signing |
-| `hmac` | Generic HMAC request signing |
+All eight injector types ship. Static substitution: `header`, `body`, `multi`, composite
+`template + compose`. Network exchange (requestheaders seam): `oauth2_refresh`
+([ADR-0017](adrs/ADR-0017-oauth2-refresh-injector.md)), `oauth2_client_credentials`, `github_app`
+([ADR-0030](adrs/ADR-0030-oauth2-cc-github-app-injectors.md)). Request signing (request-hook seam):
+`sigv4` ([ADR-0027](adrs/ADR-0027-sigv4-injector.md)), `hmac`, `jwt_bearer`
+([ADR-0028](adrs/ADR-0028-hmac-jwt-signing-injectors.md)). The `_INJECTOR_TYPES` "not yet
+implemented" guard is retained for any future additions.

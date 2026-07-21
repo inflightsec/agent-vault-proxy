@@ -54,7 +54,7 @@ def test_note_without_host_is_no_binding_not_malformed() -> None:
     it is NOT malformed. This is the audit distinction the ADR amendment
     requires (no_binding_in_notes vs invalid_binding_metadata)."""
     result = parse_notes_binding(
-        secret_name="FOO", placeholder=_PH, note="format: 'Bearer {secret}'"
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nformat: 'Bearer {secret}'"
     )
     assert isinstance(result, NoBinding)
 
@@ -65,7 +65,9 @@ def test_note_without_host_is_no_binding_not_malformed() -> None:
 
 
 def test_minimal_host_only_yields_bearer_default() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.example.com")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.example.com"
+    )
     assert isinstance(result, ParsedBinding)
     spec = result.spec
     assert spec.placeholder == _PH
@@ -81,7 +83,9 @@ def test_minimal_host_only_yields_bearer_default() -> None:
 def test_secret_token_is_rewritten_to_entry_name() -> None:
     """The note uses the generic {secret} token; the parser rewrites it to
     {<secret_name>} so config.py's per-entry placeholder invariant holds."""
-    result = parse_notes_binding(secret_name="MYKEY", placeholder=_PH, note="host: api.example.com")
+    result = parse_notes_binding(
+        secret_name="MYKEY", placeholder=_PH, note="# avp-binding\nhost: api.example.com"
+    )
     assert isinstance(result, ParsedBinding)
     assert "{MYKEY}" in result.spec.inject.format
 
@@ -93,6 +97,7 @@ def test_secret_token_is_rewritten_to_entry_name() -> None:
 
 def test_full_overrides_applied() -> None:
     note = """
+# avp-binding
 host: api.example.com
 header: X-Api-Key
 format: "Token {secret}"
@@ -114,45 +119,53 @@ paths: ["/v1/**"]
 
 
 def test_malformed_yaml_is_invalid() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: [unclosed")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: [unclosed"
+    )
     assert isinstance(result, InvalidBinding)
     assert result.diagnostic  # non-empty human message
 
 
 def test_non_mapping_yaml_is_invalid() -> None:
     """A scalar or list at top level is not a binding mapping."""
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="- just a list item")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\n- just a list item"
+    )
     assert isinstance(result, InvalidBinding)
 
 
 def test_unknown_key_is_invalid() -> None:
     """extra=forbid: a typo'd key (e.g. 'hosts' for 'host') must fail closed,
     not silently produce an unscoped binding."""
-    note = "host: api.example.com\nmethdos: [GET]"
+    note = "# avp-binding\nhost: api.example.com\nmethdos: [GET]"
     result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note=note)
     assert isinstance(result, InvalidBinding)
     assert "methdos" in result.diagnostic or "extra" in result.diagnostic.lower()
 
 
 def test_bad_method_is_invalid() -> None:
-    note = "host: api.example.com\nmethods: [FETCH]"
+    note = "# avp-binding\nhost: api.example.com\nmethods: [FETCH]"
     result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note=note)
     assert isinstance(result, InvalidBinding)
 
 
 def test_overbroad_wildcard_host_is_invalid() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: '*.com'")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: '*.com'"
+    )
     assert isinstance(result, InvalidBinding)
 
 
 def test_bad_path_is_invalid() -> None:
-    note = 'host: api.example.com\npaths: ["v1/no-leading-slash"]'
+    note = '# avp-binding\nhost: api.example.com\npaths: ["v1/no-leading-slash"]'
     result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note=note)
     assert isinstance(result, InvalidBinding)
 
 
 def test_host_not_a_string_is_invalid() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: [a, b]")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: [a, b]"
+    )
     assert isinstance(result, InvalidBinding)
 
 
@@ -174,7 +187,9 @@ def test_exception_table_has_required_rows() -> None:
 
 
 def test_anthropic_row_uses_x_api_key_and_companion_version() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.anthropic.com")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.anthropic.com"
+    )
     assert isinstance(result, ParsedBinding)
     spec = result.spec
     assert spec.inject.header == "x-api-key"
@@ -186,20 +201,26 @@ def test_anthropic_row_uses_x_api_key_and_companion_version() -> None:
 
 
 def test_notion_row_companion_version() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.notion.com")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.notion.com"
+    )
     assert isinstance(result, ParsedBinding)
     assert result.companion_headers == {"Notion-Version": "2022-06-28"}
 
 
 def test_linear_row_raw_authorization_no_bearer() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.linear.app")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.linear.app"
+    )
     assert isinstance(result, ParsedBinding)
     assert result.spec.inject.header == "Authorization"
     assert result.spec.inject.format == "{FOO}"  # raw, no Bearer
 
 
 def test_openai_row_bearer_post_v1() -> None:
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.openai.com")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.openai.com"
+    )
     assert isinstance(result, ParsedBinding)
     assert result.spec.inject.format == "{FOO}".replace("{FOO}", "Bearer {FOO}")
     assert result.spec.bindings[0].methods == ["POST"]
@@ -209,7 +230,9 @@ def test_openai_row_bearer_post_v1() -> None:
 def test_github_default_scope_is_read_only_get() -> None:
     """The worked example: GitHub default scope is GET-read-only across the
     documented read paths. No POST, no /gists, no write paths."""
-    result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note="host: api.github.com")
+    result = parse_notes_binding(
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.github.com"
+    )
     assert isinstance(result, ParsedBinding)
     binding = result.spec.bindings[0]
     assert binding.methods == ["GET"]
@@ -223,7 +246,7 @@ def test_github_default_scope_is_read_only_get() -> None:
 def test_github_explicit_override_re_enables_writes() -> None:
     """A user who needs writes opts in explicitly via methods/paths; the
     explicit note overrides the exception-table default scope."""
-    note = 'host: api.github.com\nmethods: [POST]\npaths: ["/gists"]'
+    note = '# avp-binding\nhost: api.github.com\nmethods: [POST]\npaths: ["/gists"]'
     result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note=note)
     assert isinstance(result, ParsedBinding)
     binding = result.spec.bindings[0]
@@ -233,7 +256,7 @@ def test_github_explicit_override_re_enables_writes() -> None:
 def test_explicit_header_overrides_exception_table() -> None:
     """Precedence: explicit note field > exception table. A user who sets
     header: on an anthropic host gets their header, not x-api-key."""
-    note = "host: api.anthropic.com\nheader: X-Custom"
+    note = "# avp-binding\nhost: api.anthropic.com\nheader: X-Custom"
     result = parse_notes_binding(secret_name="FOO", placeholder=_PH, note=note)
     assert isinstance(result, ParsedBinding)
     assert result.spec.inject.header == "X-Custom"
@@ -241,7 +264,7 @@ def test_explicit_header_overrides_exception_table() -> None:
 
 def test_unknown_host_falls_back_to_bearer_default() -> None:
     result = parse_notes_binding(
-        secret_name="FOO", placeholder=_PH, note="host: api.unknown-saas.example"
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\nhost: api.unknown-saas.example"
     )
     assert isinstance(result, ParsedBinding)
     assert result.spec.inject.header == "Authorization"
@@ -257,7 +280,7 @@ def test_non_string_yaml_key_is_invalid_not_crash() -> None:
     # str()-coerce before sorting, else sorting a mixed int/str set raises
     # TypeError and escapes the parser instead of recording invalid metadata.
     result = parse_notes_binding(
-        secret_name="FOO", placeholder=_PH, note="1: x\nhost: api.example.com"
+        secret_name="FOO", placeholder=_PH, note="# avp-binding\n1: x\nhost: api.example.com"
     )
     assert isinstance(result, InvalidBinding)
     assert "unknown note key" in result.diagnostic.lower()

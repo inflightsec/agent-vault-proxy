@@ -6,8 +6,11 @@ GSM ``avp-binding`` annotation — the input is just a string. (Renamed from
 ``bws_notes``; ``agent_vault_proxy.bws_notes`` re-exports this module for
 back-compat.)
 
-The note is a flat top-level YAML blob. ``host`` is the only required
-field; everything else defaults. ``host`` accepts a single hostname string
+A note is only parsed as a binding when its first non-blank line is exactly
+``# avp-binding`` (the ADR-0025 marker); anything unmarked is a human
+description and yields :class:`NoBinding` — the file bindings stand. After
+the marker, the body is a flat top-level YAML blob. ``host`` is the only
+required field; everything else defaults. ``host`` accepts a single hostname string
 or a list of hostnames (a ``hosts:`` alias is also accepted); a list fans out
 to one binding per host under a single injector, gated by the multi-host trust
 invariant (ADR-0021 §4): the note must set an explicit ``format`` (no silent
@@ -38,6 +41,7 @@ a bad bindings.yaml entry.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -45,6 +49,20 @@ import yaml
 from pydantic import ValidationError
 
 from agent_vault_proxy.config import SecretSpec
+from agent_vault_proxy.placeholders import STORED_PLACEHOLDER_RE
+
+_log = logging.getLogger(__name__)
+
+# ADR-0025: a note/annotation is ONLY parsed as a binding when its first
+# non-blank line is exactly this marker. The notes field is an ambient
+# free-text channel — human descriptions live there. Parsing unmarked text
+# cost a fleet outage (2026-07-18): host-shaped descriptions became malformed
+# bindings, which fail-closed KILLED those secrets' real file bindings under
+# binding_source `both`. Marker present = binding intent (errors after it fail
+# LOUD as InvalidBinding); marker absent = description (NoBinding, file
+# bindings stand untouched). Uniform across sources (BWS notes AND the GSM
+# `avp-binding` annotation) — one contract, no source-plumbing.
+NOTES_MARKER = "# avp-binding"
 
 # Generic substitution token in a note (vs the file path's {SECRET_NAME}).
 # Not a credential — it's the literal placeholder marker the operator types.
@@ -55,7 +73,7 @@ _NOTE_SECRET_TOKEN = "{secret}"  # noqa: S105  # nosec B105 — substitution tok
 # parser owns this list because the note schema is flat/defaulted, unlike
 # the nested file schema — but the VALUES still go through config.py
 # validators, so semantics stay identical across sources.
-_ALLOWED_NOTE_KEYS = {"host", "hosts", "header", "format", "methods", "paths"}
+_ALLOWED_NOTE_KEYS = {"host", "hosts", "header", "format", "methods", "paths", "placeholder"}
 
 # The bare-string shorthand (`api.openai.com` as the whole note, ADR-0018 §4
 # Tier 0) may ONLY fire when the string is actually shaped like a hostname.
@@ -193,11 +211,17 @@ def _load_note_mapping(secret_name: str, note: str) -> dict | NoBinding | Invali
         stripped = raw.strip()
         if not stripped:
             return NoBinding(secret_name)
-        # A free-text description ("HackerOne API identifier") is not a host and
-        # carries no binding — never let it become a garbage host that shadows
-        # the real file binding under binding_source `both` (see _BARE_HOSTNAME_RE).
+        # Only reached with the ADR-0025 marker present — binding intent is
+        # explicit, so a scalar that is not hostname-shaped is an operator
+        # ERROR (typo'd host), not an ignorable description: fail LOUD.
+        # (_BARE_HOSTNAME_RE stays as the second belt behind the marker.)
         if not _BARE_HOSTNAME_RE.match(stripped):
-            return NoBinding(secret_name)
+            return InvalidBinding(
+                secret_name,
+                f"marked binding note body {stripped!r} is not a valid bare "
+                "hostname (dot-separated DNS labels). Use `api.example.com`, "
+                "or a flat mapping with `host:`.",
+            )
         return {"host": stripped}
     if not isinstance(raw, dict):
         return InvalidBinding(
@@ -222,6 +246,40 @@ def _load_note_mapping(secret_name: str, note: str) -> dict | NoBinding | Invali
     return raw
 
 
+def _strip_binding_marker(secret_name: str, note: str) -> str | NoBinding | InvalidBinding:
+    """ADR-0025 marker gate. Returns the marker-stripped body on success, or the
+    terminal NoBinding (unmarked = description) / InvalidBinding (marker with no
+    body) outcome. Split from parse_notes_binding to hold the complexity gate."""
+    lines = note.splitlines()
+    first_idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+    if first_idx is None or lines[first_idx].strip() != NOTES_MARKER:
+        # Migration aid: an unmarked note that LOOKS like a binding (bare
+        # hostname, or a host:/hosts: line) is silently inert — name it at
+        # load so a forgotten marker is self-diagnosing, not a mystery.
+        host_shaped = bool(_BARE_HOSTNAME_RE.match(note.strip())) or bool(
+            re.search(r"(?m)^\s*hosts?\s*:", note)
+        )
+        if host_shaped:
+            _log.warning(
+                "secret %r: note looks host-shaped but lacks the %r marker line — "
+                "ignored (no binding). Prepend the marker line if it is meant to bind.",
+                secret_name,
+                NOTES_MARKER,
+            )
+        return NoBinding(secret_name)
+    body = "\n".join(lines[first_idx + 1 :])
+    if not body.strip():
+        # Marker present but nothing after it: binding intent was declared,
+        # content is missing — fail LOUD, not silently inert.
+        return InvalidBinding(
+            secret_name,
+            f"note starts with the {NOTES_MARKER!r} marker but has no binding "
+            "content after it. Add a bare hostname or a flat mapping "
+            "(`host: api.example.com`).",
+        )
+    return body
+
+
 def parse_notes_binding(
     *,
     secret_name: str,
@@ -238,10 +296,23 @@ def parse_notes_binding(
     if note is None or not note.strip():
         return NoBinding(secret_name)
 
-    loaded = _load_note_mapping(secret_name, note)
+    # ADR-0025 marker gate (extracted to keep this function under the C901
+    # complexity gate, like _load_note_mapping): unmarked -> NoBinding /
+    # marker-only -> InvalidBinding / else the marker-stripped body.
+    gated = _strip_binding_marker(secret_name, note)
+    if isinstance(gated, NoBinding | InvalidBinding):
+        return gated
+    body = gated
+
+    loaded = _load_note_mapping(secret_name, body)
     if isinstance(loaded, NoBinding | InvalidBinding):
         return loaded
     raw = loaded
+
+    resolved_placeholder = _resolve_stored_placeholder(secret_name, raw, placeholder)
+    if isinstance(resolved_placeholder, InvalidBinding):
+        return resolved_placeholder
+    placeholder = resolved_placeholder
 
     host = raw.get("host")
     hosts_alias = raw.get("hosts")
@@ -431,6 +502,49 @@ def _parse_multihost_note(
     # No companion headers for multi-host: curated (companion-bearing) hosts are
     # rejected by _multihost_guard, so a multi-host spec never carries them.
     return _finalize_spec(secret_name, placeholder, header, fmt, bindings, {})
+
+
+def _resolve_stored_placeholder(secret_name: str, raw: dict, fallback: str) -> str | InvalidBinding:
+    """ADR-0029: a note may PIN its placeholder (minted by `avp binding new`)
+    instead of relying on the salt derivation the caller passed in. The
+    stored value is format-gated hard: prefix + lowercase-base32 tail of
+    >=21 chars, so a hand-typed weak string ("token") cannot parse and can
+    never match innocent traffic. Global uniqueness is enforced one layer
+    up (runtime_bindings), where the whole secret set is visible."""
+    stored = raw.get("placeholder")
+    if stored is None:
+        return fallback
+    if not isinstance(stored, str) or not STORED_PLACEHOLDER_RE.match(stored):
+        return InvalidBinding(
+            secret_name,
+            "`placeholder` must be a string matching "
+            "`avp-PLACEHOLDER-<21-64 lowercase base32 chars>` "
+            f"(mint one with `avp binding new`); got {stored!r}.",
+        )
+    return stored
+
+
+def stored_placeholder_from_note(note: str | None) -> str | None:
+    """Extract a note's valid stored placeholder, or None (ADR-0029).
+
+    Read-side helper for surfaces that need the placeholder WITHOUT running a
+    full binding parse (``avp env`` projecting consumer export lines). Any
+    note that is unmarked, malformed, or carries an invalid/missing
+    ``placeholder`` yields None — such a secret either has no binding or will
+    fail loud through the real parser; the caller falls back to derivation.
+    """
+    if note is None or not note.strip():
+        return None
+    gated = _strip_binding_marker("<stored-placeholder-probe>", note)
+    if isinstance(gated, NoBinding | InvalidBinding):
+        return None
+    loaded = _load_note_mapping("<stored-placeholder-probe>", gated)
+    if isinstance(loaded, NoBinding | InvalidBinding):
+        return None
+    stored = loaded.get("placeholder")
+    if isinstance(stored, str) and STORED_PLACEHOLDER_RE.match(stored):
+        return stored
+    return None
 
 
 def _first_error(e: ValidationError) -> str:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from agent_vault_proxy.cli.binding import register_binding_subparser, run_binding
 from agent_vault_proxy.cli.doctor import run_doctor
 from agent_vault_proxy.cli.env import default_env_path, run_env
 from agent_vault_proxy.cli.gcp_setup import run_gcp_setup
@@ -208,6 +209,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_secret_subparser(sub)
     register_run_subparser(sub)
+    register_binding_subparser(sub)
     return parser
 
 
@@ -254,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_secret(args)
     if args.command in ("run", "sandvault"):
         return run_run(args)
+    if args.command == "binding":
+        return run_binding(args)
 
     # No subcommand — print help and signal misuse.
     parser.print_help(sys.stderr)

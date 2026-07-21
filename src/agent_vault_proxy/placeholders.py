@@ -42,6 +42,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
@@ -59,6 +60,33 @@ _TAIL_CHARS = 21
 # salt file a detectable corruption signal rather than a silent weakening.
 _SALT_BYTES = 32
 _DEFAULT_SALT_BASENAME = "install-salt"
+
+# Stored (note-carried) placeholders — ADR-0029. A note may pin its secret's
+# placeholder explicitly (minted by `avp binding new`) instead of relying on
+# the salt derivation above. The stored shape is deliberately IDENTICAL in
+# alphabet and prefix to the derived one (prefix + lowercase-base32 tail) so:
+#   * config.py's placeholder invariants (>=24 chars, PLACEHOLDER marker,
+#     shell-metachar-free) hold by construction;
+#   * consumers can't tell (and never need to care) which era minted theirs;
+#   * the tail's minimum length (21 chars = 105 bits) keeps a hand-typed
+#     low-entropy string ("token", "Bearer") structurally unrepresentable —
+#     a weak placeholder can't match innocent traffic because it can't parse.
+STORED_PLACEHOLDER_RE = re.compile(r"^avp-PLACEHOLDER-[a-z2-7]{21,64}$")
+
+# Minted tail length: 26 base32 chars = 130 bits from a 16-byte CSPRNG draw.
+_MINT_TAIL_CHARS = 26
+
+
+def mint_placeholder() -> str:
+    """Mint a fresh random stored placeholder (ADR-0029).
+
+    Uses the ``secrets`` CSPRNG — never derived from any name or salt, so a
+    minted placeholder carries no linkable information and survives salt
+    rotation and secret renames unchanged. Output always satisfies
+    :data:`STORED_PLACEHOLDER_RE`.
+    """
+    tail = base64.b32encode(secrets.token_bytes(16)).decode("ascii").lower().rstrip("=")
+    return PLACEHOLDER_PREFIX + tail[:_MINT_TAIL_CHARS]
 
 
 class PlaceholderCollisionError(RuntimeError):

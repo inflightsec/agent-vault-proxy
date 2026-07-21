@@ -65,14 +65,18 @@ def list_secret_names(backend: object) -> list[str]:
 def build_export_lines(
     secret_names: list[str],
     install_salt: bytes,
+    stored: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Build ``export NAME='<placeholder>'`` lines for valid names.
 
     Returns ``(lines, skipped)`` where ``skipped`` is the list of names
     rejected by :data:`VALID_SECRET_NAME_RE` (reported, never written).
 
-    Placeholders are derived per :func:`derive_placeholder_map`, which also
-    fails closed on a derived-placeholder collision across the name set.
+    ``stored`` maps names to note-pinned placeholders (ADR-0029); a stored
+    placeholder wins over derivation for its secret — matching the daemon's
+    precedence. Remaining placeholders are derived per
+    :func:`derive_placeholder_map`, which also fails closed on a
+    derived-placeholder collision across the name set.
     """
     from agent_vault_proxy.placeholders import derive_placeholder_map
 
@@ -87,7 +91,7 @@ def build_export_lines(
     mapping = derive_placeholder_map(valid, install_salt)
     lines: list[str] = []
     for name in valid:
-        placeholder = mapping[name]
+        placeholder = (stored or {}).get(name) or mapping[name]
         # Single-quote the value. Both name (regex-validated identifier) and
         # placeholder (avp-PLACEHOLDER- + lowercase base32) are metachar-free,
         # so no escaping is needed inside the single quotes; we assert this
@@ -167,7 +171,29 @@ def run_env(
     resolved_salt = _resolve_salt_path(config.install_salt_path, salt_path)
     salt = load_or_create_install_salt(resolved_salt)
 
-    lines, skipped = build_export_lines(names, salt)
+    # Stored placeholders (ADR-0029): read each note's pinned placeholder so
+    # the projected env matches what the daemon actually enforces. A backend
+    # that can't serve notes degrades to derived-only with a warning rather
+    # than failing the whole projection.
+    stored: dict[str, str] = {}
+    try:
+        from agent_vault_proxy.backends import list_secret_notes
+        from agent_vault_proxy.notes_binding import stored_placeholder_from_note
+
+        notes = list_secret_notes(backend)
+        for name, note in notes.items():
+            pinned = stored_placeholder_from_note(note)
+            if pinned is not None:
+                stored[name] = pinned
+    except Exception as e:  # noqa: BLE001 — degrade, don't brick the projection
+        print(
+            f"[avp env] WARNING: could not read notes for stored placeholders "
+            f"({type(e).__name__}: {e}); projecting derived placeholders only — "
+            "secrets with a note-pinned placeholder will NOT match this env.",
+            file=sys.stderr,
+        )
+
+    lines, skipped = build_export_lines(names, salt, stored=stored)
 
     for name in skipped:
         print(

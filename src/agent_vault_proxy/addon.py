@@ -4,7 +4,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from mitmproxy import http
+from mitmproxy import http, tls
 from mitmproxy.addonmanager import Loader
 
 from agent_vault_proxy._derived_token_cache import DerivedTokenCache
@@ -27,7 +27,12 @@ from agent_vault_proxy.handlers import (
     HeaderInjectionHandler,
     NotesActivator,
 )
+from agent_vault_proxy.injectors.github_app import GithubAppResolver
+from agent_vault_proxy.injectors.hmac_signer import HmacResolver
+from agent_vault_proxy.injectors.jwt_bearer import JwtResolver
+from agent_vault_proxy.injectors.oauth2_client_credentials import Oauth2CcResolver
 from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
+from agent_vault_proxy.injectors.sigv4 import Sigv4Resolver
 from agent_vault_proxy.policy import (
     decide,
     destination_in_any_binding,
@@ -74,8 +79,17 @@ class AgentVaultProxyAddon:
         self._header_handler = HeaderInjectionHandler(
             composite=self._composite,
             oauth_resolver=OauthResolver(),
+            oauth_cc_resolver=Oauth2CcResolver(),
+            github_app_resolver=GithubAppResolver(),
         )
         self._body_handler = BodyInjectionHandler(composite=self._composite)
+        # ADR-0027/0028: the computed signing injectors resolve in the `request`
+        # hook (sigv4/hmac need the buffered body), so their resolvers live on
+        # the addon; the header handler only stashes the verdict at
+        # requestheaders.
+        self._sigv4_resolver = Sigv4Resolver()
+        self._hmac_resolver = HmacResolver()
+        self._jwt_resolver = JwtResolver()
         self._notes_activator = NotesActivator()
 
     def load(self, loader: Loader) -> None:
@@ -215,6 +229,44 @@ class AgentVaultProxyAddon:
         # is audited" half (the "history preserved" half comes from chattr +a).
         if self.audit is not None:
             self.audit.emit({"type": "proxy_restart"})
+
+    def tls_clienthello(self, data: tls.ClientHelloData) -> None:
+        """ADR-0026: scope TLS termination to bound hosts.
+
+        For a destination the live config has no binding for, tunnel the
+        connection opaquely (``ignore_connection``) instead of MITM-terminating
+        it — so AVP never holds plaintext for traffic it does not broker, and a
+        stolen AVP CA cannot decrypt it (the client validates the upstream's
+        real certificate end-to-end). The tunnel is logged (``tls_passthrough``,
+        destination host only) so exfil *visibility* survives without
+        interception. ``tls_termination: all`` restores full termination. Runs
+        per-connection at handshake, so a binding added by hot-reload applies to
+        new connections (existing tunnels stay tunnels).
+        """
+        config, _client, audit, _companion_headers = self._capture_state()
+        if config is None or config.tls_termination == "all":
+            return
+        # SNI is what the client asked for; fall back to the CONNECT/server
+        # address host when SNI is absent (non-SNI client).
+        host = data.client_hello.sni
+        if not host:
+            server_address = data.context.server.address
+            host = server_address[0] if server_address else None
+        if host is not None and destination_in_any_binding(config, host):
+            return  # bound -> terminate + inject (unchanged path)
+        # Unbound (or unknown host) -> opaque passthrough. No leaf cert minted,
+        # no decryption. unmatched_destination_policy: deny has already 403'd an
+        # unbound CONNECT before reaching here, so this only tunnels what is
+        # allowed through.
+        data.ignore_connection = True
+        if audit is not None:
+            audit.emit(
+                {
+                    "type": "tls_passthrough",
+                    "reason": "unbound_destination",
+                    "destination": {"host": host or "<no-sni>"},
+                }
+            )
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
         config, _client, audit, _companion_headers = self._capture_state()
@@ -414,6 +466,49 @@ class AgentVaultProxyAddon:
                         "destination": {"host": target_host, "port": flow.request.port},
                     }
                 )
+
+    def request(self, flow: http.HTTPFlow) -> None:
+        """ADR-0027: sign a sigv4-bound request once the full body is buffered.
+
+        ``requestheaders`` stashed the ALLOWED sigv4 verdict on
+        ``flow.metadata['avp_sigv4']`` (it could not sign there — SigV4 hashes
+        the body, which had not arrived). This hook fires with the complete
+        request, so the signer can hash it. No-op for every non-sigv4 request.
+        """
+        stashed = flow.metadata.get("avp_signing")
+        if stashed is None:
+            return
+        _config, client, audit, _companion = self._capture_state()
+        if client is None or audit is None:
+            return
+        decision, request_id, target_host = stashed
+        if decision.sigv4_injector is not None:
+            self._sigv4_resolver.sign_and_apply(
+                flow=flow,
+                decision=decision,
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+            )
+        elif decision.hmac_injector is not None:
+            self._hmac_resolver.sign_and_apply(
+                flow=flow,
+                decision=decision,
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+            )
+        else:
+            self._jwt_resolver.sign_and_apply(
+                flow=flow,
+                decision=decision,
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+            )
 
     def response(self, flow: http.HTTPFlow) -> None:
         if self.audit is None or flow.response is None:

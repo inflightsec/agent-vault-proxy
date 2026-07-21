@@ -390,7 +390,33 @@ def run_setup(
             "ProtectSystem, RestrictAddressFamilies, or syscall filter. If this host "
             "is a credible target, run agent-vault-proxy inside Docker or a Linux VM."
         )
+    print(_render_next_steps())
     return doctor_rc
+
+
+def _render_next_steps() -> str:
+    """Post-setup guidance: how to add the first binding. Points at the
+    deterministic `avp binding new` tool first, then the optional skill for a
+    conversational flow — never auto-installs anything."""
+    return (
+        "\n"
+        "Next — put an API key behind the proxy. Your real key never enters the agent.\n"
+        "\n"
+        "  Works in ANY agent (or none): run the generator, paste what it prints into\n"
+        "  your vault. It validates the binding, so it can't be silently wrong:\n"
+        "\n"
+        "    avp binding new --host api.stripe.com --name STRIPE_API_KEY\n"
+        "\n"
+        '  In Claude Code, skip the flags and just say: "route my Stripe key through avp".\n'
+        "  Install the skill ONCE by typing these as slash-commands in the Claude Code\n"
+        "  chat (they are NOT terminal commands):\n"
+        "\n"
+        "    /plugin marketplace add inflightsec/agent-vault-proxy\n"
+        "    /plugin install avp@agent-vault-proxy\n"
+        "\n"
+        "  Codex or another agent? There's no plugin store — just run the command above,\n"
+        "  or tell the agent to. Same tool everywhere.\n"
+    )
 
 
 def _plan_service_user(

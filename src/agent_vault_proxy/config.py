@@ -18,9 +18,14 @@ from agent_vault_proxy.config_models import _PLACEHOLDER_MARKER as _PLACEHOLDER_
 from agent_vault_proxy.config_models import _PLACEHOLDER_MIN_LEN as _PLACEHOLDER_MIN_LEN
 from agent_vault_proxy.config_models import (
     _STRICT_MODEL,
+    GithubAppInjector,
+    HmacInjector,
     InjectorSpec,
+    JwtBearerInjector,
     MultiInjector,
+    Oauth2ClientCredentialsInjector,
     Oauth2RefreshInjector,
+    Sigv4Injector,
     _validate_inject_block,
     iter_leaf_injectors,
     validate_placeholder_invariants,
@@ -253,6 +258,25 @@ class SecretSpec(BaseModel):
             if self.compose is not None:
                 raise ValueError("compose: cannot be used with inject.type: oauth2_refresh")
             return self
+        # SigV4 signs the request from named credential secrets (access key +
+        # secret key + optional session token); it has its own multi-secret
+        # mechanism, so ``compose:`` (single-value assembly) is meaningless.
+        if isinstance(self.inject, Sigv4Injector):
+            if self.compose is not None:
+                raise ValueError("compose: cannot be used with inject.type: sigv4")
+            return self
+        # hmac + jwt_bearer are computed signers keyed on a single vault secret;
+        # compose: (assemble one value from many) has no meaning for them.
+        if isinstance(self.inject, HmacInjector | JwtBearerInjector):
+            if self.compose is not None:
+                raise ValueError(f"compose: cannot be used with inject.type: {self.inject.type}")
+            return self
+        # Client-credentials / github_app inject an exchanged/minted token, not
+        # a vault-composed value; compose: has no meaning.
+        if isinstance(self.inject, Oauth2ClientCredentialsInjector | GithubAppInjector):
+            if self.compose is not None:
+                raise ValueError(f"compose: cannot be used with inject.type: {self.inject.type}")
+            return self
         has_compose = self.compose is not None
         has_template = self.inject.template is not None
 
@@ -380,6 +404,16 @@ class Config(BaseModel):
     # Default `forward_unmodified`: AVP is a credential broker, not an
     # egress firewall. Operators opt into allow-listing with `deny`.
     unmatched_destination_policy: Literal["deny", "forward_unmodified"] = "forward_unmodified"
+    # ADR-0026: which destinations AVP TLS-terminates (MITM). `bound` (default):
+    # terminate + inject ONLY for hosts the config binds; every other CONNECT is
+    # an opaque TCP passthrough (no leaf cert, no decryption) — AVP never holds
+    # plaintext for traffic it does not broker, and a `tls_passthrough` audit
+    # event records the tunneled destination for exfil visibility. `all`:
+    # terminate every destination (pre-ADR-0026 behaviour; max observability).
+    # Orthogonal to unmatched_destination_policy: `deny` still 403s an unbound
+    # CONNECT before TLS; this only decides terminate-vs-tunnel for what is
+    # allowed through.
+    tls_termination: Literal["bound", "all"] = "bound"
     # Where binding policy comes from (ADR-0011, ADR-0018). Default `both`:
     # bindings resolve from the backend's per-secret metadata (BWS notes / GSM
     # `avp-binding` annotations) AND `secrets:` in this file, notes winning for
@@ -494,10 +528,19 @@ class Config(BaseModel):
             for child in iter_leaf_injectors(spec.inject):
                 # oauth2_refresh substitutes the exchanged access token
                 # under the literal `{access_token}` placeholder — never
-                # the vault-secret name. Skip the YAML-key match here;
-                # the injector's own validator pins the access-token
-                # placeholder.
-                if isinstance(child, Oauth2RefreshInjector):
+                # the vault-secret name. sigv4 computes the value (a request
+                # signature) and has no `format` at all. Both plant the
+                # secret's placeholder in the target header purely as the
+                # detection trigger; skip the YAML-key format match here.
+                if isinstance(
+                    child,
+                    Oauth2RefreshInjector
+                    | Sigv4Injector
+                    | HmacInjector
+                    | JwtBearerInjector
+                    | Oauth2ClientCredentialsInjector
+                    | GithubAppInjector,
+                ):
                     continue
                 fmt = child.format
                 if fmt is None:
@@ -508,6 +551,36 @@ class Config(BaseModel):
                         f"secret {name!r}: inject.format must contain "
                         f"'{named}' as the substitution placeholder; got {fmt!r}"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def reject_body_signer_body_injector_host_conflict(self) -> Config:
+        """ADR-0027/0028: a body-hashing signer (sigv4, or hmac with a
+        ``{body_sha256}`` template) reads the intact request body, but the body
+        injector STREAMS and mutates it. A host bound to both would sign wrong
+        or absent bytes. Reject at load — loudly, not as a silent signing
+        failure at request time. (jwt_bearer does not read the body, so it is
+        exempt. Exact-host check; a wildcard overlap is an accepted gap.)"""
+        signer_hosts: set[str] = set()
+        body_hosts: set[str] = set()
+        for spec in self.secrets.values():
+            leaves = iter_leaf_injectors(spec.inject)
+            has_body_signer = any(
+                isinstance(child, Sigv4Injector | HmacInjector) for child in leaves
+            )
+            has_body = any(isinstance(child, BodyInjector) for child in leaves)
+            for binding in spec.bindings:
+                if has_body_signer:
+                    signer_hosts.add(binding.host)
+                if has_body:
+                    body_hosts.add(binding.host)
+        clash = signer_hosts & body_hosts
+        if clash:
+            raise ValueError(
+                f"sigv4/hmac signing and body injection bind the same host(s) {sorted(clash)}; "
+                "the signer hashes the whole request body but body injection "
+                "streams and mutates it. Bind them to different hosts."
+            )
         return self
 
     # Host-keyed indices: exact-host dict + linear wildcard list.

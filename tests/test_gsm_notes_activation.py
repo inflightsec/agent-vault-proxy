@@ -57,8 +57,8 @@ def test_wildcard_annotation_rejected_when_opt_in_disabled(tmp_path: Path) -> No
     cfg = _gsm_notes_config(tmp_path, allow_wildcard=False)
     backend = _FakeNotesListBackend(
         {
-            "WIDE_KEY": ("v1", 'host: "*.internal.example.com"'),
-            "GOOD_KEY": ("v2", "api.openai.com"),
+            "WIDE_KEY": ("v1", '# avp-binding\nhost: "*.internal.example.com"'),
+            "GOOD_KEY": ("v2", "# avp-binding\napi.openai.com"),
         }
     )
     addon = AgentVaultProxyAddon()
@@ -72,7 +72,9 @@ def test_wildcard_annotation_rejected_when_opt_in_disabled(tmp_path: Path) -> No
 
 def test_wildcard_annotation_allowed_with_opt_in(tmp_path: Path) -> None:
     cfg = _gsm_notes_config(tmp_path, allow_wildcard=True)
-    backend = _FakeNotesListBackend({"WIDE_KEY": ("v1", 'host: "*.internal.example.com"')})
+    backend = _FakeNotesListBackend(
+        {"WIDE_KEY": ("v1", '# avp-binding\nhost: "*.internal.example.com"')}
+    )
     addon = AgentVaultProxyAddon()
     addon.configure_from_path(cfg, backend_override=backend)
 
@@ -112,7 +114,7 @@ backend:
     path: {tmp_path / "unused.yaml"}
 """
     )
-    backend = _FakeNotesListBackend({"DECOY": ("realval", "api.trap.example.com")})
+    backend = _FakeNotesListBackend({"DECOY": ("realval", "# avp-binding\napi.trap.example.com")})
     addon = AgentVaultProxyAddon()
     addon.configure_from_path(cfg, backend_override=backend)
 

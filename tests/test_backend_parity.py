@@ -304,6 +304,99 @@ audit:
   path: /tmp/x.jsonl
 """,
     ),
+    (
+        "sigv4_minimal",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: sigv4
+      region: us-east-1
+      service: s3
+      access_key_id_secret: FOO_AWS_ACCESS_KEY_ID
+      secret_access_key_secret: FOO_AWS_SECRET_ACCESS_KEY
+    bindings:
+      - host: s3.us-east-1.amazonaws.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "hmac_minimal",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: hmac
+      secret_key_secret: FOO_HMAC_KEY
+      signing_string: "{{method}}\\n{{path}}\\n{{timestamp}}"
+      header: X-Signature
+    bindings:
+      - host: api.example.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "jwt_bearer_minimal",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: jwt_bearer
+      signing_key_secret: FOO_JWT_KEY
+      algorithm: RS256
+      issuer: avp
+      audience: https://api.example.com
+    bindings:
+      - host: api.example.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "oauth2_client_credentials_minimal",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: oauth2_client_credentials
+      token_url: https://oauth.example.com/token
+      client_id_secret: FOO_CLIENT_ID
+      client_secret_secret: FOO_CLIENT_SECRET
+      scopes: read
+    bindings:
+      - host: api.example.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
+    (
+        "github_app_minimal",
+        f"""
+version: 1
+secrets:
+  FOO:
+    placeholder: "{_FOO_PH}"
+    inject:
+      type: github_app
+      app_id: "123456"
+      installation_id: "789"
+      private_key_secret: FOO_APP_KEY
+    bindings:
+      - host: api.github.com
+audit:
+  path: /tmp/x.jsonl
+""",
+    ),
 ]
 
 

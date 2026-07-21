@@ -5,7 +5,7 @@
     {
       "name": "avp",
       "source": "./",
-      "description": "Broker API credentials through agent-vault-proxy (bundles the avp-bindings skill)."
+      "description": "Broker API credentials through agent-vault-proxy (bundles the avp skill)."
     }
   ]
 }

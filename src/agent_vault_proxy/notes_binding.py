@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import re
+import textwrap
 from dataclasses import dataclass, field
 
 import yaml
@@ -192,6 +193,14 @@ def _load_note_mapping(secret_name: str, note: str) -> dict | NoBinding | Invali
     """YAML-load + shape/key checks. Returns the raw mapping on success, or
     the terminal NoBinding/InvalidBinding outcome. Split from
     parse_notes_binding to keep each function under the complexity gate."""
+    # Tolerate hand-pasted notes whose body is uniformly indented (a common
+    # shape when copied out of a rendered/quoted block, or tab-indented —
+    # which raw YAML rejects outright). Our note grammar is FLAT with
+    # flow-style lists, so removing the COMMON leading whitespace is safe:
+    # it never changes key nesting, and a block list keeps its relative
+    # indent (dedent only strips the shared prefix). Inconsistent indentation
+    # has no common prefix, so it is left untouched and still fails loud.
+    note = textwrap.dedent(note)
     try:
         raw = yaml.safe_load(note)
     except yaml.YAMLError as e:

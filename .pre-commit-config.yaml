@@ -141,6 +141,19 @@ repos:
         # reaches CI. Install both stages with `pre-commit install --hook-type
         # pre-commit --hook-type pre-push`.
 
+      - id: version-alignment
+        name: version alignment (all version literals ↔ pyproject.toml)
+        entry: bash scripts/check-version-alignment.sh
+        language: system
+        pass_filenames: false
+        # Cheap (~20ms, no network). Fires whenever a version-bearing file
+        # changes so a manual bump that touches pyproject.toml but forgets a
+        # sibling literal (docker-compose image, __init__ __version__, a README
+        # pin) is caught at commit time — not at pre-release. v0.4.2 shipped and
+        # 0.9.0 nearly shipped with exactly this skew. Shares one definition of
+        # "aligned" with pre-release.sh (both call check-version-alignment.sh).
+        files: '^(pyproject\.toml|src/agent_vault_proxy/__init__\.py|README\.md|docker-compose\.yml|scripts/check-version-alignment\.sh)$'
+
       # ─── Heavy security tools — mirror security.yml CI jobs ───────────
       # The Docker-based tools below gracefully skip if docker not on PATH;
       # trufflehog runs a native version-pinned binary (no container tax).

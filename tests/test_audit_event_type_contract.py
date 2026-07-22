@@ -91,6 +91,9 @@ ALLOWED_TOP_LEVEL_FIELDS: dict[str, frozenset[str]] = {
     # ADR-0026: unbound TLS connection tunneled un-terminated. Metadata only —
     # dest host + reason; the connection was never decrypted (no secret value).
     "tls_passthrough": frozenset({"type", "reason", "destination"}),
+    # ADR-0032: background notes-refresh changed the bound set. Secret NAMES
+    # added/removed only — never values.
+    "notes_refreshed": frozenset({"type", "added", "removed"}),
 }
 ALLOWED_DESTINATION_KEYS = frozenset(
     {"host", "port", "path_prefix", "connect_host", "request_host"}
@@ -198,6 +201,11 @@ def test_representative_records_stay_within_field_allowlist() -> None:
             "type": "tls_passthrough",
             "reason": "unbound_destination",
             "destination": {"host": "api.example.com"},
+        },
+        "notes_refreshed": {
+            "type": "notes_refreshed",
+            "added": ["NEW_SECRET"],
+            "removed": [],
         },
     }
     assert set(corpus) == set(AUDIT_EVENT_TYPES), "representative corpus must cover every type"

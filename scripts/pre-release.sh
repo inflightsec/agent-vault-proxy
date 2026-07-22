@@ -111,55 +111,14 @@ import tomllib, pathlib
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
 ")
 
-# Extract every tracked version literal. Each value should equal $TAG_VER.
-# We avoid sed-with-/-delimiter conflicts (the docker-compose image tag
-# itself contains a slash) by using grep -Eo with a tight pattern, then
-# a small awk strip to peel the literal off the surrounding context.
-
-# 1. src/agent_vault_proxy/__init__.py — `__version__ = "X.Y.Z"`
-INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/agent_vault_proxy/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}')
-
-# 2. README.md install line — `agent-vault-proxy==X.Y.Z`
-README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}' || true)
-
-# 3. README.md clone tag — `git clone -b vX.Y.Z`
-README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//' || true)
-
-# 4. docker-compose.yml image tag — `image: inflightsec/agent-vault-proxy:X.Y.Z`
-COMPOSE_VER=$(grep -Eo 'inflightsec/agent-vault-proxy:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}')
-
-VERSION_SKEW=0
-check_one() {
-    local label="$1" found="$2"
-    if [ -z "$found" ]; then
-        red "$label: no version literal found"
-        VERSION_SKEW=1
-    elif [ "$found" != "$TAG_VER" ]; then
-        red "$label: $found  (pyproject.toml says $TAG_VER)"
-        VERSION_SKEW=1
-    fi
-}
-
-# The README intentionally uses UNPINNED install (`pipx install
-# agent-vault-proxy`, latest) and no clone-install, so a pinned `==<ver>` /
-# `git clone -b v<ver>` literal may legitimately be absent. Verify it ONLY if
-# present (catches a STALE pin); never fail on its absence.
-check_one_optional() {
-    local label="$1" found="$2"
-    if [ -n "$found" ] && [ "$found" != "$TAG_VER" ]; then
-        red "$label: $found  (pyproject.toml says $TAG_VER)"
-        VERSION_SKEW=1
-    fi
-}
-
-check_one          "src/agent_vault_proxy/__init__.py"    "$INIT_VER"
-check_one_optional "README.md   agent-vault-proxy==<ver>" "$README_INSTALL_VER"
-check_one_optional "README.md   git clone -b v<ver>"      "$README_CLONE_VER"
-check_one          "docker-compose.yml  image: ...:<ver>" "$COMPOSE_VER"
-
-if [ "$VERSION_SKEW" -eq 0 ]; then
+# Delegated to scripts/check-version-alignment.sh so the pre-commit hook
+# (id: version-alignment) and this release gate share ONE definition of
+# "aligned" — the two literal lists can't drift apart, which would itself be a
+# source of the skew this section exists to catch.
+if VA_OUT=$(bash scripts/check-version-alignment.sh 2>&1); then
     pass "every tracked version literal == pyproject.toml == $TAG_VER"
 else
+    echo "$VA_OUT" | grep -E '✗|disagree' || echo "$VA_OUT"
     fail "one or more version literals disagree with pyproject.toml — run \`scripts/bump-version.sh $TAG_VER\` to align them"
 fi
 

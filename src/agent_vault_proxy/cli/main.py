@@ -23,6 +23,7 @@ from agent_vault_proxy.cli.gcp_setup import run_gcp_setup
 from agent_vault_proxy.cli.run import register_run_subparser, run_run
 from agent_vault_proxy.cli.secret import register_secret_subparser, run_secret
 from agent_vault_proxy.cli.setup import run_setup
+from agent_vault_proxy.placeholders import InstallSaltError
 
 _DEFAULT_CONFIG = "/etc/agent-vault-proxy/bindings.yaml"
 
@@ -166,12 +167,24 @@ def _build_parser() -> argparse.ArgumentParser:
             "for Ansible / managed supervision and container tests."
         ),
     )
-    setup_p.add_argument(
+    backend_group = setup_p.add_mutually_exclusive_group()
+    backend_group.add_argument(
+        "--bws",
+        action="store_true",
+        help="Backend: Bitwarden Secrets Manager (prompts for a machine-account token).",
+    )
+    backend_group.add_argument(
+        "--gsm",
+        action="store_true",
+        help="Backend: Google Secret Manager — keyless; hands off to `avp gcp-setup`.",
+    )
+    backend_group.add_argument(
         "--static",
         action="store_true",
         help=(
-            "Provision with the file-based static secrets backend instead of "
-            "Bitwarden — no BWS token needed (development/testing only)."
+            "Backend: local file-based static secrets — no BWS token needed "
+            "(development/testing / headless). With no backend flag, setup prompts "
+            "you to choose one."
         ),
     )
     gcp_setup_p = sub.add_parser(
@@ -216,7 +229,19 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(parser, args)
+    except InstallSaltError as exc:
+        # Graceful, no-traceback exit for the install-salt guards (perms /
+        # ownership / corruption). They're operator-fixable, and a raw Python
+        # traceback buries both the message and the likely "ran as root" cause.
+        print(f"avp: {exc}", file=sys.stderr)
+        if exc.hint:
+            print(f"\n{exc.hint}", file=sys.stderr)
+        return 1
 
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.command == "env":
         return run_env(
             config_path=args.config,
@@ -243,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
             allow_mutable_audit=args.allow_mutable_audit,
             no_service=args.no_service,
             static=args.static,
+            gsm=args.gsm,
+            bws=args.bws,
         )
     if args.command == "gcp-setup":
         return run_gcp_setup(

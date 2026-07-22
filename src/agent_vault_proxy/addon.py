@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
+import types
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from mitmproxy import http, tls
@@ -39,6 +43,36 @@ from agent_vault_proxy.policy import (
 )
 
 _log = logging.getLogger("agent_vault_proxy.addon")
+
+# mitmproxy loads this addon via SourceFileLoader.exec_module() without registering
+# the module in sys.modules. On Python 3.13 that makes @dataclass's KW_ONLY detection
+# deref None (dataclasses._is_type -> sys.modules.get(cls.__module__).__dict__), raising
+# "AttributeError: 'NoneType' object has no attribute '__dict__'" at import and crash-
+# looping the daemon. Registering a stand-in module under our own name gives dataclasses
+# a namespace to resolve annotations against. Must run before the first @dataclass below.
+if sys.modules.get(__name__) is None:
+    sys.modules[__name__] = types.ModuleType(__name__)
+
+
+@dataclass
+class _ResolvedSnapshot:
+    """Config + resolved vault-notes bindings as one snapshot. Shared by the cold
+    load (configure_from_path) and the ADR-0032 background notes-refresh, so both
+    resolve through exactly one path. The `out_*` maps are populated in place by
+    NotesActivator.activate()."""
+
+    config: Config
+    backend: object
+    placeholder_to_name: dict[str, str] = field(default_factory=dict)
+    no_binding: set[str] = field(default_factory=set)
+    invalid: set[str] = field(default_factory=set)
+    allowlist_rejected: set[str] = field(default_factory=set)
+    allowlist_rejected_hosts: dict[str, set[str]] = field(default_factory=dict)
+    companion_headers: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+def _honeytoken_names(config: Config) -> frozenset[str]:
+    return frozenset(name for name, spec in config.secrets.items() if spec.honeytoken)
 
 
 class AgentVaultProxyAddon:
@@ -91,6 +125,10 @@ class AgentVaultProxyAddon:
         self._hmac_resolver = HmacResolver()
         self._jwt_resolver = JwtResolver()
         self._notes_activator = NotesActivator()
+        # ADR-0032: config path (so the background notes-refresh can re-read it)
+        # and the background refresh task handle.
+        self._config_path: Path | None = None
+        self._refresh_task: asyncio.Task[None] | None = None
 
     def load(self, loader: Loader) -> None:
         loader.add_option(
@@ -121,82 +159,128 @@ class AgentVaultProxyAddon:
         ``build_backend`` would construct — used by tests to inject a fake
         BWS backend; production passes None.
         """
+        snap = self._resolve(config_path, backend_override)
+        self._config_path = Path(config_path)
+        new_client = CachingSecretsClient(
+            backend=snap.backend,  # type: ignore[arg-type]
+            ttl_seconds=snap.config.cache.ttl_seconds,
+            jitter_seconds=snap.config.cache.jitter_seconds,
+            max_entries=snap.config.cache.max_entries,
+        )
+        new_audit = AuditWriter(
+            path=snap.config.audit.path,
+            fail_on_unwritable=snap.config.audit.fail_on_unwritable,
+            # ADR-0019 §5: honeytoken names so the writer auto-emits the tripwire.
+            honeytoken_names=_honeytoken_names(snap.config),
+        )
+        # Reset the same-UUID warning set on a full reload — the operator may
+        # have corrected the misconfigured binding; let the warning re-fire if
+        # the new config still has the issue.
+        self._composite.reset_warnings()
+        # Publish. Maps BEFORE config (config is the last write) so a handler
+        # that sees the new config also sees the matching attribution maps; each
+        # STORE_ATTR is atomic and _capture_state freezes the tuple per request.
+        self._publish_bindings(snap)
+        self.client = new_client
+        self.audit = new_audit
+        self.config = snap.config
+        # Fresh derived-token cache on every full (re)load — stale access tokens
+        # from a prior config must not outlive the binding shape that minted them.
+        self._token_cache = DerivedTokenCache()
+
+    def _resolve(
+        self, config_path: str | Path, backend_override: object | None
+    ) -> _ResolvedSnapshot:
+        """Load config + resolve vault-notes bindings into a snapshot. Used by
+        both the cold load and the ADR-0032 background refresh (which passes the
+        LIVE backend so no new backend/client is built). Raises on any resolution
+        failure — the refresh loop relies on that to keep the previous snapshot.
+
+        BWS-notes activation (ADR-0011 item 3): in notes/both mode, bindings are
+        resolved from the backend's per-secret notes and MERGED into the config's
+        secrets map (notes win). file mode is left untouched — no listing.
+        """
         config_path = Path(config_path)
-        # Snapshot pattern: build the full new state BEFORE assigning to
-        # self. STORE_ATTR is atomic, so the worst a concurrent handler
-        # sees is one fresh component mixed with a stale one — and the
-        # per-handler snapshot in _capture_state freezes the tuple for
-        # the rest of that request.
         new_config = load_config(config_path)
         if backend_override is not None:
             backend: object = backend_override
         else:
             backend, _ = build_backend(new_config)
-
-        # BWS-notes activation (ADR-0011 item 3). In bws_notes/both mode we
-        # resolve bindings from BWS secret notes and MERGE them into the
-        # config's secrets map (notes win over file). file mode is left
-        # completely untouched — no BWS listing, identical to pre-ADR-0011.
-        new_placeholder_to_name: dict[str, str] = {}
-        new_no_binding: set[str] = set()
-        new_invalid: set[str] = set()
-        new_allowlist_rejected: set[str] = set()
-        new_allowlist_rejected_hosts: dict[str, set[str]] = {}
-        new_companion_headers: dict[str, dict[str, str]] = {}
+        snap = _ResolvedSnapshot(config=new_config, backend=backend)
         if new_config.binding_source != "file":
             self._notes_activator.activate(
                 new_config=new_config,
                 backend=backend,
                 config_path=config_path,
-                out_placeholder_to_name=new_placeholder_to_name,
-                out_no_binding=new_no_binding,
-                out_invalid=new_invalid,
-                out_companion_headers=new_companion_headers,
-                out_allowlist_rejected=new_allowlist_rejected,
-                out_allowlist_rejected_hosts=new_allowlist_rejected_hosts,
+                out_placeholder_to_name=snap.placeholder_to_name,
+                out_no_binding=snap.no_binding,
+                out_invalid=snap.invalid,
+                out_companion_headers=snap.companion_headers,
+                out_allowlist_rejected=snap.allowlist_rejected,
+                out_allowlist_rejected_hosts=snap.allowlist_rejected_hosts,
             )
+        return snap
 
-        new_client = CachingSecretsClient(
-            backend=backend,  # type: ignore[arg-type]
-            ttl_seconds=new_config.cache.ttl_seconds,
-            jitter_seconds=new_config.cache.jitter_seconds,
-            max_entries=new_config.cache.max_entries,
-        )
-        new_audit = AuditWriter(
-            path=new_config.audit.path,
-            fail_on_unwritable=new_config.audit.fail_on_unwritable,
-            # ADR-0019 §5: secret names flagged `honeytoken: true` so the
-            # writer auto-emits the follow-up tripwire event. Built from the
-            # merged secret set (notes activation above already ran), rebuilt
-            # on every reload.
-            honeytoken_names=frozenset(
-                name for name, spec in new_config.secrets.items() if spec.honeytoken
-            ),
-        )
-        # Reset the same-UUID warning set on reload — operator may have
-        # corrected the misconfigured binding; let the warning re-fire
-        # if the new config still has the issue.
-        self._composite.reset_warnings()
-        # Publish all state. Reads from request handlers are captured once at
-        # handler entry so a partial publish here cannot tear a single
-        # in-flight request's view. Publish the no-binding/invalid maps
-        # BEFORE config so a handler that sees the new config also sees the
-        # matching attribution maps (config is the last write).
-        self._placeholder_to_name = new_placeholder_to_name
-        self._no_binding_names = new_no_binding
-        self._invalid_names = new_invalid
-        self._allowlist_rejected_names = new_allowlist_rejected
-        # Partial-rejection map rides on the header handler (consulted at
-        # the deny site); atomic attribute swap, same publish ordering.
-        self._header_handler.allowlist_rejected_hosts = new_allowlist_rejected_hosts
-        self._companion_headers = new_companion_headers
-        self.client = new_client
-        self.audit = new_audit
-        self.config = new_config
-        # Fresh derived-token cache on every (re)load. Stale access
-        # tokens from a prior config could otherwise outlive the
-        # binding shape that minted them.
-        self._token_cache = DerivedTokenCache()
+    def _publish_bindings(self, snap: _ResolvedSnapshot) -> None:
+        """Atomic-swap the binding attribution maps. Maps ONLY — the caller
+        publishes self.config LAST (the tear-free ordering). The partial-rejection
+        map rides on the header handler, consulted at the deny site."""
+        self._placeholder_to_name = snap.placeholder_to_name
+        self._no_binding_names = snap.no_binding
+        self._invalid_names = snap.invalid
+        self._allowlist_rejected_names = snap.allowlist_rejected
+        self._header_handler.allowlist_rejected_hosts = snap.allowlist_rejected_hosts
+        self._companion_headers = snap.companion_headers
+
+    def refresh_notes(self) -> None:
+        """ADR-0032: re-resolve vault bindings and atomic-swap the snapshot,
+        KEEPING the warm value + derived-token caches (a full reconfigure would
+        drop them and force OAuth re-exchange every interval). Blocking (vault
+        listing), so the loop calls it via ``asyncio.to_thread``. Raises on
+        resolution failure BEFORE publishing anything, so the caller keeps the
+        previous snapshot."""
+        config = self.config
+        client = self.client
+        if config is None or client is None or self._config_path is None:
+            return
+        if config.binding_source == "file":
+            return
+        backend = getattr(client, "_backend", None)
+        if backend is None:
+            return
+        # Fresh listing so a newly-added secret's note is seen (backends cache
+        # their name/note map).
+        flush = getattr(backend, "flush_name_map", None)
+        if callable(flush):
+            flush()
+        old_names = frozenset(config.secrets)
+        snap = self._resolve(self._config_path, backend)
+        # Fail-safe: activate() DEGRADES to empty on a transient listing/salt
+        # failure rather than raising. A refresh must NOT publish a degraded
+        # (emptied) snapshot — that would drop every live binding on a vault blip.
+        # Keep the previous snapshot and retry next interval.
+        if self._notes_activator.last_degraded_reason is not None:
+            _log.warning(
+                "notes refresh degraded (%s); keeping previous bindings",
+                self._notes_activator.last_degraded_reason,
+            )
+            return
+        # Publish: maps first, config last (tear-free); client/audit/token cache
+        # are deliberately kept warm.
+        self._publish_bindings(snap)
+        audit = self.audit
+        if audit is not None:
+            audit.set_honeytoken_names(_honeytoken_names(snap.config))
+        self.config = snap.config
+        new_names = frozenset(snap.config.secrets)
+        if audit is not None and new_names != old_names:
+            audit.emit(
+                {
+                    "type": "notes_refreshed",
+                    "added": sorted(new_names - old_names),
+                    "removed": sorted(old_names - new_names),
+                }
+            )
 
     def _capture_state(
         self,
@@ -229,6 +313,42 @@ class AgentVaultProxyAddon:
         # is audited" half (the "history preserved" half comes from chattr +a).
         if self.audit is not None:
             self.audit.emit({"type": "proxy_restart"})
+        self._start_notes_refresh()
+
+    def _start_notes_refresh(self) -> None:
+        """ADR-0032: start the background notes-refresh loop when a running event
+        loop exists (the mitmproxy runtime). No-op in the sync test/CLI harness —
+        there, tests drive refresh_notes() directly."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._refresh_task is None or self._refresh_task.done():
+            self._refresh_task = loop.create_task(self._notes_refresh_loop())
+
+    async def _notes_refresh_loop(self) -> None:
+        while True:
+            config = self.config
+            interval = config.notes_refresh_seconds if config is not None else 0
+            if interval <= 0 or (config is not None and config.binding_source == "file"):
+                # Disabled (possibly toggled off by a reload) — idle-poll so a
+                # later reload can re-enable it without a restart.
+                await asyncio.sleep(30)
+                continue
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(self.refresh_notes)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Fail-safe: keep the previous bindings, never crash the daemon.
+                _log.exception("notes refresh failed; keeping previous bindings")
+
+    def done(self) -> None:
+        task = self._refresh_task
+        if task is not None:
+            task.cancel()
+            self._refresh_task = None
 
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
         """ADR-0026: scope TLS termination to bound hosts.
@@ -468,20 +588,50 @@ class AgentVaultProxyAddon:
                 )
 
     def request(self, flow: http.HTTPFlow) -> None:
-        """ADR-0027: sign a sigv4-bound request once the full body is buffered.
+        """Sign a body-hashing request once the full body has buffered.
 
-        ``requestheaders`` stashed the ALLOWED sigv4 verdict on
-        ``flow.metadata['avp_sigv4']`` (it could not sign there — SigV4 hashes
-        the body, which had not arrived). This hook fires with the complete
-        request, so the signer can hash it. No-op for every non-sigv4 request.
+        ``requestheaders`` stashed the ALLOWED signing verdict on
+        ``flow.metadata['avp_signing']`` — sigv4/hmac hash the request body,
+        which had not arrived at header time (jwt rides the same seam for a
+        single dispatch). This hook fires with the complete request, so the
+        signer can hash it, then dispatches to the one matching signer. No-op for
+        every non-signing request; fails closed (503) if the runtime state is
+        gone (reload race) or the stashed injector is unrecognized
+        (ADR-0027/0028/0030).
         """
         stashed = flow.metadata.get("avp_signing")
         if stashed is None:
             return
+        decision, request_id, target_host = stashed
         _config, client, audit, _companion = self._capture_state()
         if client is None or audit is None:
+            # Reload race (Oracle C2): requestheaders stashed an ALLOWED signing
+            # verdict, but the runtime state needed to sign vanished before the
+            # body arrived. Fail closed — never forward the placeholder-bearing
+            # request unsigned. The header still carries the (non-secret)
+            # placeholder, so nothing leaks, but AVP must not emit a
+            # half-processed request; deny with 503 like the signer key-missing
+            # path does.
+            if audit is not None:
+                audit.emit(
+                    {
+                        "type": "deny",
+                        "request_id": request_id,
+                        "reason": "signing_state_unavailable",
+                        "destination": {"host": target_host, "port": flow.request.port},
+                    }
+                )
+            flow.response = http.Response.make(
+                503,
+                b"agent-vault-proxy: signing state unavailable\n",
+                {"Content-Type": "text/plain"},
+            )
             return
-        decision, request_id, target_host = stashed
+        # Exactly one signing injector reaches this hook: policy.decide() sets
+        # exactly one, and only sigv4/hmac/jwt stash `avp_signing`. Dispatch is
+        # explicit per type (Oracle C3) — a JWT default-branch would silently
+        # misroute a future body-signer added to the stash path but not here, so
+        # the (unreachable today) else fails closed instead of guessing JWT.
         if decision.sigv4_injector is not None:
             self._sigv4_resolver.sign_and_apply(
                 flow=flow,
@@ -500,7 +650,7 @@ class AgentVaultProxyAddon:
                 request_id=request_id,
                 target_host=target_host,
             )
-        else:
+        elif decision.jwt_injector is not None:
             self._jwt_resolver.sign_and_apply(
                 flow=flow,
                 decision=decision,
@@ -508,6 +658,20 @@ class AgentVaultProxyAddon:
                 audit=audit,
                 request_id=request_id,
                 target_host=target_host,
+            )
+        else:
+            audit.emit(
+                {
+                    "type": "deny",
+                    "request_id": request_id,
+                    "reason": "unrecognized_signing_injector",
+                    "destination": {"host": target_host, "port": flow.request.port},
+                }
+            )
+            flow.response = http.Response.make(
+                503,
+                b"agent-vault-proxy: unrecognized signing injector\n",
+                {"Content-Type": "text/plain"},
             )
 
     def response(self, flow: http.HTTPFlow) -> None:

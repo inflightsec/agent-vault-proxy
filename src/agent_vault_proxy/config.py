@@ -414,6 +414,12 @@ class Config(BaseModel):
     # CONNECT before TLS; this only decides terminate-vs-tunnel for what is
     # allowed through.
     tls_termination: Literal["bound", "all"] = "bound"
+    # ADR-0032: for a listable vault backend in notes/both mode, re-resolve the
+    # binding policy from the vault this often (seconds), in the background, so a
+    # NEW secret + note is brokered without a restart. 0 disables. Ignored in
+    # file mode (nothing to refresh). Warm value/token caches survive a refresh;
+    # only the binding snapshot is swapped.
+    notes_refresh_seconds: int = Field(default=60, ge=0, le=86400)
     # Where binding policy comes from (ADR-0011, ADR-0018). Default `both`:
     # bindings resolve from the backend's per-secret metadata (BWS notes / GSM
     # `avp-binding` annotations) AND `secrets:` in this file, notes winning for

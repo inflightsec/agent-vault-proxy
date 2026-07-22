@@ -68,6 +68,10 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         # host + reason only — the connection was never decrypted, so there is
         # no secret material to leak. Gives exfil visibility in passthrough mode.
         "tls_passthrough",
+        # ADR-0032: the background notes-refresh re-resolved the vault bindings
+        # and the bound set CHANGED (secret added/removed). Carries added/removed
+        # secret names only, never values. Silent when nothing changed.
+        "notes_refreshed",
     }
 )
 
@@ -85,10 +89,18 @@ class AuditWriter:
         # Secret names the operator flagged `honeytoken: true` (ADR-0019 §5).
         # An inject_decision naming one auto-emits a follow-up
         # `honeytoken_triggered` event so the fleet collector can alert on a
-        # single unambiguous type. Read-only after construction; a config
-        # reload builds a fresh AuditWriter (see addon.configure_from_path).
+        # single unambiguous type. Updated in place by set_honeytoken_names on a
+        # background notes-refresh (ADR-0032); a full config reload builds a
+        # fresh AuditWriter (see addon.configure_from_path).
         self._honeytoken_names = honeytoken_names
         self._lock = threading.Lock()
+
+    def set_honeytoken_names(self, names: frozenset[str]) -> None:
+        """Swap the honeytoken set (ADR-0032: the notes-refresh keeps this writer,
+        but the merged secret set may have gained or lost a honeytoken). Atomic
+        rebind under the emit lock, so a concurrent emit sees old-or-new, never torn."""
+        with self._lock:
+            self._honeytoken_names = names
 
     def emit(self, event: dict[str, Any]) -> None:
         # ADR-0023 choke-point contract guard. Refuse any event whose `type`

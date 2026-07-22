@@ -761,6 +761,11 @@ class NotesActivator:
     listing is unusable, rather than serving guessed state.
     """
 
+    # ADR-0032: set by degrade() to the degrade reason (else None) so a caller
+    # that must NOT tolerate a degraded resolution — the background notes-refresh
+    # — can keep its previous snapshot instead of publishing emptied bindings.
+    last_degraded_reason: str | None = None
+
     def activate(  # noqa: C901 — config-build orchestrator; heavy branches extracted to module helpers
         self,
         *,
@@ -786,6 +791,9 @@ class NotesActivator:
         (`both`) or no bindings (`bws_notes`) so the daemon keeps serving
         without guessing or using insecure state.
         """
+        # ADR-0032: fresh per run; degrade() flips it so the notes-refresh caller
+        # can tell a degraded resolution from a legitimately empty one.
+        self.last_degraded_reason = None
         from agent_vault_proxy.placeholders import (
             load_or_create_install_salt,
             resolve_install_salt_path,
@@ -900,6 +908,7 @@ class NotesActivator:
         file-only (`both`) or no bindings (`bws_notes`) keeps startup alive
         while staying fail closed for notes-derived bindings.
         """
+        self.last_degraded_reason = reason
         degraded_to = "file bindings only" if new_config.binding_source == "both" else "no bindings"
         _log.warning(
             "BWS-notes activation degraded in %s mode: %s; serving %s",

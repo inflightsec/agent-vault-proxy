@@ -30,6 +30,7 @@ from agent_vault_proxy.config import (
     Config,
 )
 from agent_vault_proxy.placeholders import (
+    InstallSaltError,
     PlaceholderCollisionError,
     derive_placeholder,
     derive_placeholder_map,
@@ -210,6 +211,25 @@ def test_load_or_create_install_salt_rejects_wrong_owner(tmp_path, monkeypatch) 
     monkeypatch.setattr(os, "geteuid", lambda: current_uid + 1)
     with pytest.raises(ValueError, match="owned by uid"):
         load_or_create_install_salt(salt_path)
+
+
+def test_load_or_create_install_salt_root_run_gets_hint(tmp_path, monkeypatch) -> None:
+    """Run-as-root against a daemon-owned salt: the error is an InstallSaltError
+    carrying a hint that names the likely cause (ran as root) plus the fix."""
+    salt_path = tmp_path / "install-salt"
+    salt_path.write_bytes(os.urandom(32))
+    salt_path.chmod(0o600)
+    owner_uid = os.stat(salt_path).st_uid
+    if owner_uid == 0:
+        pytest.skip("temp file is root-owned in this environment")
+    # Simulate running as root (euid 0) while the salt is owned by another user.
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    with pytest.raises(InstallSaltError) as excinfo:
+        load_or_create_install_salt(salt_path)
+    hint = excinfo.value.hint
+    assert hint is not None
+    assert "root" in hint.lower()
+    assert "sudo -u" in hint
 
 
 def test_resolve_install_salt_path_prefers_explicit_then_confdir_then_home(

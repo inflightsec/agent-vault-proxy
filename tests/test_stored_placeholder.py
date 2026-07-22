@@ -110,6 +110,36 @@ def test_bare_host_shorthand_still_derives():
     assert result.spec.placeholder == _DERIVED_FALLBACK
 
 
+def test_indented_note_body_parses():
+    # Hand-pasted notes are often uniformly indented (copied from a rendered
+    # block). Body indented 2 spaces under a col-0 marker must still bind.
+    note = (
+        "# avp-binding\n"
+        "  host: api.example.com\n"
+        f"  placeholder: {_STORED}\n"
+        "  header: Authorization\n"
+        '  format: "Bearer {secret}"\n'
+    )
+    result = _parse(note)
+    assert isinstance(result, ParsedBinding)
+    assert result.spec.placeholder == _STORED
+    assert result.spec.bindings[0].host == "api.example.com"
+
+
+def test_tab_indented_note_body_parses():
+    # Raw YAML rejects tab indentation; the dedent normalization must rescue
+    # a uniformly tab-indented body.
+    note = f"# avp-binding\n\thost: api.example.com\n\tplaceholder: {_STORED}\n"
+    result = _parse(note)
+    assert isinstance(result, ParsedBinding)
+    assert result.spec.placeholder == _STORED
+
+
+def test_inconsistent_indentation_still_fails_loud():
+    note = f"# avp-binding\nhost: api.example.com\n    placeholder: {_STORED}\n"
+    assert isinstance(_parse(note), InvalidBinding)
+
+
 # ── stored_placeholder_from_note helper ─────────────────────────────────────
 
 

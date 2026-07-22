@@ -399,7 +399,7 @@ def test_run_setup_requires_root_unless_dry_run(monkeypatch, capsys) -> None:
 def test_main_setup_dispatch(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static, **_):
         seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
         return 23
 
@@ -412,7 +412,7 @@ def test_main_setup_dispatch(monkeypatch) -> None:
 def test_main_setup_static_dispatch(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static, **_):
         seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
         return 29
 
@@ -425,7 +425,7 @@ def test_main_setup_static_dispatch(monkeypatch) -> None:
 def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static):
+    def _fake_run_setup(*, user, dry_run, prefix, allow_mutable_audit, no_service, static, **_):
         seen["args"] = (allow_mutable_audit, no_service, static)
         return 0
 

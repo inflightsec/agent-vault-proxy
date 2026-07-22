@@ -232,6 +232,25 @@ class AgentVaultProxyAddon:
         self._header_handler.allowlist_rejected_hosts = snap.allowlist_rejected_hosts
         self._companion_headers = snap.companion_headers
 
+        # Startup/reload visibility (2026-07-23): one INFO line so an operator can
+        # confirm at a glance which secrets are injectable vs dropped, without
+        # reading the request path — the "is my binding live?" question the logs
+        # previously couldn't answer. Names only (never values); DEBUG lists them.
+        all_names = set(snap.placeholder_to_name.values())
+        inactive = snap.no_binding | snap.invalid | snap.allowlist_rejected
+        active = sorted(all_names - inactive)
+        _log.info(
+            "bindings published: %d injectable, %d no-binding, %d invalid, "
+            "%d allowlist-rejected (%d secrets listed)",
+            len(active),
+            len(snap.no_binding),
+            len(snap.invalid),
+            len(snap.allowlist_rejected),
+            len(all_names),
+        )
+        if active and _log.isEnabledFor(logging.DEBUG):
+            _log.debug("injectable secrets: %s", ", ".join(active))
+
     def refresh_notes(self) -> None:
         """ADR-0032: re-resolve vault bindings and atomic-swap the snapshot,
         KEEPING the warm value + derived-token caches (a full reconfigure would

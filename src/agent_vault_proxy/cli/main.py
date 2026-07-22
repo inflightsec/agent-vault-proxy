@@ -239,6 +239,13 @@ def main(argv: list[str] | None = None) -> int:
         if exc.hint:
             print(f"\n{exc.hint}", file=sys.stderr)
         return 1
+    except FileNotFoundError as exc:
+        # Missing config / salt / cert path — an operator path mistake, not a
+        # bug. One actionable line instead of a traceback.
+        target = exc.filename or exc.strerror or exc
+        print(f"avp: file not found: {target}", file=sys.stderr)
+        print("Check the --config path (and that setup has run) and try again.", file=sys.stderr)
+        return 1
 
 
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:

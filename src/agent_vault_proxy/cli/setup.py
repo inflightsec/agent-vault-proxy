@@ -135,10 +135,13 @@ def plan_setup(
     allow_mutable_audit: bool = False,
     no_service: bool = False,
     static: bool = False,
+    gsm: bool = False,
 ) -> list[Step]:
     """Render the ``avp setup`` install plan without touching the host."""
     if os_name not in {"linux", "macos"}:
         raise ValueError(f"unsupported os_name {os_name!r}")
+    # Single internal backend selector derived from the mutually-exclusive flags.
+    backend = "gsm" if gsm else ("static" if static else "bws")
 
     # gid-0 group differs per platform; macOS has no "root" group.
     gid0_group = "root" if os_name == "linux" else "wheel"
@@ -192,7 +195,7 @@ def plan_setup(
             FileStep(
                 description="Write starter bindings.yaml.",
                 path=paths.bindings_path,
-                content=_render_bindings(paths, static=static),
+                content=_render_bindings(paths, backend=backend),
                 owner="root",
                 group=group,
                 mode=0o640,
@@ -237,7 +240,7 @@ def plan_setup(
             ),
         ]
     )
-    if not static:
+    if backend == "bws":
         steps.insert(
             -4,
             PromptStep(
@@ -249,7 +252,7 @@ def plan_setup(
                 skip_if_exists=True,
             ),
         )
-    else:
+    elif backend == "static":
         steps.insert(
             -4,
             FileStep(
@@ -262,6 +265,8 @@ def plan_setup(
                 skip_if_exists=True,
             ),
         )
+    # backend == "gsm": keyless — no local secret material to provision. Access
+    # is granted out-of-band via `avp gcp-setup` (hand-off printed after setup).
 
     if os_name == "linux":
         steps.append(
@@ -330,8 +335,15 @@ def run_setup(
     allow_mutable_audit: bool = False,
     no_service: bool = False,
     static: bool = False,
+    gsm: bool = False,
+    bws: bool = False,
 ) -> int:
-    """CLI entry point for ``avp setup``."""
+    """CLI entry point for ``avp setup``.
+
+    Backend selection: exactly one of ``--bws`` / ``--gsm`` / ``--static`` may be
+    passed. When none is (all three False), an interactive picker runs on a TTY;
+    off a TTY it defaults to BWS so Ansible / container runs stay non-interactive.
+    """
     system_name = platform.system()
     if system_name == "Linux":
         os_name = "linux"
@@ -346,6 +358,13 @@ def run_setup(
     if not dry_run and os.geteuid() != 0:
         print("re-run with sudo", file=sys.stderr)
         return 1
+
+    # No backend flag → let the user choose on a TTY; default BWS off a TTY so
+    # non-interactive (Ansible / container) runs are unchanged.
+    if not (static or gsm or bws) and sys.stdin.isatty():
+        choice = _prompt_backend()
+        static = choice == "static"
+        gsm = choice == "gsm"
 
     paths = default_paths(os_name, prefix)
     uid: int | None = None
@@ -363,6 +382,7 @@ def run_setup(
         allow_mutable_audit=allow_mutable_audit,
         no_service=no_service,
         static=static,
+        gsm=gsm,
     )
     execute_plan(plan, dry_run=dry_run)
     if no_service:
@@ -390,7 +410,71 @@ def run_setup(
             "ProtectSystem, RestrictAddressFamilies, or syscall filter. If this host "
             "is a credible target, run agent-vault-proxy inside Docker or a Linux VM."
         )
+    if gsm:
+        print(_render_gsm_handoff(paths))
+    print(_render_next_steps())
     return doctor_rc
+
+
+def _prompt_backend() -> str:
+    """Interactive backend picker (TTY only). Returns 'bws' | 'gsm' | 'static'.
+    Loops until a valid 1/2/3 choice is entered — never guesses a default."""
+    print("Which secret backend should agent-vault-proxy use?")
+    print("  [1] Bitwarden Secrets Manager (BWS) — paste a machine-account token")
+    print("  [2] Google Secret Manager (GSM)     — keyless (gcloud ADC), nothing to paste")
+    print("  [3] Local static file               — no vault, 0600 file (dev/testing)")
+    choices = {"1": "bws", "2": "gsm", "3": "static"}
+    while True:
+        answer = input("Enter 1, 2, or 3: ").strip()
+        if answer in choices:
+            return choices[answer]
+        print(f"'{answer}' is not 1, 2, or 3 — please try again.")
+
+
+def _render_gsm_handoff(paths: SetupPaths) -> str:
+    """DRY hand-off to `avp gcp-setup` — setup selects the backend; the separate,
+    privileged IAM helper grants per-secret read access. GSM is keyless, so
+    nothing was pasted here."""
+    return (
+        "\n"
+        "GSM backend selected — keyless, so nothing was pasted. Two steps to finish:\n"
+        "\n"
+        f"  1. Set your project number in {paths.bindings_path}\n"
+        "     (field `project_id`; optionally `impersonate_service_account`).\n"
+        "\n"
+        "  2. Grant AVP read access PER SECRET (least privilege) with the IAM helper:\n"
+        "       sudo avp gcp-setup --project <PROJECT> \\\n"
+        "         --member serviceAccount:<AVP_SERVICE_ACCOUNT> --secret <SECRET_NAME>\n"
+        "\n"
+        "  AVP authenticates via gcloud ADC and refuses a downloaded key file\n"
+        "  (reject_ambient_key: true); self_check: deny stops it starting under a\n"
+        "  broad identity. Verify anytime with: avp doctor --probe-gcp\n"
+    )
+
+
+def _render_next_steps() -> str:
+    """Post-setup guidance: how to add the first binding. Points at the
+    deterministic `avp binding new` tool first, then the optional skill for a
+    conversational flow — never auto-installs anything."""
+    return (
+        "\n"
+        "Next — put an API key behind the proxy. Your real key never enters the agent.\n"
+        "\n"
+        "  Works in ANY agent (or none): run the generator, paste what it prints into\n"
+        "  your vault. It validates the binding, so it can't be silently wrong:\n"
+        "\n"
+        "    avp binding new --host api.stripe.com --name STRIPE_API_KEY\n"
+        "\n"
+        '  In Claude Code, skip the flags and just say: "route my Stripe key through avp".\n'
+        "  Install the skill ONCE by typing these as slash-commands in the Claude Code\n"
+        "  chat (they are NOT terminal commands):\n"
+        "\n"
+        "    /plugin marketplace add inflightsec/agent-vault-proxy\n"
+        "    /plugin install avp@agent-vault-proxy\n"
+        "\n"
+        "  Codex or another agent? There's no plugin store — just run the command above,\n"
+        "  or tell the agent to. Same tool everywhere.\n"
+    )
 
 
 def _plan_service_user(
@@ -534,8 +618,8 @@ def _audit_post_actions(
     )
 
 
-def _render_bindings(paths: SetupPaths, *, static: bool = False) -> str:
-    if not static:
+def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
+    if backend == "bws":
         file_bindings_comment = "# bindings come from BWS notes; add file bindings here if needed"
         return textwrap.dedent(
             f"""\
@@ -561,6 +645,35 @@ def _render_bindings(paths: SetupPaths, *, static: bool = False) -> str:
             """
         )
 
+    if backend == "gsm":
+        # Keyless by design (ADR-0018): NO key-file field. AVP authenticates via
+        # gcloud ADC / SA impersonation and refuses a downloaded key
+        # (reject_ambient_key). self_check: deny refuses to start under a broad
+        # identity. project_id is a placeholder — set it, then grant per-secret
+        # read with `avp gcp-setup` (see the hand-off printed after setup).
+        return textwrap.dedent(
+            f"""\
+            # agent-vault-proxy starter config written by `avp setup --gsm`.
+            # Host bindings live in each GSM secret's `avp-binding` annotation
+            # (binding_source: notes); no `secrets:` block is needed here.
+            version: 1
+            binding_source: notes
+            # Pinned so daemon + tooling derive identical placeholders.
+            install_salt_path: {paths.salt_path}
+            backend:
+              type: gsm
+              config:
+                type: gsm
+                project_id: "REPLACE-WITH-YOUR-GCP-PROJECT-NUMBER"   # <- you MUST set this
+                secret_prefix: "avp-"                 # scopes list + the self_check guard
+                # impersonate_service_account: "avp-ro@PROJECT.iam.gserviceaccount.com"
+                self_check: deny                      # refuse to start under a broad identity
+                reject_ambient_key: true              # refuse a downloaded SA key via ADC
+            audit:
+              path: {paths.audit_path}
+            """
+        )
+
     content = textwrap.dedent(
         f"""\
         # agent-vault-proxy starter config written by `avp setup`.
@@ -569,7 +682,7 @@ def _render_bindings(paths: SetupPaths, *, static: bool = False) -> str:
         binding_source: file
         secrets:
           EXAMPLE_API_KEY:
-            placeholder: "avp-PLACEHOLDER-EXAMPLE-0001"
+            placeholder: "example_PLACEHOLDER_0001"
             inject:
               header: "Authorization"
               format: "Bearer {{EXAMPLE_API_KEY}}"
@@ -723,7 +836,20 @@ def _execute_prompt_step(step: PromptStep, *, dry_run: bool) -> None:
     if step.skip_if_exists and os.path.exists(step.dest_path):
         print(f"Skipping {step.dest_path}: token file already exists.")
         return
-    token = getpass("Paste the BWS machine-account access token (input hidden): ")
+    token = getpass("Paste the BWS machine-account access token (input hidden): ").strip()
+    if not token:
+        token = getpass("No token entered. Paste it now, or press Enter again to skip: ").strip()
+    if not token:
+        # Never write a 0-byte token file — that only produces confusing daemon
+        # errors later. Skip cleanly and tell the user how to finish or switch.
+        print(
+            "avp setup: no BWS token provided — skipping (nothing written). The proxy "
+            f"will not start until you write the token to {step.dest_path}, or re-run "
+            "`sudo avp setup --static` (local file) or `sudo avp setup --gsm` "
+            "(Google Secret Manager).",
+            file=sys.stderr,
+        )
+        return
     _write_file(
         path=step.dest_path,
         content=token,

@@ -19,6 +19,7 @@ _PH = "hf-PLACEHOLDER-0123456789ABCDEF"
 
 # The HuggingFace trigger: one token, three hosts, plain Bearer, none curated.
 _HF_NOTE = (
+    "# avp-binding\n"
     "host:\n"
     "  - huggingface.co\n"
     "  - api-inference.huggingface.co\n"
@@ -53,7 +54,7 @@ def test_hosts_alias_is_equivalent_to_host_list() -> None:
 
 
 def test_host_and_hosts_together_is_invalid() -> None:
-    note = 'host: a.example.com\nhosts: [b.example.com]\nformat: "Bearer {secret}"\n'
+    note = '# avp-binding\nhost: a.example.com\nhosts: [b.example.com]\nformat: "Bearer {secret}"\n'
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "either `host` or `hosts`" in r.diagnostic
@@ -64,7 +65,7 @@ def test_single_element_list_equals_scalar_path() -> None:
     # table applies, so no explicit format is required and api.openai.com gets
     # its curated POST /v1/** default.
     r = parse_notes_binding(
-        secret_name="OPENAI_API_KEY", placeholder=_PH, note="host: [api.openai.com]"
+        secret_name="OPENAI_API_KEY", placeholder=_PH, note="# avp-binding\nhost: [api.openai.com]"
     )
     assert isinstance(r, ParsedBinding)
     assert _hosts(r) == ["api.openai.com"]
@@ -72,27 +73,27 @@ def test_single_element_list_equals_scalar_path() -> None:
 
 
 def test_empty_list_is_invalid() -> None:
-    r = parse_notes_binding(secret_name="X", placeholder=_PH, note="host: []")
+    r = parse_notes_binding(secret_name="X", placeholder=_PH, note="# avp-binding\nhost: []")
     assert isinstance(r, InvalidBinding)
     assert "empty" in r.diagnostic
 
 
 def test_blank_element_is_invalid() -> None:
-    note = 'host:\n  - a.example.com\n  - "  "\nformat: "Bearer {secret}"\n'
+    note = '# avp-binding\nhost:\n  - a.example.com\n  - "  "\nformat: "Bearer {secret}"\n'
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "non-empty string" in r.diagnostic
 
 
 def test_non_string_element_is_invalid() -> None:
-    note = 'host:\n  - a.example.com\n  - 12345\nformat: "Bearer {secret}"\n'
+    note = '# avp-binding\nhost:\n  - a.example.com\n  - 12345\nformat: "Bearer {secret}"\n'
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
 
 
 def test_multihost_without_explicit_format_is_invalid() -> None:
     # Self-describing rule: no silent bare-Bearer broadcast across hosts.
-    note = "host:\n  - a.example.com\n  - b.example.com\n"
+    note = "# avp-binding\nhost:\n  - a.example.com\n  - b.example.com\n"
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "explicit `format`" in r.diagnostic
@@ -101,7 +102,9 @@ def test_multihost_without_explicit_format_is_invalid() -> None:
 def test_multihost_with_curated_host_is_invalid() -> None:
     # api.github.com carries a curated GET-only default; it may not be buried in
     # a multi-host note where that scope cannot be applied per-host.
-    note = 'host:\n  - api.github.com\n  - api.example.com\nformat: "Bearer {secret}"\n'
+    note = (
+        '# avp-binding\nhost:\n  - api.github.com\n  - api.example.com\nformat: "Bearer {secret}"\n'
+    )
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "api.github.com" in r.diagnostic
@@ -110,6 +113,7 @@ def test_multihost_with_curated_host_is_invalid() -> None:
 
 def test_multihost_scope_applies_to_every_host() -> None:
     note = (
+        "# avp-binding\n"
         "host:\n"
         "  - a.example.com\n"
         "  - b.example.com\n"
@@ -126,6 +130,7 @@ def test_multihost_scope_applies_to_every_host() -> None:
 
 def test_case_variant_hosts_dedupe() -> None:
     note = (
+        "# avp-binding\n"
         "host:\n"
         "  - HuggingFace.co\n"
         "  - huggingface.co\n"
@@ -140,7 +145,7 @@ def test_case_variant_hosts_dedupe() -> None:
 def test_multihost_wrong_format_placeholder_is_invalid() -> None:
     # A foreign/typo placeholder would ship an unsubstituted literal header;
     # the note path must fail closed like the file path (Forge finding A).
-    note = 'host:\n  - a.example.com\n  - b.example.com\nformat: "Bearer {OTHER}"\n'
+    note = '# avp-binding\nhost:\n  - a.example.com\n  - b.example.com\nformat: "Bearer {OTHER}"\n'
     r = parse_notes_binding(secret_name="HF_TOKEN", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "substitution token" in r.diagnostic
@@ -150,14 +155,14 @@ def test_scalar_wrong_format_placeholder_is_invalid() -> None:
     r = parse_notes_binding(
         secret_name="HF_TOKEN",
         placeholder=_PH,
-        note='host: a.example.com\nformat: "Bearer {OTHER}"\n',
+        note='# avp-binding\nhost: a.example.com\nformat: "Bearer {OTHER}"\n',
     )
     assert isinstance(r, InvalidBinding)
     assert "substitution token" in r.diagnostic
 
 
 def test_multihost_format_without_placeholder_is_invalid() -> None:
-    note = 'host:\n  - a.example.com\n  - b.example.com\nformat: "Bearer static"\n'
+    note = '# avp-binding\nhost:\n  - a.example.com\n  - b.example.com\nformat: "Bearer static"\n'
     r = parse_notes_binding(secret_name="HF_TOKEN", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
 
@@ -165,7 +170,9 @@ def test_multihost_format_without_placeholder_is_invalid() -> None:
 def test_wildcard_element_in_multihost_is_invalid() -> None:
     # A `*.github.com` element supersets the curated api.github.com host and must
     # not ride along in a multi-host note (Forge finding B).
-    note = 'host:\n  - "*.github.com"\n  - api.example.com\nformat: "Bearer {secret}"\n'
+    note = (
+        '# avp-binding\nhost:\n  - "*.github.com"\n  - api.example.com\nformat: "Bearer {secret}"\n'
+    )
     r = parse_notes_binding(secret_name="X", placeholder=_PH, note=note)
     assert isinstance(r, InvalidBinding)
     assert "wildcard" in r.diagnostic
@@ -174,7 +181,7 @@ def test_wildcard_element_in_multihost_is_invalid() -> None:
 def test_dedupe_to_single_curated_host_applies_scalar_defaults() -> None:
     # A list that collapses to one curated host takes the scalar path, so the
     # curated GET-only default still applies (guard is not bypassed by dedup).
-    note = "host:\n  - api.github.com\n  - API.GitHub.com\n"
+    note = "# avp-binding\nhost:\n  - api.github.com\n  - API.GitHub.com\n"
     r = parse_notes_binding(secret_name="GH", placeholder=_PH, note=note)
     assert isinstance(r, ParsedBinding)
     assert _hosts(r) == ["api.github.com"]

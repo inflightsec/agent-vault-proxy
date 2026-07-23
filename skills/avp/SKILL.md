@@ -1,0 +1,94 @@
+---
+name: avp
+description: >
+  Author agent-vault-proxy (AVP) secret bindings the NOTES-FIRST way — tell the user
+  EXACTLY what to add to Bitwarden Secrets Manager notes, Google Secret Manager
+  annotations, or a future backend so a new credential is brokered through the proxy,
+  with NO config-file edit and NO redeploy. Proposes only; never writes the secret to
+  the vault. USE WHEN add avp secret, avp binding, broker or route an API key/token
+  through agent-vault-proxy, "what do I put in the bitwarden notes", "add a secret to
+  gsm for avp", new backend secret, onboard a credential to the vault proxy. NOT FOR
+  editing the AVP config file directly (that's the discouraged file source), running or
+  deploying the proxy, or having the assistant store the secret value.
+---
+
+# avp
+
+Helps an agent walk a user through brokering a **new** secret through **agent-vault-proxy (AVP)** — the local proxy that swaps a placeholder for the real secret in-flight, so the calling process never holds the credential. This skill's whole job is to hand the user the **exact thing to paste where**, using the **notes/annotation source** so nothing in AVP's config file changes and nothing is redeployed.
+
+## Three hard rules
+
+1. **Notes-first, config never.** Modern AVP reads bindings from each secret's own metadata — the **BWS `notes` field**, the **GSM `avp-binding` annotation**, and equivalent per-secret metadata on future backends (`binding_source: both` is the default; notes win over file). So a new credential is added entirely in the vault UI/CLI — **no editing `bindings`/`secrets:` in the AVP config, no `ansible`/`avp setup` redeploy.** Only reach for the config (file source) when a note genuinely can't express the binding (see Gotchas).
+2. **Propose, never apply — for the SECRET.** This skill NEVER writes the secret value or the annotation to the vault for the user. It prints the secret name, tells the user where to put the value, and prints the annotation text to paste. The human applies it. (The assistant handling the raw secret is exactly what AVP exists to prevent.)
+3. **Persist the placeholder at generation — BLOCKING.** The instant `avp binding new` mints a placeholder it is shown once, on that command's output. You MUST get it into durable storage in the SAME session — never leave it living only in terminal scrollback. The placeholder is a non-secret sentinel (unlike rule 2's secret), so you *may and should* write it yourself: put the printed `export <NAME>='avp-PLACEHOLDER-…'` line straight into the consuming app's `.env`/config, or hand the user the exact line and confirm they saved it. A binding whose placeholder never reaches the consumer injects nothing — this is the single most common "AVP isn't working" cause. (Backstop: the placeholder is also recoverable later from the vault note and via `avp env`, but do NOT defer to that — wire it now.)
+
+## Workflow routing
+
+| Trigger | Workflow |
+|---------|----------|
+| "add/route/broker a secret through AVP", "what do I put in the notes" | `Workflows/AddSecret.md` |
+
+## Quick reference — the note is tiny
+
+**Generate it with the tool, don't hand-write it.** `avp binding new --host <host> --name <NAME>` builds the note and validates it through the daemon's own parser before printing — marker guaranteed, `{secret}` token guaranteed, bad host refused. This is the deterministic path; hand-authoring is the fallback (and the source of two prior outages). See `Workflows/AddSecret.md` §3.
+
+**Every note MUST begin with the marker line `# avp-binding` — the exact string, as the first non-blank line (ADR-0025).** A note without the marker is a human description: never parsed, never a binding. A note *with* the marker that fails to parse fails loud (`invalid_binding_metadata`).
+
+Below the marker, a binding annotation is **flat YAML** with only these keys: `host`, `placeholder`, `header`, `format`, `methods`, `paths`. The credential is referenced as the generic token **`{secret}`** (the note has no name key — the secret *is* the value). Bare-host shorthand (`host: api.example.com`) works when the defaults (Authorization / Bearer) fit. `placeholder:` (ADR-0029) pins the exact sentinel the consumer must emit — minted by the tool, never hand-typed.
+
+Bearer API on one host — paste into the BWS secret's Notes field:
+
+```yaml
+# avp-binding
+host: api.example.com
+placeholder: avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m6n7p
+header: Authorization
+format: "Bearer {secret}"
+```
+
+- **Fail-closed:** a secret with no *marked* annotation is never injected.
+- **Backends:** BWS → the secret's **Notes**; GSM → `--annotations=avp-binding=<yaml>` (same marker-first contract); future backends → their per-secret metadata field.
+- Full schema, the auth-pattern catalog (Bearer / token / X-API-Key / Basic / composite), and scoping live in `References/NoteSchema.md`.
+
+## Wire the consumer — the placeholder is the other half of the binding
+
+A binding alone injects nothing: the consuming app must **emit the secret's placeholder** for AVP
+to have something to swap. The placeholder is a sentinel, NOT a secret — safe to print, paste, and
+write into configs without any special permission.
+
+**Stored placeholders (ADR-0029 — the default path):** `avp binding new` mints the placeholder
+INTO the note (`placeholder: avp-PLACEHOLDER-…`) and prints the wiring line on stderr:
+
+```bash
+avp binding new --host api.acme.com --name ACME_API_KEY
+# stdout → the note to paste into the vault
+# stderr → export ACME_API_KEY='avp-PLACEHOLDER-…'   ← wire THIS into the consumer
+```
+
+Wire it in the same session: write the line into the target `.env` / consumer config yourself (or
+hand it to the user verbatim). Then remind the user the daemon reads notes at reload — a restart of
+the AVP daemon is needed before the new binding is live. Stored placeholders survive salt rotation
+and secret renames; the whole ceremony needs no access to the AVP host.
+
+**Derived placeholders (legacy notes without `placeholder:`):** AVP derives them from a per-install
+salt; discover with the flagless one-liner on the AVP host:
+
+```bash
+sudo avp env --print | grep <SECRET_NAME>
+# (source installs without avp on PATH: /opt/agent-vault-proxy/.venv/bin/avp)
+```
+
+`avp env` prefers the stored placeholder wherever a note pins one, so its output always matches
+what the daemon enforces. If the sandbox lacks sudo on the AVP host, hand the user the one-liner
+and wire the value they return.
+
+## Gotchas
+
+- **Missing marker = inert note (ADR-0025).** A note whose first non-blank line is not exactly `# avp-binding` is ignored as a description — the secret simply stays unbound (a host-shaped unmarked note logs a load-time warning naming the secret). Never hand the user a note template without the marker line.
+- **Multi-host notes (ADR-0021).** `host` accepts a list (or a `hosts:` alias) — a token spanning several hosts fans out to one binding per host. A multi-host list must set an explicit `format`, may **not** include a curated host (`api.github.com` etc.) or a `*.` wildcard element, and applies one **uniform** `methods`/`paths` scope. For per-host scope or a curated host in the mix, use the **file source** instead (a fixed placeholder no longer needs it — the note's `placeholder:` key pins one). See `References/NoteSchema.md`.
+- **Composite/multi-part auth is file-source-only.** Basic auth assembled from two secrets (`email:token`) needs the config's `compose:` + `inject_template` — a note holds one secret. To stay notes-only, pre-encode the whole credential into a single secret and use `format: "Basic {secret}"`.
+- **Stored beats derived (ADR-0029) — and a binding without wiring is a no-op.** `avp binding new` mints a `placeholder:` into the note and the daemon prefers it over salt derivation; notes without the key still derive. The stored value is format-gated (`avp-PLACEHOLDER-` + ≥21 lowercase-base32 chars — never hand-type one) and uniqueness is enforced fail-closed at resolve with thief-loses semantics: a note claiming (equal or overlapping) a derived- or file-placeholder secret's placeholder unbinds only itself; two stored claimants of the same string both drop, audited with both names. Two follow-ups people skip, and then report "AVP doesn't inject": (1) the consumer must actually emit the placeholder — wiring is a mandatory AddSecret step, not an afterthought; (2) the daemon reads notes at reload only — restart it after adding a secret. A pre-ADR-0029 daemon rejects the new key loudly; upgrade the daemon before adopting stored-placeholder notes.
+- **`both` precedence + the `:file` pin.** With `binding_source: both`, a notes binding wins over a file binding for the same secret, and file-only bindings can be dropped unless pinned `:file`. Don't declare the same secret in both places without understanding which wins.
+- **Wildcard hosts need explicit opt-in.** A note cannot widen a credential's blast radius to `*.suffix` unless `allow_wildcard_hosts` is enabled — fail-closed by default. Keep hosts exact.
+- **Annotation-write is a trust boundary (ADR-0018).** Whoever can edit a secret's notes/annotation can redirect the credential to a host they control (confused-deputy). Annotation-write must be locked to the same trust tier as value-read; `avp doctor` warns when it isn't. So "anyone can add a binding" is only safe when note-write is gated.
+- **Never pre-encode a secret the assistant can see.** For Basic/base64 cases, tell the user to compute the encoding themselves (or use the file-source composite template); don't ask them to paste the raw credential to you to encode.

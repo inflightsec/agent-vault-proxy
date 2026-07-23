@@ -456,7 +456,9 @@ class _FakeListableBackend:
 def test_gsm_notes_bare_hostname_needs_no_file_entry() -> None:
     """Radek's North-Star: add a secret to GSM, tag it `avp-binding:
     api.openai.com`, nothing in bindings.yaml — and it binds."""
-    backend = _FakeListableBackend({"OPENAI_API_KEY": ("sk-live-value", "api.openai.com")})
+    backend = _FakeListableBackend(
+        {"OPENAI_API_KEY": ("sk-live-value", "# avp-binding\napi.openai.com")}
+    )
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="gsm_notes",

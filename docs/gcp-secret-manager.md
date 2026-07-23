@@ -31,19 +31,24 @@ secrets later.
 ```bash
 printf '%s' 'sk-your-real-openai-key' | gcloud secrets create avp-OPENAI_API_KEY \
   --project=YOUR_PROJECT \
-  --annotations="avp-binding=api.openai.com" \
+  --annotations=$'avp-binding=# avp-binding\napi.openai.com' \
   --data-file=-
 ```
 
-That's it — the bare hostname is the common case. Need more control? Use a small
-YAML block instead (block style, no inline commas — gcloud treats commas as the
-annotation separator):
+The annotation value's **first line is always the marker `# avp-binding`**
+(ADR-0025) — an annotation without it is treated as a human description and
+ignored. Yes, even here, where the annotation key already says `avp-binding`:
+BWS notes and GSM annotations share one contract and one parser, so the marker
+is uniform across sources. Below the marker, the bare hostname is the common
+case. Need more control? Use a small YAML block instead (block style, no inline
+commas — gcloud treats commas as the annotation separator):
 
 ```bash
-gcloud secrets update avp-OPENAI_API_KEY --update-annotations=$'avp-binding=host: api.openai.com\nmethods:\n- POST\npaths:\n- /v1/**'
+gcloud secrets update avp-OPENAI_API_KEY --update-annotations=$'avp-binding=# avp-binding\nhost: api.openai.com\nmethods:\n- POST\npaths:\n- /v1/**'
 ```
 
-A secret **with no `avp-binding` annotation is never injected** (fail-closed).
+A secret **with no `avp-binding` annotation — or an unmarked one — is never
+injected** (fail-closed).
 
 ## 2. Authenticate — keyless, no key files
 
@@ -166,7 +171,9 @@ bind and it's denied with `403`.
 
 - **Proxy refuses to start with "project-wide access":** working as intended —
   your identity is too broad. Use a scoped SA (step 2b) or `self_check: warn`.
-- **`403` on your bound host:** the secret has no `avp-binding` annotation, or its
-  host doesn't match — check with `gcloud secrets describe NAME --format='value(annotations)'`.
+- **`403` on your bound host:** the secret has no `avp-binding` annotation, the
+  annotation is missing its `# avp-binding` first line (look for the load-time
+  warning in the proxy log), or its host doesn't match — check with
+  `gcloud secrets describe NAME --format='value(annotations)'`.
 - **`google-auth` not found:** install the extra — `pip install 'agent-vault-proxy[gsm]'`.
 - **Curl TLS error:** pass `--cacert ~/.mitmproxy/mitmproxy-ca-cert.pem` (generated on the proxy's first request).

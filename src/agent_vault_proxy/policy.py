@@ -27,12 +27,31 @@ from typing import Any, Literal
 from agent_vault_proxy.config import (
     BindingSpec,
     Config,
+    GithubAppInjector,
     HeaderInjector,
+    HmacInjector,
+    JwtBearerInjector,
+    Oauth2ClientCredentialsInjector,
     Oauth2RefreshInjector,
     SecretSpec,
+    Sigv4Injector,
     iter_leaf_injectors,
 )
 from agent_vault_proxy.matching import host_matches_pattern
+
+# Injectors whose target is a request header (all expose ``.header``); the body
+# injector is the only leaf that is not header-targeting. Used for placeholder
+# detection and as the matched-injector type. A ``types.UnionType`` at runtime,
+# so it works in both type hints and ``isinstance``.
+_HeaderTargetInjector = (
+    HeaderInjector
+    | Oauth2RefreshInjector
+    | Oauth2ClientCredentialsInjector
+    | GithubAppInjector
+    | Sigv4Injector
+    | HmacInjector
+    | JwtBearerInjector
+)
 
 Verdict = Literal["allowed", "denied", "forward_unmodified"]
 
@@ -68,6 +87,16 @@ class Decision:
     secret_spec: SecretSpec | None = None
     header_injector: HeaderInjector | None = None
     oauth2_injector: Oauth2RefreshInjector | None = None
+    # oauth2 client-credentials + github_app — network exchanges resolved at
+    # requestheaders like oauth2_refresh (not the signing request-hook seam).
+    oauth2_cc_injector: Oauth2ClientCredentialsInjector | None = None
+    github_app_injector: GithubAppInjector | None = None
+    # Computed signing injectors — the addon defers execution to the ``request``
+    # hook (sigv4/hmac hash the request BODY; jwt rides the same seam). Exactly
+    # one is set on an allowed verdict.
+    sigv4_injector: Sigv4Injector | None = None
+    hmac_injector: HmacInjector | None = None
+    jwt_injector: JwtBearerInjector | None = None
     header_name: str | None = None
     matched_binding: BindingSpec | None = None
 
@@ -93,7 +122,7 @@ def matched_binding(host: str, spec: SecretSpec) -> BindingSpec | None:
 
 def find_header_placeholder_matches(
     config: Config, header_get: Callable[[str], str | None]
-) -> list[tuple[str, SecretSpec, HeaderInjector | Oauth2RefreshInjector, str, str]]:
+) -> list[tuple[str, SecretSpec, _HeaderTargetInjector, str, str]]:
     """Every ``(secret_name, spec, injector, header_name, value)`` where
     the secret's placeholder appears inside its configured target header.
 
@@ -107,10 +136,10 @@ def find_header_placeholder_matches(
     ``header_get`` is the request's header accessor (case-insensitive,
     mitmproxy semantics) so this stays free of the flow object.
     """
-    matches: list[tuple[str, SecretSpec, HeaderInjector | Oauth2RefreshInjector, str, str]] = []
+    matches: list[tuple[str, SecretSpec, _HeaderTargetInjector, str, str]] = []
     for secret_name, spec in config.secrets.items():
         for child in iter_leaf_injectors(spec.inject):
-            if isinstance(child, HeaderInjector | Oauth2RefreshInjector):
+            if isinstance(child, _HeaderTargetInjector):
                 header_name = child.header
             else:
                 # Body leaves: handled by the streaming body path.
@@ -211,22 +240,46 @@ def decide(
     # For oauth2_refresh, the addon also runs the token-exchange step
     # between fetch and inject; ``token_endpoint_*`` outcomes are
     # execution-layer too.
-    if isinstance(matched_injector, Oauth2RefreshInjector):
-        return Decision(
-            decision="allowed",
-            reason="binding_matched",
-            secret_name=secret_name,
-            secret_spec=secret_spec,
-            oauth2_injector=matched_injector,
-            header_name=header_name,
-            matched_binding=binding,
-        )
-    return Decision(
-        decision="allowed",
-        reason="binding_matched",
+    # Allowed. Routing the matched injector to its Decision execution handle is
+    # extracted to keep decide() under the complexity gate.
+    return _build_allowed_decision(
         secret_name=secret_name,
         secret_spec=secret_spec,
-        header_injector=matched_injector,
+        matched_injector=matched_injector,
         header_name=header_name,
-        matched_binding=binding,
+        binding=binding,
     )
+
+
+def _build_allowed_decision(
+    *,
+    secret_name: str,
+    secret_spec: SecretSpec,
+    matched_injector: _HeaderTargetInjector,
+    header_name: str,
+    binding: BindingSpec,
+) -> Decision:
+    """Map an allowed match to a :class:`Decision` carrying exactly one execution
+    handle for the matched injector type. Computed signers (sigv4/hmac/jwt)
+    resolve in the addon ``request`` hook; oauth2 at requestheaders; header inline."""
+    common = {
+        "decision": "allowed",
+        "reason": "binding_matched",
+        "secret_name": secret_name,
+        "secret_spec": secret_spec,
+        "header_name": header_name,
+        "matched_binding": binding,
+    }
+    if isinstance(matched_injector, Sigv4Injector):
+        return Decision(sigv4_injector=matched_injector, **common)  # type: ignore[arg-type]
+    if isinstance(matched_injector, HmacInjector):
+        return Decision(hmac_injector=matched_injector, **common)  # type: ignore[arg-type]
+    if isinstance(matched_injector, JwtBearerInjector):
+        return Decision(jwt_injector=matched_injector, **common)  # type: ignore[arg-type]
+    if isinstance(matched_injector, Oauth2RefreshInjector):
+        return Decision(oauth2_injector=matched_injector, **common)  # type: ignore[arg-type]
+    if isinstance(matched_injector, Oauth2ClientCredentialsInjector):
+        return Decision(oauth2_cc_injector=matched_injector, **common)  # type: ignore[arg-type]
+    if isinstance(matched_injector, GithubAppInjector):
+        return Decision(github_app_injector=matched_injector, **common)  # type: ignore[arg-type]
+    return Decision(header_injector=matched_injector, **common)  # type: ignore[arg-type]

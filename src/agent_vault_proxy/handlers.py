@@ -32,6 +32,8 @@ from agent_vault_proxy.config import (
     iter_leaf_injectors,
 )
 from agent_vault_proxy.injectors.body import _build_body_replacer
+from agent_vault_proxy.injectors.github_app import GithubAppResolver
+from agent_vault_proxy.injectors.oauth2_client_credentials import Oauth2CcResolver
 from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
 from agent_vault_proxy.matching import host_matches_pattern
 from agent_vault_proxy.policy import matched_binding
@@ -197,7 +199,14 @@ class CompositeResolver:
 class HeaderInjectionHandler:
     """Executes the header verdict from :func:`agent_vault_proxy.policy.decide`."""
 
-    def __init__(self, *, composite: CompositeResolver, oauth_resolver: OauthResolver) -> None:
+    def __init__(
+        self,
+        *,
+        composite: CompositeResolver,
+        oauth_resolver: OauthResolver,
+        oauth_cc_resolver: Oauth2CcResolver,
+        github_app_resolver: GithubAppResolver,
+    ) -> None:
         # ADR-0024: name -> hosts the file-side allowlist REMOVED from that
         # secret's notes binding (partial rejection — siblings stayed live).
         # Swapped atomically by the addon on every configure(); consulted in
@@ -206,6 +215,8 @@ class HeaderInjectionHandler:
         self.allowlist_rejected_hosts: dict[str, set[str]] = {}
         self._composite = composite
         self._oauth_resolver = oauth_resolver
+        self._oauth_cc_resolver = oauth_cc_resolver
+        self._github_app_resolver = github_app_resolver
 
     def execute(
         self,
@@ -266,6 +277,51 @@ class HeaderInjectionHandler:
                 companion_headers=companion_headers,
                 token_cache=token_cache,
             )
+            return
+
+        # OAuth2 client-credentials (ADR-0030): same requestheaders token-exchange
+        # seam as oauth2_refresh, minus rotation.
+        if decision.oauth2_cc_injector is not None:
+            assert token_cache is not None
+            self._oauth_cc_resolver.resolve(
+                flow=flow,
+                decision=decision,
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+                companion_headers=companion_headers,
+                token_cache=token_cache,
+            )
+            return
+
+        # GitHub App (ADR-0030): mint App JWT -> exchange for an installation
+        # token at the same requestheaders exchange seam.
+        if decision.github_app_injector is not None:
+            assert token_cache is not None
+            self._github_app_resolver.resolve(
+                flow=flow,
+                decision=decision,
+                client=client,
+                audit=audit,
+                request_id=request_id,
+                target_host=target_host,
+                companion_headers=companion_headers,
+                token_cache=token_cache,
+            )
+            return
+
+        # Computed signing injectors (sigv4/hmac/jwt_bearer, ADR-0027/0028)
+        # resolve in the addon `request` hook: sigv4 and hmac hash the request
+        # BODY (unavailable here); jwt rides the same seam. Stash the verdict.
+        # Streaming stays OFF for a body-signing host (sigv4/hmac + body-injector
+        # on one host is rejected at config-load), so the body is intact there.
+        if (
+            decision.sigv4_injector is not None
+            or decision.hmac_injector is not None
+            or decision.jwt_injector is not None
+        ):
+            flow.metadata["avp_signing"] = (decision, request_id, target_host)
             return
 
         new_header_value = self._resolve_header_value(
@@ -705,6 +761,11 @@ class NotesActivator:
     listing is unusable, rather than serving guessed state.
     """
 
+    # ADR-0032: set by degrade() to the degrade reason (else None) so a caller
+    # that must NOT tolerate a degraded resolution — the background notes-refresh
+    # — can keep its previous snapshot instead of publishing emptied bindings.
+    last_degraded_reason: str | None = None
+
     def activate(  # noqa: C901 — config-build orchestrator; heavy branches extracted to module helpers
         self,
         *,
@@ -730,6 +791,9 @@ class NotesActivator:
         (`both`) or no bindings (`bws_notes`) so the daemon keeps serving
         without guessing or using insecure state.
         """
+        # ADR-0032: fresh per run; degrade() flips it so the notes-refresh caller
+        # can tell a degraded resolution from a legitimately empty one.
+        self.last_degraded_reason = None
         from agent_vault_proxy.placeholders import (
             load_or_create_install_salt,
             resolve_install_salt_path,
@@ -844,6 +908,7 @@ class NotesActivator:
         file-only (`both`) or no bindings (`bws_notes`) keeps startup alive
         while staying fail closed for notes-derived bindings.
         """
+        self.last_degraded_reason = reason
         degraded_to = "file bindings only" if new_config.binding_source == "both" else "no bindings"
         _log.warning(
             "BWS-notes activation degraded in %s mode: %s; serving %s",

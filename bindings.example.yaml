@@ -266,6 +266,114 @@ secrets:
       - host: "www.googleapis.com"
         methods: [GET, POST]
 
+  # ─── AWS SigV4 request signing (inject.type: sigv4) — ADR-0027 ───────────
+  # AWS APIs don't take a static bearer credential; each request is signed
+  # (AWS4-HMAC-SHA256 over method + canonical URI/query + signed headers +
+  # SHA-256 of the body). AVP holds the access key id + secret access key in the
+  # vault and signs in-stream, so the agent never holds AWS credentials. The
+  # secret's `placeholder`, planted in Authorization, is only the DETECTION
+  # trigger — nothing is substituted, the signature is computed. For STS/temporary
+  # credentials add `session_token_secret`. A sigv4 + body-injector on one host is
+  # rejected at config-load (SigV4 already hashes the whole body).
+  AWS_S3:
+    placeholder: "aws-sigv4-PLACEHOLDER-01HXY1234567890ABCD"
+    inject:
+      type: sigv4
+      region: us-east-1
+      service: s3
+      access_key_id_secret: AWS_ACCESS_KEY_ID
+      secret_access_key_secret: AWS_SECRET_ACCESS_KEY
+      # session_token_secret: AWS_SESSION_TOKEN   # STS / temporary credentials
+    bindings:
+      - host: "s3.us-east-1.amazonaws.com"
+        methods: [GET, PUT]
+
+  # ─── Generic HMAC request signing (inject.type: hmac) — ADR-0028 ─────────
+  # For upstreams that authenticate a request by an HMAC over request parts.
+  # The operator declares the exact `signing_string` (tokens: {method} {path}
+  # {query} {host} {body_sha256} {timestamp}); AVP signs it with the vault-held
+  # key and writes the hex/base64 digest to `header`. `timestamp_header` (opt.)
+  # echoes the {timestamp} so the server can bound request age. A {body_sha256}
+  # template signs in the request hook (needs the buffered body).
+  WEBHOOK_HMAC:
+    placeholder: "hmac-PLACEHOLDER-01HXY1234567890ABCDEF"
+    inject:
+      type: hmac
+      secret_key_secret: WEBHOOK_SIGNING_KEY
+      signing_string: "{method}\n{path}\n{body_sha256}\n{timestamp}"
+      header: "X-Signature"
+      algorithm: sha256          # sha1 | sha256 | sha384 | sha512
+      encoding: hex              # hex | base64
+      timestamp_header: "X-Timestamp"
+    bindings:
+      - host: "api.hmac-example.com"
+        methods: [POST]
+
+  # ─── JWT bearer assertion (inject.type: jwt_bearer) — ADR-0028 ───────────
+  # Mints a signed JWT from operator-declared claims and injects it as a bearer
+  # credential (default `Authorization: Bearer <jwt>`). HS256 uses a shared
+  # secret; RS256/ES256 a PEM private key — all held in the vault. iat/exp are
+  # stamped from `ttl_seconds` at request time. This INJECTS the JWT directly;
+  # for the RFC 7523 grant (sign a JWT then EXCHANGE it for an access token,
+  # e.g. Google service accounts) see the roadmap.
+  API_JWT:
+    placeholder: "jwt-PLACEHOLDER-01HXY1234567890ABCDEF"
+    inject:
+      type: jwt_bearer
+      signing_key_secret: JWT_SIGNING_KEY      # HMAC secret (HS256) or PEM key (RS/ES256)
+      algorithm: RS256                         # HS256 | RS256 | ES256
+      issuer: "my-service"
+      subject: "my-service"
+      audience: "https://api.jwt-example.com"
+      ttl_seconds: 300
+      # header: "Authorization"                # default
+      # format: "Bearer {jwt}"                 # default; must contain {jwt}
+      # extra_claims: {scope: "read:data"}
+    bindings:
+      - host: "api.jwt-example.com"
+        methods: [GET, POST]
+
+  # ─── OAuth2 client-credentials grant (inject.type: oauth2_client_credentials)
+  # ─── ADR-0029. Machine-to-machine sibling of oauth2_refresh: exchanges a
+  # vault client id + secret for a short-lived access token at `token_url`
+  # (which MUST be https), caches it per-binding, injects `Bearer {access_token}`.
+  # `client_auth_method`: body_post (id+secret in the form body) or basic (HTTP
+  # Basic). No refresh token, no rotation.
+  API_OAUTH_CC:
+    placeholder: "oauth-cc-PLACEHOLDER-01HXY1234567890AB"
+    inject:
+      type: oauth2_client_credentials
+      token_url: "https://login.cc-example.com/oauth2/token"
+      client_auth_method: body_post            # body_post | basic
+      client_id_secret: OAUTH_CLIENT_ID
+      client_secret_secret: OAUTH_CLIENT_SECRET
+      scopes: "read:data write:data"
+      # header: "Authorization"                # default
+      # format: "Bearer {access_token}"        # default
+    bindings:
+      - host: "api.cc-example.com"
+        methods: [GET, POST]
+
+  # ─── GitHub App installation token (inject.type: github_app) — ADR-0030 ──
+  # Mints an App JWT (RS256) from the App's PEM private key, exchanges it at
+  # /app/installations/{installation_id}/access_tokens for a short-lived
+  # installation token, caches it, and injects `Authorization: token <token>`.
+  # Set `api_base_url` for GitHub Enterprise Server. The App private key never
+  # leaves the vault; the minted token never reaches the audit log.
+  GITHUB_APP:
+    placeholder: "github-app-PLACEHOLDER-01HXY1234567890"
+    inject:
+      type: github_app
+      app_id: "123456"
+      installation_id: "78901234"
+      private_key_secret: GITHUB_APP_PRIVATE_KEY   # PEM RSA private key
+      # api_base_url: "https://api.github.com"     # default; set for GHES
+      # format: "token {token}"                    # default; must contain {token}
+    bindings:
+      - host: "api.github.com"
+        methods: [GET, POST]
+        paths: ["/repos/**", "/installation/**"]
+
   # ─── Honeytoken (canary) binding — ADR-0019 §5 ───────────────────────────
   # A trap credential. `honeytoken: true` makes ANY use of this placeholder
   # emit a `honeytoken_triggered` audit event (in addition to the normal
@@ -286,6 +394,13 @@ secrets:
 # Example opts into allow-list behavior. Set `forward_unmodified` to
 # behave as a transparent forwarder for unrelated egress.
 unmatched_destination_policy: deny
+
+# ADR-0026: which destinations AVP TLS-terminates (MITM). `bound` (default):
+# terminate + inject ONLY bound hosts; every other CONNECT is an opaque
+# passthrough (no decryption — AVP never holds plaintext it won't broker), and
+# a `tls_passthrough` audit event records the tunneled host. `all`: terminate
+# everything (max observability; the pre-ADR-0026 behaviour).
+tls_termination: bound
 
 cache:
   ttl_seconds: 300
@@ -325,8 +440,10 @@ backend:
 # Keyless by design — there is NO key-file field. Authenticate with ADC +
 # service-account impersonation, or a Workload-Identity cred-config. With
 # `binding_source: notes`, each GSM secret is host-bound by its own
-# `avp-binding` annotation (bare host or flat-YAML), so no `secrets:` block is
-# needed. See docs/adapter-architecture.md + docs/adrs/ADR-0018.
+# `avp-binding` annotation — first line the exact marker `# avp-binding`
+# (ADR-0025; an unmarked note is a description, not a binding), then a bare
+# host or flat-YAML — so no `secrets:` block is needed.
+# See docs/adapter-architecture.md + docs/adrs/ADR-0018 + ADR-0025.
 # binding_source: notes
 # backend:
 #   type: gsm

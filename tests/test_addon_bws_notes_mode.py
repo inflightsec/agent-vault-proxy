@@ -142,7 +142,7 @@ def _build_notes_addon(
 def test_daemon_injects_real_secret_from_host_only_note(tmp_path: Path) -> None:
     real = "sk-ant-REAL-value"
     addon, audit_path = _build_notes_addon(
-        tmp_path, {"ANTHROPIC": (real, "host: api.anthropic.com")}
+        tmp_path, {"ANTHROPIC": (real, "# avp-binding\nhost: api.anthropic.com")}
     )
     ph = derive_placeholder("ANTHROPIC", _SALT)
     flow = _make_request("api.anthropic.com", {"x-api-key": ph})
@@ -164,7 +164,7 @@ def test_companion_header_does_not_overwrite_client_value(tmp_path: Path) -> Non
     anthropic-version must survive — AVP changes only the credential."""
     real = "sk-ant-REAL-value"
     addon, _audit_path = _build_notes_addon(
-        tmp_path, {"ANTHROPIC": (real, "host: api.anthropic.com")}
+        tmp_path, {"ANTHROPIC": (real, "# avp-binding\nhost: api.anthropic.com")}
     )
     ph = derive_placeholder("ANTHROPIC", _SALT)
     flow = _make_request(
@@ -195,7 +195,9 @@ def test_no_binding_placeholder_fails_closed(tmp_path: Path) -> None:
 
 def test_invalid_binding_placeholder_fails_closed(tmp_path: Path) -> None:
     real = "sk-REAL-should-not-leak"
-    addon, audit_path = _build_notes_addon(tmp_path, {"BAR": (real, "host: [unclosed")})
+    addon, audit_path = _build_notes_addon(
+        tmp_path, {"BAR": (real, "# avp-binding\nhost: [unclosed")}
+    )
     ph = derive_placeholder("BAR", _SALT)
     flow = _make_request("api.example.com", {"Authorization": f"Bearer {ph}"})
     addon.requestheaders(flow)
@@ -222,7 +224,9 @@ def test_both_mode_invalid_note_terminal_denies_same_name_file_binding(tmp_path:
     addon = AgentVaultProxyAddon()
     addon.configure_from_path(
         str(config_path),
-        backend_override=_FakeNotesListBackend({"SHARED_SECRET": (real, "host: [unclosed")}),
+        backend_override=_FakeNotesListBackend(
+            {"SHARED_SECRET": (real, "# avp-binding\nhost: [unclosed")}
+        ),
     )
 
     flow = _make_request("api.example.com", {"Authorization": f"Bearer {file_placeholder}"})
@@ -239,7 +243,9 @@ def test_both_mode_invalid_note_terminal_denies_same_name_file_binding(tmp_path:
 
 def test_daemon_injects_notion_companion_header_without_auditing_value(tmp_path: Path) -> None:
     real = "secret-notion-real"
-    addon, audit_path = _build_notes_addon(tmp_path, {"NOTION": (real, "host: api.notion.com")})
+    addon, audit_path = _build_notes_addon(
+        tmp_path, {"NOTION": (real, "# avp-binding\nhost: api.notion.com")}
+    )
     ph = derive_placeholder("NOTION", _SALT)
     flow = _make_request("api.notion.com", {"Authorization": f"Bearer {ph}"}, path="/v1/pages")
     addon.requestheaders(flow)
@@ -322,7 +328,7 @@ audit:
     config_path = tmp_path / "bindings.yaml"
     config_path.write_text(yaml)
 
-    backend = _FakeNotesListBackend({"ANTHROPIC": ("v", "host: api.anthropic.com")})
+    backend = _FakeNotesListBackend({"ANTHROPIC": ("v", "# avp-binding\nhost: api.anthropic.com")})
     addon = AgentVaultProxyAddon()
     with pytest.raises(ValueError, match="substring"):
         addon.configure_from_path(str(config_path), backend_override=backend)

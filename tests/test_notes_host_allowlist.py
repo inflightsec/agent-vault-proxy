@@ -126,7 +126,9 @@ def test_no_allowlist_key_behavior_unchanged(tmp_path: Path) -> None:
     """Key absent: a host-only note binds and injects exactly as before,
     and none of the new rejection state is populated."""
     real = "sk-REAL-north-star"
-    addon, audit_path = _build(tmp_path, {"NS": (real, f"host: {_GOOD}")}, allowlist=None)
+    addon, audit_path = _build(
+        tmp_path, {"NS": (real, f"# avp-binding\nhost: {_GOOD}")}, allowlist=None
+    )
     ph = derive_placeholder("NS", _SALT)
     flow = _make_request(_GOOD, {"Authorization": f"Bearer {ph}"})
     addon.requestheaders(flow)
@@ -148,7 +150,9 @@ def test_confused_deputy_annotation_host_rejected(tmp_path: Path) -> None:
     fires, the real value never leaves, and the audit says precisely
     host_not_in_allowlist."""
     real = "sk-REAL-must-not-exfiltrate"
-    addon, audit_path = _build(tmp_path, {"DEPUTY": (real, f"host: {_EVIL}")}, allowlist=[_GOOD])
+    addon, audit_path = _build(
+        tmp_path, {"DEPUTY": (real, f"# avp-binding\nhost: {_EVIL}")}, allowlist=[_GOOD]
+    )
     ph = derive_placeholder("DEPUTY", _SALT)
     flow = _make_request(_EVIL, {"Authorization": f"Bearer {ph}"})
     addon.requestheaders(flow)
@@ -169,7 +173,7 @@ def test_confused_deputy_annotation_host_rejected(tmp_path: Path) -> None:
 
 def test_narrowing_within_allowed_host_works(tmp_path: Path) -> None:
     real = "sk-REAL-narrowed"
-    note = f"host: {_GOOD}\nmethods: [POST]"
+    note = f"# avp-binding\nhost: {_GOOD}\nmethods: [POST]"
     addon, audit_path = _build(tmp_path, {"NARROW": (real, note)}, allowlist=[_GOOD])
     ph = derive_placeholder("NARROW", _SALT)
     # POST (inside the narrowed scope) injects.
@@ -191,7 +195,7 @@ def test_narrowing_within_allowed_host_works(tmp_path: Path) -> None:
 
 def test_multihost_partial_rejection_keeps_sibling(tmp_path: Path) -> None:
     real = "sk-REAL-multihost"
-    note = f'hosts:\n- {_GOOD}\n- {_EVIL}\nformat: "Bearer {{secret}}"'
+    note = f'# avp-binding\nhosts:\n- {_GOOD}\n- {_EVIL}\nformat: "Bearer {{secret}}"'
     addon, audit_path = _build(tmp_path, {"MULTI": (real, note)}, allowlist=[_GOOD])
     ph = derive_placeholder("MULTI", _SALT)
     # Allowed sibling injects.
@@ -223,7 +227,7 @@ def test_wildcard_allowlist_entry_matches_with_opt_in(tmp_path: Path) -> None:
     real = "sk-REAL-wild"
     addon, _ = _build(
         tmp_path,
-        {"WILD": (real, "host: api.corp.example")},
+        {"WILD": (real, "# avp-binding\nhost: api.corp.example")},
         allowlist=["*.corp.example"],
         allow_wildcards=True,
     )
@@ -243,7 +247,7 @@ def test_empty_allowlist_fences_notes_but_not_file_tier(tmp_path: Path) -> None:
     real_note = "sk-REAL-noted"
     secrets = {
         "FILE_SECRET": (real_file, None),
-        "NOTED": (real_note, f"host: {_GOOD}"),
+        "NOTED": (real_note, f"# avp-binding\nhost: {_GOOD}"),
     }
     addon, audit_path = _build(tmp_path, secrets, allowlist=[], file_secret_host="api.file.example")
     # File-tier secret (trusted) still injects under an empty allowlist.
@@ -271,7 +275,7 @@ def test_empty_allowlist_fences_notes_but_not_file_tier(tmp_path: Path) -> None:
 def test_mixed_case_allowlist_entry_still_allows_lowercased_note_host(tmp_path: Path) -> None:
     real = "sk-REAL-case"
     addon, audit_path = _build(
-        tmp_path, {"CASE": (real, f"host: {_GOOD}")}, allowlist=["API.Good.Example"]
+        tmp_path, {"CASE": (real, f"# avp-binding\nhost: {_GOOD}")}, allowlist=["API.Good.Example"]
     )
     ph = derive_placeholder("CASE", _SALT)
     flow = _make_request(_GOOD, {"Authorization": f"Bearer {ph}"})
@@ -288,7 +292,7 @@ def test_mixed_case_note_host_outside_allowlist_still_rejected(tmp_path: Path) -
     un-approved hosts through)."""
     real = "sk-REAL-still-blocked"
     addon, audit_path = _build(
-        tmp_path, {"BLOCK": (real, "host: EVIL.Attacker.Example")}, allowlist=[_GOOD]
+        tmp_path, {"BLOCK": (real, "# avp-binding\nhost: EVIL.Attacker.Example")}, allowlist=[_GOOD]
     )
     ph = derive_placeholder("BLOCK", _SALT)
     flow = _make_request("evil.attacker.example", {"Authorization": f"Bearer {ph}"})

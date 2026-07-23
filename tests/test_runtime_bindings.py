@@ -61,7 +61,9 @@ binding_source: both
 
 
 def test_bws_notes_mode_builds_specs_and_placeholder_map() -> None:
-    backend = _FakeNotesListBackend({"ANTHROPIC": ("real-value", "host: api.anthropic.com")})
+    backend = _FakeNotesListBackend(
+        {"ANTHROPIC": ("real-value", "# avp-binding\nhost: api.anthropic.com")}
+    )
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="bws_notes",
@@ -96,7 +98,7 @@ def test_no_binding_secret_recorded_and_in_placeholder_map() -> None:
 
 
 def test_invalid_binding_secret_recorded_distinctly() -> None:
-    backend = _FakeNotesListBackend({"BAR": ("v", "host: [unclosed")})
+    backend = _FakeNotesListBackend({"BAR": ("v", "# avp-binding\nhost: [unclosed")})
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="bws_notes",
@@ -116,7 +118,9 @@ def test_both_mode_notes_win_over_file(tmp_path) -> None:
     # File binding for ANTHROPIC -> file-host.
     file_ph = derive_placeholder("ANTHROPIC", _SALT)
     cfg = _load_file_config(tmp_path, "ANTHROPIC", file_ph, "file-host.example.com")
-    backend = _FakeNotesListBackend({"ANTHROPIC": ("v", "host: notes-host.example.com")})
+    backend = _FakeNotesListBackend(
+        {"ANTHROPIC": ("v", "# avp-binding\nhost: notes-host.example.com")}
+    )
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="both",
@@ -184,7 +188,9 @@ binding_source: both
         def list_secret_names(self) -> list[str]:
             return ["NOTED"]
 
-    backend = _ListsOnlyNoted({"NOTED": ("v1", "host: noted.example.com"), "FILEONLY": ("v2", "")})
+    backend = _ListsOnlyNoted(
+        {"NOTED": ("v1", "# avp-binding\nhost: noted.example.com"), "FILEONLY": ("v2", "")}
+    )
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="both",
@@ -205,7 +211,7 @@ def test_both_mode_invalid_note_excludes_same_name_file_binding(tmp_path) -> Non
         derive_placeholder("ANTHROPIC", _SALT),
         "file-host.example.com",
     )
-    backend = _FakeNotesListBackend({"ANTHROPIC": ("v", "host: [unclosed")})
+    backend = _FakeNotesListBackend({"ANTHROPIC": ("v", "# avp-binding\nhost: [unclosed")})
     resolved = resolve_runtime_bindings(
         backend=backend,
         binding_source="both",

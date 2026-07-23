@@ -28,7 +28,7 @@ $ avp run claude                             # auto-loads ~/.config/avp/env, set
 
 No Bitwarden account? `--static` keeps secrets in a local YAML file owned by the service user. Upgrade later by editing `backend:` in `/etc/agent-vault-proxy/bindings.yaml` (setup never overwrites an existing config).
 
-On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
+On Mac: `brew install inflightsec/avp/agent-vault-proxy`
 
 ## See it in action
 
@@ -36,7 +36,16 @@ On Mac: `brew install inflightsec/avp/agent-vault-proxy`.
 
 ## Add a secret with your AI agent — no config editing
 
-Onboarding a new brokered credential shouldn't mean hand-writing binding YAML. The bundled **[avp-bindings skill](skills/avp-bindings/)** lets an AI assistant (Claude Code, or any agent that loads skills) walk you through it: you say *"route the Acme API through AVP,"* it asks the auth shape and host, then tells you **exactly** what to add — the secret name plus the annotation to paste into the **Bitwarden Secrets Manager Notes field** (or the **Google Secret Manager `avp-binding` annotation**, or a future backend's per-secret metadata). No AVP config edit, no redeploy — and the assistant **never sees or stores the secret**; it proposes, you apply.
+Onboarding a new brokered credential shouldn't mean hand-writing binding YAML. The bundled **[avp skill](skills/avp/)** lets an AI assistant (Claude Code, or any agent that loads skills) walk you through it: you say *"route the Acme API through AVP,"* it asks the auth shape and host, then tells you **exactly** what to add — the secret name plus the annotation to paste into the **Bitwarden Secrets Manager Notes field** (or the **Google Secret Manager `avp-binding` annotation**, or a future backend's per-secret metadata). No AVP config edit, no redeploy — and the assistant **never sees or stores the secret**; it proposes, you apply.
+
+The note itself is two lines pasted into the secret's Notes field:
+
+```
+# avp-binding
+api.acme.com
+```
+
+The marker line is what makes it a binding: a note whose first line isn't `# avp-binding` stays what it is — a human description, never parsed ([ADR-0025](docs/adrs/ADR-0025-notes-binding-marker.md)).
 
 ### Install the skill
 
@@ -47,12 +56,12 @@ Onboarding a new brokered credential shouldn't mean hand-writing binding YAML. T
 /plugin install avp@agent-vault-proxy
 ```
 
-Invoke it as `/avp:avp-bindings`, or just say *"route the Acme API through AVP"* and it triggers on its own.
+Invoke it as `/avp:avp`, or just say *"route the Acme API through AVP"* and it triggers on its own.
 
-**Manual (any agent that loads Anthropic-format skills)** — copy or symlink `skills/avp-bindings/` into your agent's skills directory; Claude Code reads `~/.claude/skills/`. A symlink keeps it current on `git pull`:
+**Manual (any agent that loads Anthropic-format skills)** — copy or symlink `skills/avp/` into your agent's skills directory; Claude Code reads `~/.claude/skills/`. A symlink keeps it current on `git pull`:
 
 ```
-ln -s "$PWD/skills/avp-bindings" ~/.claude/skills/avp-bindings
+ln -s "$PWD/skills/avp" ~/.claude/skills/avp
 ```
 
 ## Docs
@@ -65,7 +74,7 @@ ln -s "$PWD/skills/avp-bindings" ~/.claude/skills/avp-bindings
 - **[Usage](docs/usage.md)** — pointing your agent at the proxy
 - **[Linux isolation](docs/linux-isolation.md)** — composing AVP with `bubblewrap` for filesystem sandboxing
 - **[bindings.example.yaml](bindings.example.yaml)** — full config schema
-- **[avp-bindings skill](skills/avp-bindings/)** — let an AI assistant author your notes/annotation bindings (propose-only, no config edit, no redeploy)
+- **[avp skill](skills/avp/)** — let an AI assistant author your notes/annotation bindings (propose-only, no config edit, no redeploy)
 - **[Architecture](docs/architecture.md)** — threat model, G1–G9 invariants, hardening, residual risks
 - **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden + Google Secret Manager ship today, `static` for dev) and how to add another
 - **[Google Secret Manager](docs/gcp-secret-manager.md)** — keep secrets in GSM: setup, keyless auth, and end-to-end testing

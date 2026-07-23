@@ -553,10 +553,16 @@ def test_multi_unknown_child_type_gets_friendly_error() -> None:
         )
 
 
-def test_multi_unimplemented_child_type_gets_friendly_error() -> None:
-    """A known-but-unimplemented child type (e.g., sigv4 from P2/P3)
-    gets the same operator-facing message as the top-level case."""
-    with pytest.raises(ValidationError, match=r"injectors\[0\].type 'sigv4'"):
+def test_multi_unimplemented_child_type_gets_friendly_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A known-but-unimplemented child type gets the same operator-facing
+    message as the top-level case. All shipped types are implemented, so mark
+    one planned to exercise the guard (kept for future reserved types)."""
+    from agent_vault_proxy import config_models
+
+    monkeypatch.setitem(config_models._INJECTOR_TYPES, "github_app", "planned: P9")
+    with pytest.raises(ValidationError, match=r"injectors\[0\].type 'github_app'"):
         Config.model_validate(
             {
                 "version": 1,
@@ -566,7 +572,7 @@ def test_multi_unimplemented_child_type_gets_friendly_error() -> None:
                         "inject": {
                             "type": "multi",
                             "injectors": [
-                                {"type": "sigv4"},
+                                {"type": "github_app"},
                                 {"type": "header", "header": "X-A", "format": "{FOO}"},
                             ],
                         },

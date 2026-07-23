@@ -25,11 +25,13 @@ from pathlib import Path
 import pytest
 
 from agent_vault_proxy.config import (
-    _PLACEHOLDER_MARKER,
     _PLACEHOLDER_MIN_LEN,
     Config,
+    validate_placeholder_invariants,
 )
 from agent_vault_proxy.placeholders import (
+    PLACEHOLDER_PREFIX,
+    InstallSaltError,
     PlaceholderCollisionError,
     derive_placeholder,
     derive_placeholder_map,
@@ -48,21 +50,22 @@ _SALT_B = b"\x11" * 32
 
 def test_derive_placeholder_has_avp_prefix() -> None:
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    assert ph.startswith("avp-PLACEHOLDER-")
+    assert ph.startswith(PLACEHOLDER_PREFIX)
 
 
 def test_derive_placeholder_satisfies_config_invariants() -> None:
     """The derived placeholder must pass every check config.py enforces:
-    >= min length, contains the PLACEHOLDER marker, printable."""
+    >= min length, carries an accepted marker, printable, unique."""
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
     assert len(ph) >= _PLACEHOLDER_MIN_LEN
-    assert _PLACEHOLDER_MARKER in ph
     assert ph.isprintable()
+    # No raise = passes the full invariant set (marker, length, uniqueness).
+    validate_placeholder_invariants({"ANTHROPIC_API_KEY": ph})
 
 
 def test_derive_placeholder_tail_is_lowercase_base32_no_padding() -> None:
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    tail = ph[len("avp-PLACEHOLDER-") :]
+    tail = ph[len(PLACEHOLDER_PREFIX) :]
     # base32 alphabet is A-Z2-7; lowercased -> a-z2-7. No '=' padding.
     assert "=" not in tail
     assert all(c in "abcdefghijklmnopqrstuvwxyz234567" for c in tail), tail
@@ -71,7 +74,7 @@ def test_derive_placeholder_tail_is_lowercase_base32_no_padding() -> None:
 def test_derive_placeholder_tail_has_at_least_104_bits() -> None:
     """>=104 bits of entropy => >=21 base32 chars (21 * 5 = 105 bits)."""
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    tail = ph[len("avp-PLACEHOLDER-") :]
+    tail = ph[len(PLACEHOLDER_PREFIX) :]
     assert len(tail) >= 21
 
 
@@ -210,6 +213,25 @@ def test_load_or_create_install_salt_rejects_wrong_owner(tmp_path, monkeypatch) 
     monkeypatch.setattr(os, "geteuid", lambda: current_uid + 1)
     with pytest.raises(ValueError, match="owned by uid"):
         load_or_create_install_salt(salt_path)
+
+
+def test_load_or_create_install_salt_root_run_gets_hint(tmp_path, monkeypatch) -> None:
+    """Run-as-root against a daemon-owned salt: the error is an InstallSaltError
+    carrying a hint that names the likely cause (ran as root) plus the fix."""
+    salt_path = tmp_path / "install-salt"
+    salt_path.write_bytes(os.urandom(32))
+    salt_path.chmod(0o600)
+    owner_uid = os.stat(salt_path).st_uid
+    if owner_uid == 0:
+        pytest.skip("temp file is root-owned in this environment")
+    # Simulate running as root (euid 0) while the salt is owned by another user.
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    with pytest.raises(InstallSaltError) as excinfo:
+        load_or_create_install_salt(salt_path)
+    hint = excinfo.value.hint
+    assert hint is not None
+    assert "root" in hint.lower()
+    assert "sudo -u" in hint
 
 
 def test_resolve_install_salt_path_prefers_explicit_then_confdir_then_home(

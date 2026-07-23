@@ -139,6 +139,37 @@ def _iter_files(directory: Path) -> list[Path]:
     return out
 
 
+# Proxy-pointer env vars. HTTP(S)_PROXY aims a client at AVP; NODE_USE_ENV_PROXY
+# is what makes Node's global fetch/undici actually USE it.
+_PROXY_ENV_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+
+
+def check_node_env_proxy(env: dict[str, str] | None = None) -> list[str]:
+    """WARN if a proxy is configured in the environment but Node isn't told to
+    honor it (``NODE_USE_ENV_PROXY``).
+
+    Node/undici's global ``fetch`` ignores ``HTTP(S)_PROXY`` by default, so Node
+    CLIs (eas-cli, etc.) egress DIRECT — bypassing AVP entirely: placeholders are
+    never substituted AND no egress policy is applied (silent, and a real security
+    gap; observed 2026-07-23 with eas-cli). Meaningful when run in the CONSUMER
+    environment (the shell where the agent's Node tooling runs); a clean daemon-host
+    env with no proxy set just returns ``[]``.
+    """
+    e = dict(os.environ) if env is None else env
+    if not any(e.get(v) for v in _PROXY_ENV_VARS):
+        return []
+    if e.get("NODE_USE_ENV_PROXY"):
+        return []
+    return [
+        "INSECURE: a proxy is set here (HTTP(S)_PROXY) but NODE_USE_ENV_PROXY is not. "
+        "Node's global fetch/undici ignores the proxy env, so Node CLIs (eas-cli, npm, "
+        "etc.) egress DIRECT, bypassing agent-vault-proxy entirely — no credential "
+        "injection AND no egress policy. Export NODE_USE_ENV_PROXY=1 so Node tooling "
+        "routes through the proxy like curl already does. For hard enforcement, lock "
+        "egress at the network layer (e.g. an nftables redirect) so bypass is impossible."
+    ]
+
+
 def check_ca_key_perms(ca_key_path: str | None = None) -> list[str]:
     """WARN if the CA private key isn't owner-only (0600) in a 0700 confdir,
     or isn't owned by the running user.
@@ -229,6 +260,7 @@ def run_doctor(
     all_warnings: list[str] = []
     all_warnings.extend(check_ca_not_in_trust_store(ca_cert_path))
     all_warnings.extend(check_ca_key_perms(ca_key_path))
+    all_warnings.extend(check_node_env_proxy())
 
     any_oauth_fail = False
     if probe_oauth:
@@ -245,9 +277,12 @@ def run_doctor(
         any_gcp_fail = run_gcp_probe(config_path=config_path)
 
     if not all_warnings:
-        print("avp doctor: CA checks passed (CA not in any OS trust store; key perms OK).")
+        print(
+            "avp doctor: health checks passed (CA not in any OS trust store; key perms OK; "
+            "Node honors the proxy)."
+        )
     else:
-        print(f"avp doctor: {len(all_warnings)} CA warning(s):", file=sys.stderr)
+        print(f"avp doctor: {len(all_warnings)} warning(s):", file=sys.stderr)
         for w in all_warnings:
             print(f"  - {w}", file=sys.stderr)
 

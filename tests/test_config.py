@@ -773,12 +773,17 @@ def test_unknown_inject_type_clean_error() -> None:
         )
 
 
-def test_known_but_unimplemented_inject_type_clean_error() -> None:
-    # `github_app` is in the v0.5.0 planned taxonomy but ships in a
-    # later phase. An operator writing it under the current install
+def test_known_but_unimplemented_inject_type_clean_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # All shipped injector types are now implemented, so to exercise the
+    # planned-but-unimplemented guard (kept for future reserved types) we
+    # temporarily mark one planned. An operator writing an unimplemented type
     # gets a clear "not yet implemented" error pointing at the CHANGELOG,
     # rather than a Pydantic validation error about missing fields.
-    # (Canary type was ``oauth2_refresh`` until ADR-0017 landed it.)
+    from agent_vault_proxy import config_models
+
+    monkeypatch.setitem(config_models._INJECTOR_TYPES, "github_app", "planned: P9")
     with pytest.raises(ValidationError, match=r"not yet implemented in this version"):
         Config.model_validate(
             {

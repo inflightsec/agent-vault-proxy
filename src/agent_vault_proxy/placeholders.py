@@ -42,11 +42,14 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
 
-# 16 chars. Contains the "PLACEHOLDER" marker config.py requires.
+# 16 chars. Contains the "PLACEHOLDER" marker config.py requires. Single
+# source of truth for the prefix — STORED_PLACEHOLDER_RE and the CLI's
+# self-validation sentinel build from THIS constant, never a copy.
 PLACEHOLDER_PREFIX = "avp-PLACEHOLDER-"
 
 # Truncated base32 tail length. 21 chars * 5 bits/char = 105 bits of
@@ -60,6 +63,34 @@ _TAIL_CHARS = 21
 _SALT_BYTES = 32
 _DEFAULT_SALT_BASENAME = "install-salt"
 
+# Stored (note-carried) placeholders — ADR-0029. A note may pin its secret's
+# placeholder explicitly (minted by `avp binding new`) instead of relying on
+# the salt derivation above. The stored shape is deliberately IDENTICAL in
+# alphabet and prefix to the derived one (prefix + lowercase-base32 tail) so:
+#   * config.py's placeholder invariants (>=24 chars, PLACEHOLDER marker,
+#     shell-metachar-free) hold by construction;
+#   * consumers can't tell (and never need to care) which era minted theirs;
+#   * the tail's minimum length (21 chars = 105 bits) keeps a hand-typed
+#     low-entropy string ("token", "Bearer") structurally unrepresentable —
+#     a weak placeholder can't match innocent traffic because it can't parse.
+# Built from PLACEHOLDER_PREFIX so the prefix lives in exactly one place.
+STORED_PLACEHOLDER_RE = re.compile(rf"^{re.escape(PLACEHOLDER_PREFIX)}[a-z2-7]{{21,64}}$")
+
+# Minted tail length: 26 base32 chars = 130 bits from a 16-byte CSPRNG draw.
+_MINT_TAIL_CHARS = 26
+
+
+def mint_placeholder() -> str:
+    """Mint a fresh random stored placeholder (ADR-0029).
+
+    Uses the ``secrets`` CSPRNG — never derived from any name or salt, so a
+    minted placeholder carries no linkable information and survives salt
+    rotation and secret renames unchanged. Output always satisfies
+    :data:`STORED_PLACEHOLDER_RE`.
+    """
+    tail = base64.b32encode(secrets.token_bytes(16)).decode("ascii").lower().rstrip("=")
+    return PLACEHOLDER_PREFIX + tail[:_MINT_TAIL_CHARS]
+
 
 class PlaceholderCollisionError(RuntimeError):
     """Two distinct secret names derived the same truncated placeholder.
@@ -70,6 +101,21 @@ class PlaceholderCollisionError(RuntimeError):
     install salt). This is a hard startup failure by design — a silent
     coalesce could route the wrong real secret onto the wire.
     """
+
+
+class InstallSaltError(ValueError):
+    """The install salt can't be safely loaded (perms, ownership, or corruption).
+
+    Subclasses :class:`ValueError` for backward compatibility with callers that
+    already ``except ValueError``. Carries an optional ``hint`` — a human-facing
+    remediation line the CLI surfaces (instead of a raw traceback) when the most
+    likely cause is operator error, e.g. running ``avp env`` as root when the
+    salt is owned by the daemon's unprivileged service user.
+    """
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.hint = hint
 
 
 def _check_salt(install_salt: bytes) -> None:
@@ -170,19 +216,32 @@ def load_or_create_install_salt(salt_path: str | Path) -> bytes:
         st = path.stat()
         mode = stat.S_IMODE(st.st_mode)
         if mode & 0o077:
-            raise ValueError(
+            raise InstallSaltError(
                 f"install salt at {path} has insecure mode {oct(mode)}; expected 0o600. "
                 "Restrict it to owner read/write only before starting the daemon."
             )
         euid = os.geteuid()
         if st.st_uid not in {euid, 0}:
-            raise ValueError(
+            hint = None
+            if euid == 0:
+                # Overwhelmingly the real cause: the command was run as root (e.g.
+                # via sudo), but the salt belongs to the daemon's unprivileged
+                # service user. The CLI must run AS that user, not root.
+                hint = (
+                    f"You're running as root, but the salt is owned by uid {st.st_uid} — "
+                    "the agent-vault-proxy daemon's own service user. This almost always "
+                    "means the command was run as root (e.g. via sudo). Run it as the "
+                    "salt's owner instead, for example:\n"
+                    f"    sudo -u '#{st.st_uid}' avp env --print"
+                )
+            raise InstallSaltError(
                 f"install salt at {path} is owned by uid {st.st_uid}; expected uid {euid} "
-                "or root (0). Fix the owner before starting the daemon."
+                "or root (0). Fix the owner before starting the daemon.",
+                hint=hint,
             )
         data = path.read_bytes()
         if len(data) < _SALT_BYTES:
-            raise ValueError(
+            raise InstallSaltError(
                 f"install salt at {path} is {len(data)} bytes; expected at least "
                 f"{_SALT_BYTES}. Refusing to use a short/corrupt salt. If this is "
                 "intentional rotation, delete the file and re-run setup (this "

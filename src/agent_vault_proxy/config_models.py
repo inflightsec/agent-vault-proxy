@@ -25,11 +25,11 @@ _INJECTOR_TYPES: dict[str, str] = {
     "body": "P0.6",
     "multi": "P0.7",
     "oauth2_refresh": "P1",
-    "github_app": "planned: P1",
-    "sigv4": "planned: P2/P3",
-    "oauth2_client_credentials": "planned: P2",
-    "jwt_bearer": "planned: P2",
-    "hmac": "planned: P4",
+    "github_app": "P1",
+    "sigv4": "P2",
+    "oauth2_client_credentials": "P2",
+    "jwt_bearer": "P2",
+    "hmac": "P4",
 }
 
 
@@ -465,10 +465,203 @@ class Oauth2RefreshInjector(BaseModel):
         return v
 
 
+class Sigv4Injector(BaseModel):
+    """AWS Signature Version 4 request signing (``AWS4-HMAC-SHA256``).
+
+    Computes the request signature over the method, canonical URI + query, the
+    signed header set, and a SHA-256 of the request body, then sets the
+    ``Authorization`` + ``x-amz-date`` headers (and ``x-amz-security-token`` for
+    temporary credentials). Unlike the substitution injectors it renders no
+    value — the operator plants the secret's ``placeholder`` in the target
+    header purely as the DETECTION trigger; the real signing material is the
+    named credential secrets below (resolved to values at request time, like
+    ``oauth2_refresh``'s named-secret fields). Signing lives in
+    :mod:`agent_vault_proxy.injectors.sigv4`; because the body must be hashed,
+    the request path buffers it and signs in the addon ``request`` hook.
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["sigv4"] = "sigv4"
+
+    # AWS credential-scope inputs. ``service`` is the AWS service code
+    # ("s3", "execute-api", "sts", ...); ``region`` the AWS region.
+    region: str
+    service: str
+
+    # Vault secret references — the AWS access-key id + secret access key, and
+    # (for temporary/STS credentials) an optional session token. The preset
+    # supplies nothing here; credentials always come from the vault.
+    access_key_id_secret: str
+    secret_access_key_secret: str
+    session_token_secret: str | None = None
+
+    # The header the computed signature is written to. AWS SigV4 always uses
+    # Authorization; exposed for symmetry only — there is no ``format`` because
+    # the value is computed, not substituted.
+    header: str = "Authorization"
+
+    @model_validator(mode="after")
+    def require_non_empty_scope(self) -> Sigv4Injector:
+        for field in ("region", "service"):
+            value = getattr(self, field).strip()
+            if not value:
+                raise ValueError(f"sigv4.{field} is required and cannot be empty")
+            setattr(self, field, value)
+        return self
+
+
+class HmacInjector(BaseModel):
+    """Generic HMAC request signing (RFC 2104).
+
+    Signs an operator-declared ``signing_string`` built from request parts
+    (tokens ``{method}`` ``{path}`` ``{query}`` ``{host}`` ``{body_sha256}``
+    ``{timestamp}``) with ``HMAC-<algorithm>`` and writes the ``hex``/``base64``
+    digest to ``header``. The vault-held HMAC key is ``secret_key_secret``. HMAC
+    schemes are service-specific in *what* they sign, so the operator supplies
+    the template; the signer does no further canonicalisation. Signing lives in
+    :mod:`agent_vault_proxy.injectors.hmac_signer`; a ``{body_sha256}`` template
+    needs the request body, so it signs in the addon ``request`` hook.
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["hmac"] = "hmac"
+    secret_key_secret: str
+    signing_string: str
+    header: str
+    algorithm: Literal["sha1", "sha256", "sha384", "sha512"] = "sha256"
+    encoding: Literal["hex", "base64"] = "hex"
+    # When set, the unix timestamp substituted for {timestamp} is also emitted
+    # here so the server can bound request age.
+    timestamp_header: str | None = None
+
+    @model_validator(mode="after")
+    def require_header_and_signing_string(self) -> HmacInjector:
+        if not self.header.strip():
+            raise ValueError("hmac.header is required and cannot be empty")
+        if not self.signing_string:
+            raise ValueError("hmac.signing_string is required")
+        return self
+
+
+class JwtBearerInjector(BaseModel):
+    """Mint a signed JWT (RFC 7519 structure, RFC 7515 JWS) and inject it as a
+    bearer credential.
+
+    Signs the operator-declared claims — ``issuer`` (iss), ``subject`` (sub),
+    ``audience`` (aud), ``iat``/``exp`` stamped from ``ttl_seconds`` at request
+    time, and any ``extra_claims`` — with the vault-held ``signing_key_secret``
+    (an HMAC secret for ``HS256``, a PEM private key for ``RS256``/``ES256``).
+    The token renders into ``header`` via ``format`` (``Bearer {jwt}`` default).
+    Minting lives in :mod:`agent_vault_proxy.injectors.jwt_bearer`.
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["jwt_bearer"] = "jwt_bearer"
+    signing_key_secret: str
+    algorithm: Literal["HS256", "RS256", "ES256"] = "RS256"
+    issuer: str | None = None
+    subject: str | None = None
+    audience: str | None = None
+    ttl_seconds: int = Field(default=300, ge=1, le=86400)
+    header: str = "Authorization"
+    format: str = "Bearer {jwt}"
+    extra_claims: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def require_jwt_token_placeholder(self) -> JwtBearerInjector:
+        if "{jwt}" not in self.format:
+            raise ValueError("jwt_bearer.format must contain the '{jwt}' placeholder")
+        return self
+
+
+class Oauth2ClientCredentialsInjector(BaseModel):
+    """OAuth 2.0 client-credentials grant (RFC 6749 §4.4).
+
+    Exchanges a vault-held client id + secret for a short-lived access token at
+    ``token_url`` and injects it (default ``Bearer {access_token}``). The
+    machine-to-machine sibling of ``oauth2_refresh`` — no refresh token, no
+    rotation. Resolution lives in
+    :mod:`agent_vault_proxy.injectors.oauth2_client_credentials`. (Provider
+    presets are a later slice; v1 takes an explicit ``token_url``.)
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["oauth2_client_credentials"] = "oauth2_client_credentials"
+    token_url: HttpUrl
+    client_auth_method: Literal["body_post", "basic"] = "body_post"
+    client_id_secret: str
+    client_secret_secret: str
+    scopes: str | None = None
+    header: str = "Authorization"
+    format: str = "Bearer {access_token}"
+    cache_ttl_safety_seconds: int = Field(default=60, ge=0, le=600)
+    cache_ttl_max_seconds: int = Field(default=3600, ge=60, le=86400)
+
+    def render_value(self, *, access_token: str) -> str:
+        """Substitute ``{access_token}`` — ``str.replace``, not format-language,
+        so an operator format cannot traverse attributes."""
+        return self.format.replace("{access_token}", access_token)
+
+    @field_validator("token_url")
+    @classmethod
+    def require_https(cls, v: HttpUrl) -> HttpUrl:
+        if v.scheme != "https":
+            raise ValueError(
+                "oauth2_client_credentials.token_url must use https "
+                "(RFC 6749 §3.1 — the token endpoint MUST use TLS)"
+            )
+        return v
+
+
+class GithubAppInjector(BaseModel):
+    """GitHub App installation access-token minting.
+
+    Mints an App JWT (RS256) from the App's PEM private key, exchanges it at
+    ``{api_base_url}/app/installations/{installation_id}/access_tokens`` for a
+    short-lived installation token, caches it, and injects it (default
+    ``Authorization: token {token}``). Resolution lives in
+    :mod:`agent_vault_proxy.injectors.github_app`; it reuses the JWT signer and
+    the shared token transport.
+    """
+
+    model_config = _STRICT_MODEL
+
+    type: Literal["github_app"] = "github_app"
+    app_id: str
+    installation_id: str
+    private_key_secret: str
+    api_base_url: str = "https://api.github.com"
+    header: str = "Authorization"
+    format: str = "token {token}"
+    cache_ttl_safety_seconds: int = Field(default=60, ge=0, le=600)
+
+    def render_value(self, *, token: str) -> str:
+        """Substitute ``{token}`` — ``str.replace``, not format-language."""
+        return self.format.replace("{token}", token)
+
+    @field_validator("api_base_url")
+    @classmethod
+    def normalize_api_base(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        if not v.startswith("https://"):
+            raise ValueError("github_app.api_base_url must use the https scheme")
+        return v
+
+    @model_validator(mode="after")
+    def require_jwt_token_placeholder(self) -> GithubAppInjector:
+        if "{token}" not in self.format:
+            raise ValueError("github_app.format must contain the '{token}' placeholder")
+        return self
+
+
 # Leaf injectors permitted inside MultiInjector. Nested multi is rejected
-# at config-load. ``oauth2_refresh`` is NOT a permitted child in v0.7 —
-# the resolution-step semantics inside a multi (which child triggers
-# exchange, sibling sharing, audit ordering) need their own ADR.
+# at config-load. ``oauth2_refresh`` and ``sigv4`` are NOT permitted children —
+# their computed resolution steps (which child triggers, sibling sharing, audit
+# ordering; and, for sigv4, whole-request signing) need single-bind semantics.
 LeafInjectorSpec = Annotated[HeaderInjector | BodyInjector, Field(discriminator="type")]
 
 
@@ -526,14 +719,31 @@ class MultiInjector(BaseModel):
 # `Config.normalize_and_validate_injector_types` keeps v0.4.x configs
 # parsing without a `type:` field.
 InjectorSpec = Annotated[
-    HeaderInjector | BodyInjector | MultiInjector | Oauth2RefreshInjector,
+    HeaderInjector
+    | BodyInjector
+    | MultiInjector
+    | Oauth2RefreshInjector
+    | Sigv4Injector
+    | HmacInjector
+    | JwtBearerInjector
+    | Oauth2ClientCredentialsInjector
+    | GithubAppInjector,
     Field(discriminator="type"),
 ]
 
 
 def iter_leaf_injectors(
     spec: InjectorSpec,
-) -> list[HeaderInjector | BodyInjector | Oauth2RefreshInjector]:
+) -> list[
+    HeaderInjector
+    | BodyInjector
+    | Oauth2RefreshInjector
+    | Sigv4Injector
+    | HmacInjector
+    | JwtBearerInjector
+    | Oauth2ClientCredentialsInjector
+    | GithubAppInjector
+]:
     """Flatten ``spec`` to its ordered leaf injectors. Single-leaf bindings
     yield ``[spec]``; multi yields ``spec.injectors``. ``oauth2_refresh``
     is a leaf — its runtime resolution step is single-bind by design."""

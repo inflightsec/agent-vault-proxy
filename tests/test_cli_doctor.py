@@ -22,8 +22,32 @@ import os
 from agent_vault_proxy.cli.doctor import (
     check_ca_key_perms,
     check_ca_not_in_trust_store,
+    check_node_env_proxy,
     run_doctor,
 )
+
+
+def test_node_env_proxy_clean_when_no_proxy_set() -> None:
+    assert check_node_env_proxy({}) == []
+    assert check_node_env_proxy({"PATH": "/usr/bin"}) == []
+
+
+def test_node_env_proxy_clean_when_proxy_and_node_use_env_proxy_set() -> None:
+    assert (
+        check_node_env_proxy({"HTTPS_PROXY": "http://127.0.0.1:14322", "NODE_USE_ENV_PROXY": "1"})
+        == []
+    )
+
+
+def test_node_env_proxy_warns_when_proxy_set_but_node_not_told_to_honor_it() -> None:
+    warnings = check_node_env_proxy({"HTTPS_PROXY": "http://127.0.0.1:14322"})
+    assert len(warnings) == 1
+    assert "NODE_USE_ENV_PROXY" in warnings[0]
+    assert "bypassing" in warnings[0].lower()
+
+
+def test_node_env_proxy_warns_on_lowercase_http_proxy() -> None:
+    assert check_node_env_proxy({"http_proxy": "http://127.0.0.1:14322"}) != []
 
 
 def _make_ca_files(tmp_path, *, key_mode=0o600, dir_mode=0o700):

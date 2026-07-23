@@ -25,11 +25,12 @@ from pathlib import Path
 import pytest
 
 from agent_vault_proxy.config import (
-    _PLACEHOLDER_MARKER,
     _PLACEHOLDER_MIN_LEN,
     Config,
+    validate_placeholder_invariants,
 )
 from agent_vault_proxy.placeholders import (
+    PLACEHOLDER_PREFIX,
     InstallSaltError,
     PlaceholderCollisionError,
     derive_placeholder,
@@ -49,21 +50,22 @@ _SALT_B = b"\x11" * 32
 
 def test_derive_placeholder_has_avp_prefix() -> None:
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    assert ph.startswith("avp-PLACEHOLDER-")
+    assert ph.startswith(PLACEHOLDER_PREFIX)
 
 
 def test_derive_placeholder_satisfies_config_invariants() -> None:
     """The derived placeholder must pass every check config.py enforces:
-    >= min length, contains the PLACEHOLDER marker, printable."""
+    >= min length, carries an accepted marker, printable, unique."""
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
     assert len(ph) >= _PLACEHOLDER_MIN_LEN
-    assert _PLACEHOLDER_MARKER in ph
     assert ph.isprintable()
+    # No raise = passes the full invariant set (marker, length, uniqueness).
+    validate_placeholder_invariants({"ANTHROPIC_API_KEY": ph})
 
 
 def test_derive_placeholder_tail_is_lowercase_base32_no_padding() -> None:
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    tail = ph[len("avp-PLACEHOLDER-") :]
+    tail = ph[len(PLACEHOLDER_PREFIX) :]
     # base32 alphabet is A-Z2-7; lowercased -> a-z2-7. No '=' padding.
     assert "=" not in tail
     assert all(c in "abcdefghijklmnopqrstuvwxyz234567" for c in tail), tail
@@ -72,7 +74,7 @@ def test_derive_placeholder_tail_is_lowercase_base32_no_padding() -> None:
 def test_derive_placeholder_tail_has_at_least_104_bits() -> None:
     """>=104 bits of entropy => >=21 base32 chars (21 * 5 = 105 bits)."""
     ph = derive_placeholder("ANTHROPIC_API_KEY", _SALT)
-    tail = ph[len("avp-PLACEHOLDER-") :]
+    tail = ph[len(PLACEHOLDER_PREFIX) :]
     assert len(tail) >= 21
 
 

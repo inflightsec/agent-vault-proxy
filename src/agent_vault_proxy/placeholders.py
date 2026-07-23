@@ -47,7 +47,9 @@ import secrets
 import stat
 from pathlib import Path
 
-# 16 chars. Contains the "PLACEHOLDER" marker config.py requires.
+# 16 chars. Contains the "PLACEHOLDER" marker config.py requires. Single
+# source of truth for the prefix — STORED_PLACEHOLDER_RE and the CLI's
+# self-validation sentinel build from THIS constant, never a copy.
 PLACEHOLDER_PREFIX = "avp-PLACEHOLDER-"
 
 # Truncated base32 tail length. 21 chars * 5 bits/char = 105 bits of
@@ -71,7 +73,8 @@ _DEFAULT_SALT_BASENAME = "install-salt"
 #   * the tail's minimum length (21 chars = 105 bits) keeps a hand-typed
 #     low-entropy string ("token", "Bearer") structurally unrepresentable —
 #     a weak placeholder can't match innocent traffic because it can't parse.
-STORED_PLACEHOLDER_RE = re.compile(r"^avp-PLACEHOLDER-[a-z2-7]{21,64}$")
+# Built from PLACEHOLDER_PREFIX so the prefix lives in exactly one place.
+STORED_PLACEHOLDER_RE = re.compile(rf"^{re.escape(PLACEHOLDER_PREFIX)}[a-z2-7]{{21,64}}$")
 
 # Minted tail length: 26 base32 chars = 130 bits from a 16-byte CSPRNG draw.
 _MINT_TAIL_CHARS = 26

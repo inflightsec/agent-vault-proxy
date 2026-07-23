@@ -16,10 +16,11 @@ description: >
 
 Helps an agent walk a user through brokering a **new** secret through **agent-vault-proxy (AVP)** — the local proxy that swaps a placeholder for the real secret in-flight, so the calling process never holds the credential. This skill's whole job is to hand the user the **exact thing to paste where**, using the **notes/annotation source** so nothing in AVP's config file changes and nothing is redeployed.
 
-## Two hard rules
+## Three hard rules
 
 1. **Notes-first, config never.** Modern AVP reads bindings from each secret's own metadata — the **BWS `notes` field**, the **GSM `avp-binding` annotation**, and equivalent per-secret metadata on future backends (`binding_source: both` is the default; notes win over file). So a new credential is added entirely in the vault UI/CLI — **no editing `bindings`/`secrets:` in the AVP config, no `ansible`/`avp setup` redeploy.** Only reach for the config (file source) when a note genuinely can't express the binding (see Gotchas).
-2. **Propose, never apply.** This skill NEVER writes the secret value or the annotation to the vault for the user. It prints the secret name, tells the user where to put the value, and prints the annotation text to paste. The human applies it. (The assistant handling the raw secret is exactly what AVP exists to prevent.)
+2. **Propose, never apply — for the SECRET.** This skill NEVER writes the secret value or the annotation to the vault for the user. It prints the secret name, tells the user where to put the value, and prints the annotation text to paste. The human applies it. (The assistant handling the raw secret is exactly what AVP exists to prevent.)
+3. **Persist the placeholder at generation — BLOCKING.** The instant `avp binding new` mints a placeholder it is shown once, on that command's output. You MUST get it into durable storage in the SAME session — never leave it living only in terminal scrollback. The placeholder is a non-secret sentinel (unlike rule 2's secret), so you *may and should* write it yourself: put the printed `export <NAME>='avp-PLACEHOLDER-…'` line straight into the consuming app's `.env`/config, or hand the user the exact line and confirm they saved it. A binding whose placeholder never reaches the consumer injects nothing — this is the single most common "AVP isn't working" cause. (Backstop: the placeholder is also recoverable later from the vault note and via `avp env`, but do NOT defer to that — wire it now.)
 
 ## Workflow routing
 
@@ -40,7 +41,7 @@ Bearer API on one host — paste into the BWS secret's Notes field:
 ```yaml
 # avp-binding
 host: api.example.com
-placeholder: avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m
+placeholder: avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m6n7p
 header: Authorization
 format: "Bearer {secret}"
 ```

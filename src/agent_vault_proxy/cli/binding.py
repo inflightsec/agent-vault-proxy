@@ -25,14 +25,16 @@ from agent_vault_proxy.notes_binding import (
     ParsedBinding,
     parse_notes_binding,
 )
-from agent_vault_proxy.placeholders import mint_placeholder
+from agent_vault_proxy.placeholders import PLACEHOLDER_PREFIX, mint_placeholder
 
 # The generic substitution token the note carries (the parser rewrites it to
 # ``{<secret_name>}``). Kept in sync with notes_binding by contract.
 _SECRET_TOKEN = "{secret}"  # noqa: S105  # nosec B105 — public template slot, not a credential
 
-# Any non-empty placeholder validates; it is only stamped into the SecretSpec.
-_VALIDATE_PLACEHOLDER = "avp-PLACEHOLDER-binding-new-validate"
+# Any non-empty placeholder validates; it is only stamped into the SecretSpec
+# during self-validation (never emitted). Built from the prefix constant so it
+# tracks the format automatically and stays regex-valid.
+_VALIDATE_PLACEHOLDER = PLACEHOLDER_PREFIX + "bindingnewvalidatesentinel"
 
 
 def _die(msg: str) -> int:

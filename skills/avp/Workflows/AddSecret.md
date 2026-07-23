@@ -67,9 +67,9 @@ The rest of this section documents the artifact shape the tool emits (for review
 
 If the credential needs >1 host (common for download/CDN-backed APIs), a single note can't do it. Recommend the **file source** with a host list, OR one secret per host (same value duplicated). Never silently emit a note that only covers one of several required hosts — the others will fail (401 / unauthenticated).
 
-## 5. Wire the consumer (MANDATORY — do not end the session without it)
+## 5. Wire the consumer (BLOCKING — SKILL.md hard rule 3; do not end the session without it)
 
-Skipping this step is the #1 cause of "AVP doesn't inject": the binding is only half the job — the consuming app must EMIT the placeholder for AVP to swap. The placeholder is a sentinel, not a credential; writing it needs no special permission.
+Skipping this step is the #1 cause of "AVP doesn't inject": the binding is only half the job — the consuming app must EMIT the placeholder for AVP to swap. The placeholder is minted ONCE on the `avp binding new` output; persist it now. It is a non-secret sentinel, so writing it needs no special permission — the assistant should do it.
 
 1. Capture the placeholder from `avp binding new`'s stderr (`export <NAME>='avp-PLACEHOLDER-…'`).
 2. Write that line into the consuming app's `.env` / config yourself, or hand the user the exact line to add.

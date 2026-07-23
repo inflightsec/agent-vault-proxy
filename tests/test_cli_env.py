@@ -153,7 +153,7 @@ def _write_config(tmp_path, audit_path, install_salt_path=None) -> str:
 version: 1
 {salt_line}secrets:
   PLACEHOLDER_ONLY:
-    placeholder: "avp-PLACEHOLDER-zzzzzzzzzzzzzzzzzzzzz"
+    placeholder: "avp-PLACEHOLDER-zzzzzzzzzzzzzzzzzzzzzzzz"
     inject:
       header: "Authorization"
       format: "Bearer {{PLACEHOLDER_ONLY}}"

@@ -682,7 +682,7 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
         binding_source: file
         secrets:
           EXAMPLE_API_KEY:
-            placeholder: "avp-PLACEHOLDER-EXAMPLE-0001"
+            placeholder: "example_PLACEHOLDER_0001"
             inject:
               header: "Authorization"
               format: "Bearer {{EXAMPLE_API_KEY}}"

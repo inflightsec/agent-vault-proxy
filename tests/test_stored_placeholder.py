@@ -35,10 +35,10 @@ from agent_vault_proxy.placeholders import (
 from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
 
 _SALT = b"\x0b" * 32
-_DERIVED_FALLBACK = "avp-PLACEHOLDER-derivedfallback000000"
-# A syntactically valid stored placeholder (21-char lowercase-base32 tail),
-# fixed rather than minted so assertions are deterministic.
-_STORED = "avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m"
+_DERIVED_FALLBACK = "avp-PLACEHOLDER-derivedfallbackaaaaaaaaaaa"
+# A syntactically valid stored placeholder (25-char lowercase-base32 tail,
+# >= the 21-char floor), fixed rather than minted so assertions are deterministic.
+_STORED = "avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m6n7p"
 
 
 def _parse(note: str, name: str = "SECRET"):
@@ -74,7 +74,7 @@ def test_illegal_charset_rejected():
     # Uppercase + underscore are outside the lowercase-base32 alphabet.
     note = (
         "# avp-binding\nhost: api.example.com\n"
-        "placeholder: avp-PLACEHOLDER-ABC_DEF_GHI_JKL_MNO_PQ\n"
+        "placeholder: avp-PLACEHOLDER-ABC_DEF_GHI_JKL_MNO_PQRS\n"
     )
     assert isinstance(_parse(note), InvalidBinding)
 
@@ -249,7 +249,7 @@ def test_stored_colliding_with_file_placeholder_drops_stored_only(tmp_path):
     # claimant; a note storing the same placeholder drops alone.
     from agent_vault_proxy.config import load_config
 
-    file_ph = "avp-PLACEHOLDER-fffffffffffffffffffff"
+    file_ph = "avp-PLACEHOLDER-ffffffffffffffffffffffff"
     config_yaml = f"""
 version: 1
 secrets:

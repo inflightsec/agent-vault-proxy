@@ -66,3 +66,59 @@ def test_star_in_middle() -> None:
 
 def test_double_star_in_middle() -> None:
     assert path_glob_matches("/repos/**/issues", "/repos/foo/bar/issues")
+
+
+# --- git smart-HTTP two-phase canonicalisation ---------------------------
+
+from agent_vault_proxy.matching import git_smart_http_effective_path  # noqa: E402
+
+
+def test_git_receive_pack_discovery_canonicalised_to_data_path() -> None:
+    # A push discovery GET is rewritten to the data-phase path so a `paths:`
+    # scope can tell it apart from a clone discovery.
+    assert (
+        git_smart_http_effective_path("/owner/repo.git/info/refs", "service=git-receive-pack")
+        == "/owner/repo.git/git-receive-pack"
+    )
+
+
+def test_git_upload_pack_discovery_canonicalised() -> None:
+    assert (
+        git_smart_http_effective_path("/owner/repo.git/info/refs", "service=git-upload-pack")
+        == "/owner/repo.git/git-upload-pack"
+    )
+
+
+def test_git_service_param_among_others() -> None:
+    assert (
+        git_smart_http_effective_path("/r.git/info/refs", "foo=bar&service=git-receive-pack")
+        == "/r.git/git-receive-pack"
+    )
+
+
+def test_git_no_service_param_unchanged() -> None:
+    # Dumb-HTTP / plain info/refs fetch: nothing to canonicalise.
+    assert git_smart_http_effective_path("/r.git/info/refs", None) == "/r.git/info/refs"
+    assert git_smart_http_effective_path("/r.git/info/refs", "") == "/r.git/info/refs"
+
+
+def test_git_unknown_service_unchanged() -> None:
+    # Only the two real git services are folded; anything else is left alone.
+    assert git_smart_http_effective_path("/r.git/info/refs", "service=evil") == "/r.git/info/refs"
+
+
+def test_git_duplicate_service_param_unchanged() -> None:
+    # Ambiguous (two service values) → do not guess; leave unchanged.
+    assert (
+        git_smart_http_effective_path(
+            "/r.git/info/refs", "service=git-upload-pack&service=git-receive-pack"
+        )
+        == "/r.git/info/refs"
+    )
+
+
+def test_non_git_path_unchanged() -> None:
+    assert (
+        git_smart_http_effective_path("/v1/chat/completions", "service=git-receive-pack")
+        == "/v1/chat/completions"
+    )

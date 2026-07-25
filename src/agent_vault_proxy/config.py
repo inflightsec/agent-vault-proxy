@@ -44,6 +44,9 @@ _HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 # whitespace, bare "*", embedded "*", and other non-hostname junk. The
 # separate ">= 2 labels behind a wildcard" rule is enforced in the validator.
 _HOST_RE = re.compile(rf"^(?:\*\.)?{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
+# A single DNS label — the shape a `subdomains:` wildcard discriminator entry
+# must take (the `*.` in `*.jfrog.io` matches exactly one label).
+_SUBDOMAIN_LABEL_RE = re.compile(rf"^{_HOST_LABEL}$")
 
 # Public suffixes a "*." wildcard must never span — `*.co.uk` would broker a
 # credential to EVERY .co.uk registrant, a TLD-wide blast radius the naive
@@ -111,6 +114,14 @@ class BindingSpec(BaseModel):
     host: str
     methods: list[str] | None = None
     paths: list[str] | None = None
+    # Wildcard-host discriminator (ADR-0034): only meaningful on a `*.`
+    # wildcard host. When set, the wildcard's single matched leftmost label
+    # must be one of these exact labels — so a `*.jfrog.io` binding brokers
+    # only to `mycompany.jfrog.io`, never to an attacker's `evil.jfrog.io`.
+    # Shrinks a wildcard's blast radius from "every subdomain" to a named
+    # allowlist without listing full hosts. None = wildcard matches any
+    # single label (unchanged behaviour).
+    subdomains: list[str] | None = None
 
     @field_validator("host")
     @classmethod
@@ -191,6 +202,54 @@ class BindingSpec(BaseModel):
             if not p.startswith("/"):
                 raise ValueError(f"path '{p}' must start with '/'")
         return v
+
+    @field_validator("subdomains")
+    @classmethod
+    def normalize_and_validate_subdomains(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        if not v:
+            raise ValueError(
+                "empty subdomains = deny-all-subdomains; omit the field for any-subdomain instead"
+            )
+        normalized: list[str] = []
+        for label in v:
+            lowered = label.strip().lower()
+            if not _SUBDOMAIN_LABEL_RE.fullmatch(lowered):
+                raise ValueError(
+                    f"subdomain {label!r} is not a single DNS label "
+                    "(a-z, 0-9, '-'; no dots, no wildcard)"
+                )
+            normalized.append(lowered)
+        return normalized
+
+    @model_validator(mode="after")
+    def subdomains_require_wildcard_host(self) -> BindingSpec:
+        # `subdomains:` narrows which leftmost label a `*.` wildcard may match;
+        # it is meaningless (and almost certainly an operator error) on an
+        # exact host, where the host itself already pins the subdomain. Reject
+        # it fail-closed rather than silently ignore it.
+        if self.subdomains is not None and not self.host.startswith("*."):
+            raise ValueError(
+                f"subdomains: is only valid on a '*.' wildcard host; host {self.host!r} "
+                "is exact. Bind the exact host directly, or drop the subdomains field."
+            )
+        return self
+
+    def matches_host(self, host: str) -> bool:
+        """True if ``host`` matches this binding's host pattern AND, for a
+        wildcard host with a ``subdomains:`` allowlist, the matched leftmost
+        label is allowlisted. Caller passes the raw request host (case
+        normalised here). This is the host gate ``matched_binding`` uses; the
+        method/path gate is :meth:`matches_scope`."""
+        if not host_matches_pattern(host, self.host):
+            return False
+        if self.subdomains is None:
+            return True
+        # host_matches_pattern already guaranteed a single-label wildcard match,
+        # so the leftmost label is the discriminator.
+        label = host.lower().split(".", 1)[0]
+        return label in self.subdomains
 
     def matches_scope(self, method: str, path: str) -> bool:
         """True if this binding's optional method/path scope allows the

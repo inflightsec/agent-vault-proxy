@@ -37,6 +37,7 @@ from agent_vault_proxy.injectors.jwt_bearer import JwtResolver
 from agent_vault_proxy.injectors.oauth2_client_credentials import Oauth2CcResolver
 from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
 from agent_vault_proxy.injectors.sigv4 import Sigv4Resolver
+from agent_vault_proxy.matching import git_smart_http_effective_path
 from agent_vault_proxy.policy import (
     decide,
     destination_in_any_binding,
@@ -473,7 +474,12 @@ class AgentVaultProxyAddon:
         target_host = flow.request.pretty_host
         connect_host = flow.metadata.get("avp_connect_host")
         method = flow.request.method.upper()
-        path = flow.request.path.split("?", 1)[0]
+        raw_path, _, query = flow.request.path.partition("?")
+        # Git smart-HTTP push/clone carries its write intent in the
+        # `?service=` query the path scope strips; canonicalise the discovery
+        # GET to its data-phase path so `paths:` scoping treats both phases as
+        # one operation (no-op for all non-git traffic). See matching.py.
+        path = git_smart_http_effective_path(raw_path, query or None)
 
         # Pure policy verdict (ADR-0013). decide() does no I/O and no flow
         # mutation; this method EXECUTES the verdict — the fetch/render/inject

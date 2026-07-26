@@ -12,6 +12,14 @@ AVP protects you from credential stealers (Shai-Hulud and similar) and prompt-in
 
 Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden Secrets Manager](https://github.com/bitwarden) — cloud or self-hosted — just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space.
 
+## Fully open source, deliberately simple
+
+Every feature is in this repo under MIT. There is no paywalled tier, no enterprise edition, no cloud you have to trust, no telemetry — you can read the whole thing end to end (a few thousand lines) and run it forever.
+
+The whole workflow is one move: ask the bundled skill to route a service, it tells you the single line to paste into Bitwarden (or your vault), you paste it, and the agent is brokered. Done. Because every brokered credential is one binding, the config **is** the complete, auditable list of exactly which secrets each agent can reach — nothing implicit, nothing hidden.
+
+And the point isn't lock-in. The goal is simply that fewer real keys sit inside AI agents, everywhere. If AVP fits, use it; if one of the [alternatives](docs/comparison.md) fits your setup better, use that. Any tool that keeps the real secret out of the agent's memory is a win.
+
 ## Try it. 10 seconds.
 
 **1. Install** — Linux `pipx`, macOS `brew`:
@@ -89,11 +97,11 @@ ln -s "$PWD/skills/avp" ~/.claude/skills/avp
 - **[Architecture](docs/architecture.md)** — threat model, G1–G9 invariants, hardening, residual risks
 - **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden + Google Secret Manager ship today, `static` for dev) and how to add another
 - **[Google Secret Manager](docs/gcp-secret-manager.md)** — keep secrets in GSM: setup, keyless auth, and end-to-end testing
-- **[Comparison](docs/comparison.md)** — vs. Vault Agent, Doppler, `op run`, `superfly/tokenizer`
+- **[Comparison](docs/comparison.md)** — vs. Vault Agent, Doppler, `op run`, `superfly/tokenizer`, OneCLI, and other agent credential tools (use whichever fits — the point is more agents protected, not lock-in)
 - **[CHANGELOG](./CHANGELOG.md)** · **[SECURITY](./SECURITY.md)** · **[CONTRIBUTING](./CONTRIBUTING.md)** · **[CREDITS](./CREDITS.md)**
 
 The proxy never phones home. The only outbound connections it makes are to the BWS endpoint you configure and the upstream APIs your agent is calling. No telemetry. The audit log under `/var/log/agent-vault-proxy/audit.jsonl` is local-only by default; optional [off-box shipping](docs/adrs/ADR-0019-off-box-audit-shipping.md) forwards it — from a separate sidecar, never the proxy — only to a collector you run and control.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Prior art acknowledged in [`CREDITS.md`](./CREDITS.md).
+MIT — see [LICENSE](LICENSE). Every feature ships here: no open-core, no enterprise tier, no hosted service. Fork it, read it end to end, run it forever. Prior art acknowledged in [`CREDITS.md`](./CREDITS.md).

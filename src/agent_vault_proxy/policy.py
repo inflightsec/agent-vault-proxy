@@ -37,7 +37,6 @@ from agent_vault_proxy.config import (
     Sigv4Injector,
     iter_leaf_injectors,
 )
-from agent_vault_proxy.matching import host_matches_pattern
 
 # Injectors whose target is a request header (all expose ``.header``); the body
 # injector is the only leaf that is not header-targeting. Used for placeholder
@@ -113,9 +112,15 @@ def destination_in_any_binding(config: Config, host: str) -> bool:
 
 
 def matched_binding(host: str, spec: SecretSpec) -> BindingSpec | None:
-    """The first of ``spec``'s bindings whose host pattern matches ``host``."""
+    """The first of ``spec``'s bindings whose host gate matches ``host``.
+
+    Uses :meth:`BindingSpec.matches_host` so a wildcard binding's
+    ``subdomains:`` discriminator is honoured — a `*.jfrog.io` binding scoped
+    to ``subdomains: [mycompany]`` does not match ``evil.jfrog.io`` (returns
+    None → G5 forward-verbatim, no injection).
+    """
     for b in spec.bindings:
-        if host_matches_pattern(host, b.host):
+        if b.matches_host(host):
             return b
     return None
 

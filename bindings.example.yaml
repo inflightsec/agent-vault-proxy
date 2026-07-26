@@ -63,6 +63,44 @@ secrets:
 # is rejected. `*` matches one path segment, `**` any number. Off-scope
 # requests forward the placeholder verbatim and audit `binding_scope_violation`.
 
+  # Git over HTTPS is two-phase: a discovery `GET <repo>.git/info/refs?service=
+  # git-<upload|receive>-pack` precedes the data `POST <repo>.git/git-<svc>`.
+  # The write intent lives in the `?service=` query (path scoping strips it),
+  # so AVP canonicalises the discovery to its data-phase path (ADR-0033) — a
+  # `paths:` scope naming the service governs BOTH phases. Use `paths:`, not
+  # `methods:`, to separate git read from write: clone's data phase is itself a
+  # POST, so a `methods: [GET]` "read-only" binding would break clone. This
+  # binding is CLONE-ONLY — a push (git-receive-pack) is denied at both phases.
+  #
+  # NOTE ON THE HEADER: git's default is `Authorization: Basic <base64>`, and
+  # AVP matches the placeholder as a LITERAL substring — a base64-wrapped
+  # placeholder won't match. Present the placeholder verbatim in a bearer-style
+  # header instead, e.g.:
+  #   git -c http.extraHeader="Authorization: Bearer ghp_PLACEHOLDER_GIT_01HXY1234567890" \
+  #       clone https://github.com/org/repo.git
+  GITHUB_GIT_PAT:
+    placeholder: "ghp_PLACEHOLDER_GIT_01HXY1234567890"
+    inject:
+      header: "Authorization"
+      format: "Bearer {GITHUB_GIT_PAT}"
+    bindings:
+      - host: "github.com"
+        paths: ["/**/git-upload-pack"]
+
+  # Wildcard-host discriminator (ADR-0034): a `*.` wildcard normally injects
+  # into ANY single-label subdomain. `subdomains:` pins it to a named allowlist
+  # — this JFrog token brokers only to `mycompany.jfrog.io` (and its staging),
+  # never an attacker's `evil.jfrog.io`, without listing full hosts. Valid only
+  # on a `*.` host; requires `allow_wildcard_hosts: true` (set above).
+  JFROG_TOKEN:
+    placeholder: "jfrog_PLACEHOLDER_01HXY1234567890AB"
+    inject:
+      header: "Authorization"
+      format: "Bearer {JFROG_TOKEN}"
+    bindings:
+      - host: "*.jfrog.io"
+        subdomains: ["mycompany", "mycompany-staging"]
+
   OPENAI_API_KEY:
     placeholder: "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
     inject:

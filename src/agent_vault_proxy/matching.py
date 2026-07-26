@@ -2,6 +2,42 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from urllib.parse import parse_qs
+
+# Git smart-HTTP is a TWO-PHASE operation. A push (`git-receive-pack`) — and a
+# clone/fetch (`git-upload-pack`) — begins with a discovery `GET
+# <repo>.git/info/refs?service=<svc>` and only then sends the data-phase
+# `POST <repo>.git/<svc>`. The write intent lives in the `?service=` QUERY,
+# which `path_glob_matches` strips — so a `paths:` scope written to allow clone
+# (`git-upload-pack`) but deny push (`git-receive-pack`) would match BOTH
+# discovery GETs identically at `<repo>.git/info/refs`, injecting the
+# credential into the push handshake it was meant to refuse. Canonicalising the
+# discovery request to its data-phase path makes both phases scope-match as one
+# logical operation (ADR-0033). Prior art for the two-phase gap: transparent
+# auth-proxies that scope git by path must treat the discovery GET as the
+# service it advertises.
+_GIT_INFO_REFS_SUFFIX = "/info/refs"
+_GIT_SMART_HTTP_SERVICES = frozenset({"git-upload-pack", "git-receive-pack"})
+
+
+def git_smart_http_effective_path(path: str, query: str | None) -> str:
+    """Canonicalise a git smart-HTTP discovery request to its data-phase path.
+
+    For ``GET <repo>.git/info/refs?service=git-receive-pack`` returns
+    ``<repo>.git/git-receive-pack`` so ``paths:`` scoping treats the discovery
+    handshake identically to the POST it authorises. ``path`` is the
+    query-stripped request path; ``query`` is the raw query string (or None).
+    Any non-git request — a path not ending in ``/info/refs``, a missing/empty
+    ``service`` param, or a ``service`` value outside the known git services —
+    is returned UNCHANGED, so this is a no-op for all non-git traffic.
+    """
+    if not query or not path.endswith(_GIT_INFO_REFS_SUFFIX):
+        return path
+    services = parse_qs(query).get("service", [])
+    if len(services) != 1 or services[0] not in _GIT_SMART_HTTP_SERVICES:
+        return path
+    base = path[: -len(_GIT_INFO_REFS_SUFFIX)]
+    return f"{base}/{services[0]}"
 
 
 def host_matches_pattern(host: str, pattern: str) -> bool:

@@ -4,6 +4,12 @@ All notable changes to `agent-vault-proxy` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Pinned token egress — resolve once, connect to the vetted IP ([ADR-0035](docs/adrs/ADR-0035-pin-vetted-address-for-token-egress.md)).** Closes a check→connect time-of-check/time-of-use gap in the token-endpoint SSRF guard, where the guard vetted one DNS answer and `urllib` then re-resolved the name independently at connect time (exploitable by rebinding a trusted domain to a control-plane address; wrong even under benign round-robin). `resolve_and_vet` now resolves once and returns the vetted address set; a new `_PinnedHTTPSConnection` dials a vetted IP directly while TLS SNI, the `Host:` header, and certificate verification stay bound to the **hostname** — never the IP, never disabled. The three token-minting injectors (`oauth2_refresh`, `oauth2_client_credentials`, `github_app`) are consolidated onto this one shared pinned transport, with sequential failover over the vetted set and a **fresh** re-vet on retry (never a stale pin). Credentials-in-URL (`user:pass@host`) are rejected at config-load, and `scripts/check-token-egress-chokepoint.sh` fails CI if any injector opens a raw connection outside the shared transport. Resolver-stub tests plus one real-handshake smoke against a loopback TLS server.
+
 ## [0.9.0], 2026-07-22
 
 ### Added

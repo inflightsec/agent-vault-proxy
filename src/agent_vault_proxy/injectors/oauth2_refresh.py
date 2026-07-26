@@ -8,9 +8,9 @@ the spec + the three resolved BWS-held secrets, this module:
      can resolve to a private address minutes later).
   2. Builds an RFC 6749 §6 refresh-token grant POST body. Client
      auth method (body_post / basic) per the spec.
-  3. Issues one POST via stdlib ``urllib.request``. One retry on 5xx
-     with 1 s backoff; no retry on 4xx (credential / scope, not
-     transient).
+  3. Issues one POST via the shared pinned token transport. One retry
+     on 5xx with 1 s backoff; no retry on 4xx (credential / scope,
+     not transient).
   4. Parses the response per §5.1 (success) and §5.2 (error JSON).
      Categorises the outcome into the audit vocabulary fixed by the
      ADR §7 event taxonomy.
@@ -45,6 +45,7 @@ from agent_vault_proxy.backends import (
     SecretNotFoundError,
 )
 from agent_vault_proxy.config import Oauth2RefreshInjector, SecretSpec
+from agent_vault_proxy.injectors._token_transport import transport_open
 
 if TYPE_CHECKING:
     from agent_vault_proxy.audit import AuditWriter
@@ -117,30 +118,13 @@ class ExchangeResult:
 _SHARED_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="avp-oauth-exchange")
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Refuse ALL 3xx from the token endpoint (ADR-0017 hardening series).
-
-    A redirecting token endpoint is misconfigured or hostile (SSRF
-    pivot); following it — even with a post-hoc check on the final URL —
-    means the redirected host was already contacted on the wire.
-    Returning ``None`` makes urllib raise ``HTTPError(code=3xx)``, which
-    :func:`exchange` maps to ``token_endpoint_status:<3xx>`` without
-    retry. Replaces the former ``resp.geturl()`` post-check."""
-
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
-        return None
-
-
 def _transport_open(req: urllib.request.Request, timeout: float) -> Any:
     """Single egress seam for the token exchange — tests patch THIS name.
 
-    Builds a fresh no-redirect opener per call (no global opener state,
-    no cross-test leakage). The scheme is https-only by construction
-    (config-load validator) and the URL is SSRF-re-checked immediately
-    before each call in :func:`exchange`."""
-    opener = urllib.request.build_opener(_NoRedirectHandler)
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    return opener.open(req, timeout=timeout)  # noqa: S310  # nosec
+    Forwards to the shared pinned token transport and remains as the
+    local patch point the refresh-token tests intercept.
+    """
+    return transport_open(req, timeout)
 
 
 def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent to the spec
@@ -210,6 +194,9 @@ def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent t
         try:
             with _transport_open(req, timeout=timeout_seconds) as resp:
                 return _parse_success(resp.read(), refresh_token, spec)
+        except SsrfBlockedError as e:
+            _log.warning("token_url SSRF-blocked during transport resolve: %s", e)
+            return ExchangeResult(outcome="ssrf_blocked")
         except HTTPError as e:
             status = e.code
             body_bytes = _safe_read(e)

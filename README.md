@@ -39,7 +39,7 @@ avp env && avp run claude
 
 Done — the agent only ever sends the placeholder; AVP swaps in the real key on the wire.
 
-*Rather than `avp run`, you can export the proxy + CA vars in your `~/.zshrc` (or any shell rc) — see [Usage](docs/usage.md) for the canonical block. It's persistent, but it routes your whole shell through AVP, not just the agent AVP launches.*
+*Rather than `avp run`, you can export the proxy + CA vars in your agent's `~/.zshrc` (or any shell rc) — see [Usage](docs/usage.md) for the canonical block. It's persistent, but it routes your whole shell through AVP, not just the agent AVP launches.*
 
 ## See it in action
 

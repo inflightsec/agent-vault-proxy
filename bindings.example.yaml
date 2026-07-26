@@ -304,7 +304,7 @@ secrets:
       - host: "www.googleapis.com"
         methods: [GET, POST]
 
-  # ─── AWS SigV4 request signing (inject.type: sigv4) — ADR-0027 ───────────
+  # ─── AWS SigV4 request signing (inject.type: sigv4) — ADR-0027, ADR-0036 ──
   # AWS APIs don't take a static bearer credential; each request is signed
   # (AWS4-HMAC-SHA256 over method + canonical URI/query + signed headers +
   # SHA-256 of the body). AVP holds the access key id + secret access key in the
@@ -313,6 +313,14 @@ secrets:
   # trigger — nothing is substituted, the signature is computed. For STS/temporary
   # credentials add `session_token_secret`. A sigv4 + body-injector on one host is
   # rejected at config-load (SigV4 already hashes the whole body).
+  #
+  # S3 works: AVP signs AND emits `x-amz-content-sha256` (S3 requires it), and
+  # folds in any `x-amz-*` header the client's SDK already set (AWS rejects an
+  # unsigned `x-amz-*`), so `x-amz-acl` / `x-amz-storage-class` writes sign
+  # correctly (ADR-0036; pinned to AWS's published S3 header-auth vector).
+  # NOT supported (would require handing the agent a credential — deliberately
+  # out of scope): S3 streaming/chunked uploads (STREAMING-AWS4-HMAC-SHA256),
+  # presigned URLs, and SigV4a (ECDSA multi-region).
   AWS_S3:
     placeholder: "aws-sigv4-PLACEHOLDER-01HXY1234567890ABCD"
     inject:

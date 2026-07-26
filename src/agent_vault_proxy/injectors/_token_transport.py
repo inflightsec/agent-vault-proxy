@@ -1,28 +1,40 @@
-"""Shared HTTP egress for the token-minting injectors — oauth2_client_credentials
-and github_app — which POST to a provider to obtain a short-lived credential.
+"""Shared HTTPS egress for the token-minting injectors.
 
-SSRF-guarded, no-redirect (a 3xx from a token endpoint is a misconfig / SSRF
-pivot), one retry on 5xx / transport error. ``transport_open`` is the single
-egress seam the e2e tests patch. The pre-existing ``oauth2_refresh`` injector
-keeps its own equivalent transport (not refactored — it is verified as-is).
+``oauth2_client_credentials``, ``github_app``, and ``oauth2_refresh`` all POST
+to operator-supplied token endpoints. The transport therefore owns three
+security properties:
+
+1. Fresh SSRF re-vetting on EVERY call (DNS rebinding defense).
+2. Pinned connect-by-IP: resolve and vet once, then connect to a vetted member
+   of that exact address set so check and connect cannot diverge (ADR-0035).
+3. No redirect following: a 3xx from a token endpoint is treated as a terminal
+   response and surfaced as ``HTTPError`` to the caller.
+
+``transport_open`` remains the single patchable egress seam the tests use.
 """
 
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import logging
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
-from agent_vault_proxy._ssrf_guard import SsrfBlockedError, check_url_not_internal
+from agent_vault_proxy._ssrf_guard import SsrfBlockedError, check_url_not_internal, resolve_and_vet
 
 _log = logging.getLogger("agent_vault_proxy.injectors._token_transport")
 _RETRY_BACKOFF_SECONDS = 1.0
 _USER_AGENT = "agent-vault-proxy/token-exchange"
+_TLS_CONTEXT = ssl.create_default_context()
 
 
 @dataclass(frozen=True)
@@ -38,20 +50,140 @@ class TokenResult:
     error_description: str | None = None
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Refuse every 3xx from a token endpoint — following it (even with a
-    post-hoc check) means the redirected host was already contacted."""
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that dials a caller-supplied vetted IP literal while
+    keeping the original hostname for TLS SNI, ``Host:``, and certificate
+    verification (ADR-0035).
 
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
-        return None
+    ``http.client`` already handles request formatting, ``Host:`` synthesis, and
+    non-following of redirects. The only custom behavior here is the connect
+    path: no resolver call, no ``create_connection()``, only a direct socket
+    connect to the vetted address.
+    """
+
+    def __init__(
+        self,
+        family: int,
+        ip: str,
+        host: str,
+        port: int,
+        *,
+        timeout: float,
+        context: ssl.SSLContext,
+    ) -> None:
+        super().__init__(host, port, timeout=timeout, context=context)
+        self._pinned_family = family
+        self._pinned_ip = ip
+        # Keep an explicitly-typed handle on the TLS context. ``http.client``
+        # stores it as the private ``self._context``; referencing our own
+        # attribute keeps the type checker happy and the intent explicit.
+        self._pinned_context = context
+
+    def connect(self) -> None:
+        # Dial the pre-vetted IP directly — no resolver call, no
+        # ``create_connection`` (which would re-run getaddrinfo). Then TLS-wrap
+        # with SNI + verification bound to the HOSTNAME (``self.host``), never
+        # the IP, so pinning the transport address cannot weaken TLS identity.
+        sock = socket.socket(self._pinned_family, socket.SOCK_STREAM)
+        try:
+            if isinstance(self.timeout, int | float):
+                sock.settimeout(self.timeout)
+            sock.connect((self._pinned_ip, self.port))
+        except OSError:
+            sock.close()
+            raise
+        self.sock = self._pinned_context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedResponse:
+    """Context-manager wrapper matching the historic ``with transport_open(...)
+    as resp: resp.read()`` seam while ensuring both response and connection are
+    closed on exit.
+    """
+
+    def __init__(
+        self,
+        conn: http.client.HTTPSConnection,
+        resp: http.client.HTTPResponse,
+    ) -> None:
+        self._conn = conn
+        self._resp = resp
+
+    def read(self) -> bytes:
+        return self._resp.read()
+
+    def __enter__(self) -> _PinnedResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        try:
+            self._resp.close()
+        finally:
+            self._conn.close()
 
 
 def transport_open(req: urllib.request.Request, timeout: float) -> Any:
-    """Single egress seam — tests patch THIS name. Fresh no-redirect opener per
-    call (no global opener state). Scheme is https by config validation; the URL
-    is SSRF-re-checked in :func:`post` immediately before the call."""
-    opener = urllib.request.build_opener(_NoRedirectHandler)
-    return opener.open(req, timeout=timeout)  # noqa: S310  # nosec
+    """Open ``req`` through the pinned token-egress transport.
+
+    The URL is resolved and vetted FRESH on every call. Each vetted address is
+    tried in order; every candidate is already safe, so sequential failover is
+    allowed. A retry in :func:`post` therefore re-runs resolution and receives a
+    fresh vetted set rather than reusing a stale pin.
+    """
+    url = req.full_url
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        # Defense-in-depth: config-load enforces https on every token_url, so
+        # this is unreachable today — but transport_open must never TLS-wrap a
+        # plaintext endpoint if a future caller slips one through. Fail closed.
+        raise SsrfBlockedError(f"token endpoint must use https, refusing scheme {parsed.scheme!r}")
+    vetted = resolve_and_vet(url)
+    hostname = parsed.hostname
+    if hostname is None:
+        raise urllib.error.URLError(f"token endpoint URL has no hostname: {url!r}")
+    port = parsed.port or 443
+    selector = parsed.path or "/"
+    if parsed.query:
+        selector = f"{selector}?{parsed.query}"
+    method = req.get_method()
+    body = req.data
+    headers = dict(req.header_items())
+
+    last_exc: OSError | None = None
+    for family, ip in vetted:
+        conn = _PinnedHTTPSConnection(
+            family,
+            ip,
+            hostname,
+            port,
+            timeout=timeout,
+            context=_TLS_CONTEXT,
+        )
+        try:
+            conn.request(method, selector, body=body, headers=headers)
+            resp = conn.getresponse()
+        except OSError as e:
+            conn.close()
+            last_exc = e
+            continue
+        if 200 <= resp.status < 300:
+            return _PinnedResponse(conn, resp)
+        body_bytes = resp.read()
+        conn.close()
+        raise urllib.error.HTTPError(
+            url,
+            resp.status,
+            resp.reason,
+            resp.headers,
+            io.BytesIO(body_bytes),
+        )
+
+    if last_exc is None:
+        # Unreachable — resolve_and_vet fails closed on an empty answer, so the
+        # loop always ran at least once. Explicit raise (not assert, which
+        # strips under `python -O`) keeps it fail-closed regardless.
+        raise urllib.error.URLError("no vetted address to connect to")
+    raise urllib.error.URLError(last_exc)
 
 
 def _safe_read(err: urllib.error.HTTPError) -> bytes:
@@ -98,6 +230,9 @@ def post(
         try:
             with transport_open(req, timeout=timeout) as resp:
                 return on_success(resp.read())
+        except SsrfBlockedError as e:
+            _log.warning("token endpoint SSRF-blocked during transport resolve: %s", e)
+            return TokenResult(outcome="ssrf_blocked")
         except urllib.error.HTTPError as e:
             status = e.code
             body = _safe_read(e)

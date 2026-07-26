@@ -90,12 +90,13 @@ Any change here needs human review and most likely an issue first:
 
 Do not propose changes in these directions without a concrete issue and approval first:
 
-- OAuth refresh-token flows: different threat model, different injector type
-- AWS SigV4 - needs a request-signer plugin, not a header substitution
 - Egress firewall features - the operator's host firewall handles that
 - Multi-tenant routing: single-host design
-- Storage backends other than BWS - BWS-specific is the design constraint
-- Replacing `mitmproxy` with a different proxy engine: the BWS integration model assumes mitmproxy's addon API
+- Storage backends beyond BWS / GSM / static - the shipped set; a new backend needs an issue first
+- Replacing `mitmproxy` with a different proxy engine: the backend integration model assumes mitmproxy's addon API
+- AWS SigV4 streaming/chunked payloads, presigned URLs, and SigV4a (ECDSA) - core SigV4 signing shipped (`sigv4`, ADR-0027/ADR-0036); these modes are held back to keep the "agent never holds any AWS credential" invariant
+
+The injector taxonomy is **complete and shipped** — do not treat these as out of scope: static `header`/`body`/`multi`, `oauth2_refresh` (ADR-0017), `oauth2_client_credentials` + `github_app` (ADR-0030), `sigv4` (ADR-0027, S3-hardened ADR-0036), `hmac` + `jwt_bearer` (ADR-0028).
 
 ## Commit message style
 

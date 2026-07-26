@@ -9,6 +9,7 @@ AWS get-vanilla vector in test_sigv4_signer.py; this pins the wiring.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -77,10 +78,16 @@ def test_sigv4_signs_request_end_to_end(tmp_path: Path) -> None:
     assert auth.startswith("AWS4-HMAC-SHA256 ")
     assert f"Credential={_AK}/" in auth
     assert "/us-east-1/s3/aws4_request" in auth
-    assert "SignedHeaders=host;x-amz-date" in auth
+    # S3 requires x-amz-content-sha256 to be present AND signed.
+    assert "SignedHeaders=host;x-amz-content-sha256;x-amz-date" in auth
     assert "Signature=" in auth
     assert _PH not in auth
     assert "x-amz-date" in flow.request.headers
+    # The payload-hash header is emitted on the wire, matching the actual body.
+    assert (
+        flow.request.headers["x-amz-content-sha256"]
+        == hashlib.sha256(flow.request.raw_content or b"").hexdigest()
+    )
     # The credentials were actually fetched.
     assert set(backend.fetches) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 

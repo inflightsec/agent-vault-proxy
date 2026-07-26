@@ -107,4 +107,4 @@ Each rule below is here because we broke it.
 
 ## What this repo will NOT do
 
-The full out-of-scope list lives in [`AGENTS.md`](AGENTS.md). Highlights: no OAuth refresh flow, no AWS SigV4 signer, no egress firewall behavior, no non-BWS backends merged without an issue first.
+The full out-of-scope list lives in [`AGENTS.md`](AGENTS.md). Highlights: no egress-firewall behavior, no kernel-level network policy, no multi-tenant routing, no proxy-engine swap. (The injector taxonomy is complete — OAuth refresh, AWS SigV4, `hmac`/`jwt_bearer` all shipped; backends are BWS + GSM + static. New backends still need an issue first.)

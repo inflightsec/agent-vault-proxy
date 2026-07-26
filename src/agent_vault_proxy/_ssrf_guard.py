@@ -114,38 +114,49 @@ def _check_ip_string(ip_str: str) -> None:
         )
 
 
-def check_url_not_internal(url: str | Url | HttpUrl) -> None:
-    """Resolve ``url``'s host and refuse if ANY resolved address is
-    internal. ``url`` may be a raw string or a Pydantic ``Url``.
+# A vetted connection target: ``(socket address family, IP string)``. The
+# caller pairs it with the URL's port and connects to THIS address, so the
+# address we vetted is the address we use — no check→connect gap (ADR-0035).
+VettedAddress = tuple[int, str]
 
-    Direct-IP URLs short-circuit the DNS step. Hostnames go through
-    ``socket.getaddrinfo`` and every record's address is checked —
-    ``any private = block`` (DNS rebinding defense; an attacker
-    controlling the resolver picks the private one at connect time).
+
+def resolve_and_vet(url: str | Url | HttpUrl) -> list[VettedAddress]:
+    """Resolve ``url``'s host ONCE and return every vetted address, so the
+    caller connects to a member of exactly this set — check and connect are
+    provably the same address (ADR-0035, closing the check→connect TOCTOU).
+
+    Refuses (``SsrfBlockedError``) if ANY resolved address is internal
+    (``any private = block`` — the DNS-rebinding defense), on DNS failure, or
+    on an empty answer — fail-closed. A direct-IP URL short-circuits DNS and
+    returns the single vetted literal. Addresses are returned in
+    ``getaddrinfo`` order (the OS's RFC 6724 preference), deduped by
+    ``(family, ip)``.
     """
     parsed = urlparse(str(url))
     host = parsed.hostname
     if host is None:
         raise SsrfBlockedError(f"token_url has no hostname: {url!r}")
 
-    # Direct-IP URL — no DNS needed. Parse FIRST, block-check SECOND:
-    # only the parse failure means "not an IP literal, fall through to
-    # DNS". The block-check raises SsrfBlockedError, which IS-A
-    # ValueError (Pydantic surfaces it at config-load) — a single
-    # combined try here used to swallow the block verdict and send
-    # blocked literals down the DNS path (closed by the ADR-0017
-    # hardening series; pinned by
-    # test_blocked_ip_literal_short_circuits_without_dns).
+    # Direct-IP URL — no DNS needed. Parse FIRST, block-check SECOND: only the
+    # parse failure means "not an IP literal, resolve it". The block-check
+    # raises SsrfBlockedError, which IS-A ValueError (Pydantic surfaces it at
+    # config-load) — a single combined try once swallowed the verdict and sent
+    # blocked literals down the DNS path (closed by the ADR-0017 hardening
+    # series; pinned by test_blocked_ip_literal_short_circuits_without_dns).
     try:
-        ipaddress.ip_address(host)
+        literal = ipaddress.ip_address(host)
     except ValueError:
         pass  # not an IP literal — fall through to DNS resolution
     else:
         _check_ip_string(host)  # SsrfBlockedError propagates
-        return
+        family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
+        return [(int(family), host)]
 
+    # Hostname — resolve once. getaddrinfo returns one record per socktype
+    # (STREAM + DGRAM + RAW); the ``(family, ip)`` dedupe below collapses them,
+    # so we keep the original two-arg call shape and don't filter by socktype.
     try:
-        records = socket.getaddrinfo(host, None)
+        records = socket.getaddrinfo(host, parsed.port)
     except (socket.gaierror, OSError) as e:
         raise SsrfBlockedError(
             f"token_url host {host!r} DNS resolution failed: {e}. "
@@ -156,12 +167,31 @@ def check_url_not_internal(url: str | Url | HttpUrl) -> None:
     if not records:
         raise SsrfBlockedError(f"token_url host {host!r} returned no addresses; failing closed")
 
-    for record in records:
-        # sockaddr is (host, port) for v4, (host, port, flowinfo, scopeid)
-        # for v6 — host is always position 0. stdlib types it
-        # ``str | int`` because AF_UNIX shares the position; the
-        # families this guard handles (AF_INET, AF_INET6) always put
-        # a string there.
-        ip_str = record[4][0]
-        assert isinstance(ip_str, str), f"unexpected sockaddr shape: {record!r}"
-        _check_ip_string(ip_str)
+    vetted: list[VettedAddress] = []
+    seen: set[VettedAddress] = set()
+    for family, _socktype, _proto, _canonname, sockaddr in records:
+        # sockaddr is (host, port) for v4, (host, port, flowinfo, scopeid) for
+        # v6 — host is always position 0. stdlib types it ``str | int`` because
+        # AF_UNIX shares the position; AF_INET / AF_INET6 always put a string.
+        ip_str = sockaddr[0]
+        # Fail CLOSED rather than assert — assertions strip under `python -O`,
+        # and this is a security boundary. AF_INET/AF_INET6 always put a str at
+        # sockaddr[0]; anything else is a malformed answer we refuse to dial.
+        if not isinstance(ip_str, str):
+            raise SsrfBlockedError(f"unexpected sockaddr shape, failing closed: {sockaddr!r}")
+        _check_ip_string(ip_str)  # ANY internal ⇒ block the whole set
+        key: VettedAddress = (int(family), ip_str)
+        if key not in seen:
+            seen.add(key)
+            vetted.append(key)
+    return vetted
+
+
+def check_url_not_internal(url: str | Url | HttpUrl) -> None:
+    """Resolve ``url`` and refuse if ANY resolved address is internal.
+
+    Thin pass/raise wrapper over :func:`resolve_and_vet` for config-load call
+    sites that only need the verdict, not the addresses. Request-time egress
+    calls ``resolve_and_vet`` directly and connects to a vetted member.
+    """
+    resolve_and_vet(url)

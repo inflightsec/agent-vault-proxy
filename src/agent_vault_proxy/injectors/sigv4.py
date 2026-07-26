@@ -120,12 +120,27 @@ def sign(
     service: str,
     amz_date: str,
     session_token: str | None = None,
+    sign_content_sha256: bool = False,
+    signed_headers_extra: dict[str, str] | None = None,
 ) -> Sigv4Result:
     """Sign a request per AWS SigV4. ``amz_date`` is the ``YYYYMMDDTHHMMSSZ``
-    request timestamp (passed in so the function stays pure). Signs the minimal
-    required header set — ``host`` + ``x-amz-date`` (+ ``x-amz-security-token``
-    for temporary credentials) — which is what a broker controls and is
-    sufficient for the service to verify. Returns the header values to set."""
+    request timestamp (passed in so the function stays pure).
+
+    Always signs ``host`` + ``x-amz-date`` (+ ``x-amz-security-token`` for
+    temporary credentials). Two options extend the signed set:
+
+    - ``sign_content_sha256`` adds ``x-amz-content-sha256`` (the payload hash) to
+      both the signed set and the returned result. S3 *requires* this header to
+      be present and signed; sending it is spec-valid for every service, so the
+      request path always sets it. It stays off by default so the AWS
+      ``get-vanilla`` conformance vector (a minimal-header case) still reproduces.
+    - ``signed_headers_extra`` folds in any ``x-amz-*`` header the client already
+      set. AWS rejects a request that carries an *unsigned* ``x-amz-*`` header,
+      so the resolver passes through whatever the agent's SDK added (e.g.
+      ``x-amz-acl``, ``x-amz-storage-class``). AVP's computed headers take
+      precedence over anything passed here.
+
+    Returns the header values to set."""
     parts = urlsplit(url)
     host = parts.hostname or ""
     if parts.port is not None and not _is_default_port(parts.scheme, parts.port):
@@ -134,7 +149,15 @@ def sign(
 
     payload_hash = EMPTY_PAYLOAD_HASH if not body else _sha256_hex(body)
 
-    signed_headers: dict[str, str] = {"host": host, "x-amz-date": amz_date}
+    signed_headers: dict[str, str] = {}
+    if signed_headers_extra:
+        for name, value in signed_headers_extra.items():
+            signed_headers[name.lower()] = value
+    # AVP-computed headers overwrite any client-supplied collision.
+    signed_headers["host"] = host
+    signed_headers["x-amz-date"] = amz_date
+    if sign_content_sha256:
+        signed_headers["x-amz-content-sha256"] = payload_hash
     if session_token is not None:
         signed_headers["x-amz-security-token"] = session_token
     canonical_headers, signed_header_list = _canonical_headers(signed_headers)
@@ -179,6 +202,24 @@ def sign(
 
 def _is_default_port(scheme: str, port: int) -> bool:
     return (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+
+
+# x-amz-* headers AVP computes and sets itself; never folded in from the client
+# (we overwrite them with freshly computed values).
+_MANAGED_AMZ_HEADERS = frozenset({"x-amz-date", "x-amz-content-sha256", "x-amz-security-token"})
+
+
+def _client_amz_headers(headers: http.Headers) -> dict[str, str]:
+    """The ``x-amz-*`` headers the client already set, minus the ones AVP
+    computes. These MUST be signed (AWS rejects an unsigned ``x-amz-*`` header),
+    and are left on the outbound request verbatim so the signed value matches
+    the value on the wire."""
+    extra: dict[str, str] = {}
+    for name in headers:
+        lname = name.lower()
+        if lname.startswith("x-amz-") and lname not in _MANAGED_AMZ_HEADERS:
+            extra[lname] = headers[name]
+    return extra
 
 
 class Sigv4Resolver:
@@ -260,12 +301,17 @@ class Sigv4Resolver:
             service=injector.service,
             amz_date=amz_date,
             session_token=session_token,
+            sign_content_sha256=True,
+            signed_headers_extra=_client_amz_headers(flow.request.headers),
         )
 
         # Mutate in place. No bytes leave the proxy until this hook returns, so
         # the G6 audit-before-write ordering holds with the emit below.
         flow.request.headers[header_name] = result.authorization
         flow.request.headers["x-amz-date"] = result.amz_date
+        # S3 requires x-amz-content-sha256 be present AND signed; we signed it
+        # above, so it must go on the wire with the exact value we hashed.
+        flow.request.headers["x-amz-content-sha256"] = result.content_sha256
         if result.security_token is not None:
             flow.request.headers["x-amz-security-token"] = result.security_token
 

@@ -157,6 +157,18 @@ repos:
         # "aligned" with pre-release.sh (both call check-version-alignment.sh).
         files: '^(pyproject\.toml|src/agent_vault_proxy/__init__\.py|README\.md|docker-compose\.yml|scripts/check-version-alignment\.sh)$'
 
+      - id: token-egress-chokepoint
+        name: token egress chokepoint (ADR-0035 — one SSRF-pinned transport)
+        entry: bash scripts/check-token-egress-chokepoint.sh
+        language: system
+        pass_filenames: false
+        # Cheap grep (no network). Fails if any injector opens a raw
+        # urllib/http.client/socket connection outside the shared, SSRF-pinned
+        # transport (injectors/_token_transport.py) — which would reintroduce
+        # the check→connect TOCTOU ADR-0035 closed. Scoped to the injectors dir
+        # and the guard script itself.
+        files: '^(src/agent_vault_proxy/injectors/.*\.py|scripts/check-token-egress-chokepoint\.sh)$'
+
       # ─── Heavy security tools — mirror security.yml CI jobs ───────────
       # The Docker-based tools below gracefully skip if docker not on PATH;
       # trufflehog runs a native version-pinned binary (no container tax).

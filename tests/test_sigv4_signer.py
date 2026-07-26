@@ -99,6 +99,74 @@ def test_session_token_is_signed() -> None:
     assert r.security_token == "FQoGZ...SESSION"
 
 
+def test_s3_get_matches_aws_published_header_auth_vector() -> None:
+    # AWS's own worked S3 example from "Authenticating Requests: Using the
+    # Authorization Header (AWS Signature Version 4)". Credentials
+    # AKIAIOSFODNN7EXAMPLE / us-east-1 / s3, GET /test.txt with a Range header,
+    # empty-body payload hash, x-amz-content-sha256 SIGNED. Reproducing its exact
+    # Signature proves S3-shaped signing (content-sha256 in the signed set +
+    # a client x-amz/other header folded in) is spec-correct.
+    r = sign(
+        method="GET",
+        url="https://examplebucket.s3.amazonaws.com/test.txt",
+        body=b"",
+        access_key_id="AKIAIOSFODNN7EXAMPLE",
+        secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        region="us-east-1",
+        service="s3",
+        amz_date="20130524T000000Z",
+        sign_content_sha256=True,
+        signed_headers_extra={"range": "bytes=0-9"},
+    )
+    assert r.content_sha256 == EMPTY_PAYLOAD_HASH
+    assert r.authorization == (
+        "AWS4-HMAC-SHA256 "
+        "Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, "
+        "SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, "
+        "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+    )
+
+
+def test_content_sha256_signed_only_when_requested() -> None:
+    # Default off keeps the minimal (get-vanilla) set; opt-in adds it to the
+    # signed header list and changes the signature.
+    common = {
+        "method": "PUT",
+        "url": "https://examplebucket.s3.amazonaws.com/obj",
+        "body": b"payload",
+        "access_key_id": _AK,
+        "secret_access_key": _SK,
+        "region": "us-east-1",
+        "service": "s3",
+        "amz_date": _DATE,
+    }
+    off = sign(**common)
+    on = sign(sign_content_sha256=True, **common)
+    assert "x-amz-content-sha256" not in off.authorization
+    assert "SignedHeaders=host;x-amz-content-sha256;x-amz-date" in on.authorization
+    assert on.authorization != off.authorization
+
+
+def test_client_amz_headers_are_folded_into_the_signed_set() -> None:
+    # An x-amz-* header the client set (e.g. x-amz-acl) MUST be signed, or AWS
+    # rejects the request. AVP-computed headers still win on collision.
+    r = sign(
+        method="PUT",
+        url="https://examplebucket.s3.amazonaws.com/obj",
+        body=b"data",
+        access_key_id=_AK,
+        secret_access_key=_SK,
+        region="us-east-1",
+        service="s3",
+        amz_date=_DATE,
+        sign_content_sha256=True,
+        signed_headers_extra={"x-amz-acl": "private", "x-amz-date": "SPOOFED"},
+    )
+    assert "SignedHeaders=host;x-amz-acl;x-amz-content-sha256;x-amz-date" in r.authorization
+    # The client's attempt to pre-seed x-amz-date is overwritten, not signed.
+    assert "SPOOFED" not in r.authorization
+
+
 def test_default_ports_are_omitted_from_host() -> None:
     # Host header used in the signature must not carry the default port, or the
     # service's own canonicalisation won't match.

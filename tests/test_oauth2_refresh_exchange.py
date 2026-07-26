@@ -17,6 +17,7 @@ import asyncio
 import json
 import socket
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -32,6 +33,7 @@ from agent_vault_proxy.injectors.oauth2_refresh import (
 )
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import FakeResp as _FakeResponse
+from tests._tls_helpers import run_loopback_tls_http_server
 
 _FOO_PH = "foo_PLACEHOLDER_01HXY1234567890"
 
@@ -532,14 +534,16 @@ def test_redirect_refused_never_followed(
     assert len(calls) == 1  # deterministic refusal — no retry on 3xx
 
 
-def test_transport_opener_refuses_redirect_on_the_wire() -> None:
+def test_transport_opener_refuses_redirect_on_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Drive the REAL opener against a live local server answering 302:
     ``_transport_open`` must raise ``HTTPError(302)`` and must NOT fetch
     the Location target — the on-the-wire proof that redirects are
     disabled at the transport, not post-checked."""
-    import threading
     import urllib.request
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler
 
     hits = {"redirect": 0, "target": 0}
 
@@ -553,25 +557,27 @@ def test_transport_opener_refuses_redirect_on_the_wire() -> None:
             else:
                 hits["redirect"] += 1
                 self.send_response(302)
-                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/target")
+                self.send_header("Location", "/target")
                 self.end_headers()
 
         def log_message(self, *args: object) -> None:  # silence test noise
             return
 
-    srv = HTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=srv.serve_forever, daemon=True)
-    thread.start()
-    try:
-        req = urllib.request.Request(f"http://127.0.0.1:{srv.server_port}/start")
+    with run_loopback_tls_http_server(tmp_path, _Handler) as server:
+        monkeypatch.setattr(
+            "agent_vault_proxy.injectors._token_transport.resolve_and_vet",
+            lambda url: [(socket.AF_INET, "127.0.0.1")],
+        )
+        monkeypatch.setattr(
+            "agent_vault_proxy.injectors._token_transport._TLS_CONTEXT",
+            server.client_context,
+        )
+        req = urllib.request.Request(f"https://pinned.test:{server.port}/start")
         with pytest.raises(HTTPError) as excinfo:
             _transport_open(req, timeout=5.0)
         assert excinfo.value.code == 302
         assert hits["redirect"] == 1
         assert hits["target"] == 0, "redirect Location was followed — opener must refuse"
-    finally:
-        srv.shutdown()
-        srv.server_close()
 
 
 def test_token_type_bearer_accepted_case_insensitive(

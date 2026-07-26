@@ -131,8 +131,13 @@ def transport_open(req: urllib.request.Request, timeout: float) -> Any:
     fresh vetted set rather than reusing a stale pin.
     """
     url = req.full_url
-    vetted = resolve_and_vet(url)
     parsed = urlparse(url)
+    if parsed.scheme != "https":
+        # Defense-in-depth: config-load enforces https on every token_url, so
+        # this is unreachable today — but transport_open must never TLS-wrap a
+        # plaintext endpoint if a future caller slips one through. Fail closed.
+        raise SsrfBlockedError(f"token endpoint must use https, refusing scheme {parsed.scheme!r}")
+    vetted = resolve_and_vet(url)
     hostname = parsed.hostname
     if hostname is None:
         raise urllib.error.URLError(f"token endpoint URL has no hostname: {url!r}")
@@ -173,7 +178,11 @@ def transport_open(req: urllib.request.Request, timeout: float) -> Any:
             io.BytesIO(body_bytes),
         )
 
-    assert last_exc is not None, "resolve_and_vet() returned no connectable addresses"
+    if last_exc is None:
+        # Unreachable — resolve_and_vet fails closed on an empty answer, so the
+        # loop always ran at least once. Explicit raise (not assert, which
+        # strips under `python -O`) keeps it fail-closed regardless.
+        raise urllib.error.URLError("no vetted address to connect to")
     raise urllib.error.URLError(last_exc)
 
 

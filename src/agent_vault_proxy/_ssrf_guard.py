@@ -174,7 +174,11 @@ def resolve_and_vet(url: str | Url | HttpUrl) -> list[VettedAddress]:
         # v6 — host is always position 0. stdlib types it ``str | int`` because
         # AF_UNIX shares the position; AF_INET / AF_INET6 always put a string.
         ip_str = sockaddr[0]
-        assert isinstance(ip_str, str), f"unexpected sockaddr shape: {sockaddr!r}"
+        # Fail CLOSED rather than assert — assertions strip under `python -O`,
+        # and this is a security boundary. AF_INET/AF_INET6 always put a str at
+        # sockaddr[0]; anything else is a malformed answer we refuse to dial.
+        if not isinstance(ip_str, str):
+            raise SsrfBlockedError(f"unexpected sockaddr shape, failing closed: {sockaddr!r}")
         _check_ip_string(ip_str)  # ANY internal ⇒ block the whole set
         key: VettedAddress = (int(family), ip_str)
         if key not in seen:

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-26
 relates_to: ADR-0017
 priority: P2
@@ -133,6 +133,13 @@ soak together as one reviewable unit.
   Python; it is a code path that must stay in lockstep with the classifier's
   semantics.
 - The chokepoint grep-guard needs occasional false-positive tuning.
+- Connecting by pinned IP **bypasses `HTTPS_PROXY` / `ALL_PROXY` for token
+  egress** — inherent to pinning, since an outer forward proxy would re-resolve
+  the hostname and reopen the very gap this closes. Token exchanges go direct to
+  the vetted address; an operator who must proxy that egress fronts AVP at the
+  network layer instead. The IP pin is the address, not the full sockaddr: IPv6
+  `scopeid` is dropped, which is harmless because link-local IPv6 — the only
+  case where scopeid is load-bearing — is already blocked by the guard.
 
 **Out of scope**
 - General agent egress filtering — policing the agent's arbitrary outbound

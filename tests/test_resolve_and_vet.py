@@ -76,3 +76,12 @@ def test_fail_closed_on_empty_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [])
     with pytest.raises(SsrfBlockedError, match="failing closed"):
         resolve_and_vet("https://api.example.com/token")
+
+
+def test_fail_closed_on_malformed_sockaddr(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A non-str host at sockaddr[0] never happens for AF_INET/AF_INET6, but the
+    # guard fails CLOSED rather than assert (assertions strip under python -O).
+    bad = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (12345, 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: bad)
+    with pytest.raises(SsrfBlockedError, match="failing closed"):
+        resolve_and_vet("https://api.example.com/token")

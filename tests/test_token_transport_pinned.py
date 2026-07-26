@@ -13,6 +13,7 @@ from typing import ClassVar
 
 import pytest
 
+from agent_vault_proxy._ssrf_guard import SsrfBlockedError
 from agent_vault_proxy.injectors._token_transport import (
     _TLS_CONTEXT,
     TokenResult,
@@ -257,3 +258,11 @@ def test_real_handshake_verifies_cert_against_hostname_not_ip(
         with pytest.raises(ssl.SSLCertVerificationError):
             bad_conn.request("GET", "/")
         bad_conn.close()
+
+
+def test_transport_open_rejects_non_https() -> None:
+    # Defense-in-depth: config-load enforces https, but transport_open must
+    # itself refuse a plaintext scheme (fail-closed) rather than TLS-wrap it.
+    req = urllib.request.Request("http://api.example.com/token", method="POST")
+    with pytest.raises(SsrfBlockedError, match="must use https"):
+        transport_open(req, timeout=5.0)

@@ -19,7 +19,7 @@ Requests whose destinations aren't bound to any secret are forwarded unmodified,
 Scope:
 
 - **In scope:** static API keys (Anthropic, OpenAI, GitHub PAT, etc.); BWS as backing store; per-secret destination bindings; sandbox-only CA; structured audit log.
-- **Out of scope:** AWS SigV4 signing, kernel-level egress enforcement, multi-tenant routing. (OAuth refresh-token flows shipped in v0.7 as `inject.type: oauth2_refresh` — ADR-0017.)
+- **Out of scope:** kernel-level egress enforcement, multi-tenant routing. (Request signing shipped: AWS SigV4 as `inject.type: sigv4` — ADR-0027, S3-hardened in ADR-0036; `hmac` / `jwt_bearer` — ADR-0028. OAuth refresh-token flows shipped in v0.7 as `inject.type: oauth2_refresh` — ADR-0017.)
 
 The implementation is a few thousand lines of Python (≈2,500 statements across ~20 modules — the credential hot path is concentrated in `addon.py`) plus a systemd unit. Operational complexity stays small: one daemon, one config file, one audit log.
 
@@ -515,7 +515,7 @@ Because there's no kernel egress lock to "leave on," the rollback model is simpl
 
 ## 10. Open questions
 
-- **AWS access:** SigV4 isn't a static header. Deferred - needs a dedicated signer injector.
+- **AWS access:** SigV4 shipped as `inject.type: sigv4` (ADR-0027; S3 `x-amz-content-sha256` + client `x-amz-*` header signing hardened in ADR-0036). Still open: STS-scoped signing so the proxy holds short-lived, downscoped credentials instead of a static key (ADR-0036 Phase 2).
 - **gh CLI OAuth path:** OAuth refresh tokens land in `~/.config/gh/hosts.yml`. The `oauth2_refresh` injector (ADR-0017) covers the grant itself; wiring gh's device-flow tokens through it is still open.
 - **Admin port form factor:** Unix socket, filesystem-touch protocol, or local-MCP server? Deferred to burn-in feedback.
 
@@ -524,7 +524,7 @@ Because there's no kernel egress lock to "leave on," the rollback model is simpl
 - Host root resistance
 - Same-UID attacker resistance (proxy UID is the new vault; intentionally accepted)
 - **Egress filtering / kernel-level network policy**: the host's firewall handles this
-- AWS SigV4 / other request-signing schemes
+- Streaming/chunked SigV4 payloads, presigned-URL flows, and SigV4a (ECDSA multi-region) — request signing itself shipped (`sigv4` / `hmac` / `jwt_bearer`); these specific modes are deliberately not served, to keep the "agent never holds any AWS credential" invariant (ADR-0036)
 - K8s deployment (single-host design)
 - Cross-agent multi-tenancy
 - DNS spoofing defense

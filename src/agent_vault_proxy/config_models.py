@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import (
     BaseModel,
@@ -13,6 +14,24 @@ from pydantic import (
 )
 
 from agent_vault_proxy.oauth_providers import PROVIDER_PRESETS, ProviderName
+
+
+def _reject_url_credentials(url: object, field: str) -> None:
+    """Reject an operator egress URL that embeds userinfo (``user:pass@host``).
+
+    ADR-0035: a credential proxy has no business carrying secrets in a
+    ``token_url`` / ``api_base_url``, and the userinfo is silently dropped by
+    the HTTP transport today. Rejecting it at config-load turns a silent
+    misconfiguration into a loud one. Applied to every operator-controlled
+    token-egress URL (the three token-minting injectors)."""
+    parsed = urlparse(str(url))
+    if parsed.username or parsed.password:
+        raise ValueError(
+            f"{field} must not embed credentials (user:pass@host); the "
+            "userinfo is silently dropped on the wire. Put the credential "
+            "in a vault secret, not the URL."
+        )
+
 
 # Known injector types — closed enumeration. Maps each type name to the
 # phase that ships it; entries whose value starts with "planned:" are in
@@ -462,6 +481,7 @@ class Oauth2RefreshInjector(BaseModel):
                 f"got {v.scheme!r}. RFC 6749 §3.1 — token endpoint MUST "
                 "use TLS."
             )
+        _reject_url_credentials(v, "oauth2_refresh.token_url")
         return v
 
 
@@ -614,6 +634,7 @@ class Oauth2ClientCredentialsInjector(BaseModel):
                 "oauth2_client_credentials.token_url must use https "
                 "(RFC 6749 §3.1 — the token endpoint MUST use TLS)"
             )
+        _reject_url_credentials(v, "oauth2_client_credentials.token_url")
         return v
 
 
@@ -649,6 +670,7 @@ class GithubAppInjector(BaseModel):
         v = v.strip().rstrip("/")
         if not v.startswith("https://"):
             raise ValueError("github_app.api_base_url must use the https scheme")
+        _reject_url_credentials(v, "github_app.api_base_url")
         return v
 
     @model_validator(mode="after")

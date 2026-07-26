@@ -169,13 +169,12 @@ The first line is a summary (≤72 chars). The body explains *why* the change wa
 
 ## Scope
 
-This project is intentionally narrow. We're unlikely to merge:
+This project is intentionally narrow. The injector taxonomy is complete and shipped (static `header`/`body`/`multi`, `oauth2_refresh`, `oauth2_client_credentials`, `github_app`, `sigv4`, `hmac`, `jwt_bearer`) and backends are BWS + GSM + static. We're unlikely to merge:
 
-- OAuth refresh-token flows (a different threat model and a separate injector type: happy to discuss in an issue if you have a concrete need)
-- AWS SigV4 signing (same)
 - Egress firewall features (out of scope - that's the operator's host firewall)
 - Multi-tenant routing (single-host design)
-- Storage backends other than BWS (BWS-specific is the design constraint; abstracting it adds complexity without a concrete second backend in mind)
+- New storage backends beyond BWS / GSM / static (open an issue with a concrete need first)
+- AWS SigV4 streaming/chunked payloads, presigned URLs, or SigV4a (core SigV4 signing already ships; these modes are held back to keep the agent from ever holding an AWS credential — see ADR-0036)
 
 We're happy to merge:
 

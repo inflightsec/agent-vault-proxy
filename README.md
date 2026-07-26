@@ -14,21 +14,32 @@ Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden 
 
 ## Try it. 10 seconds.
 
+**1. Install** — Linux `pipx`, macOS `brew`:
+
 ```bash
-$ pipx install agent-vault-proxy            # pipx puts `avp` on $PATH for sudo
-$ sudo avp setup --static
-$ sudo avp secret add STRIPE_API_KEY         # prompts; no echo
-✓ added secret 'STRIPE_API_KEY'
-  next: run `avp env` to refresh ~/.config/avp/env
-$ avp env
-$ avp run claude                             # auto-loads ~/.config/avp/env, sets proxy, exec
+pipx install agent-vault-proxy
+# macOS: brew install inflightsec/avp/agent-vault-proxy
+sudo avp setup --bws        # paste your Bitwarden token — generates the CA, starts the daemon
 ```
 
-`avp run` reads the placeholder env file itself, so the real key never enters your shell — not even as a placeholder. Add more secrets later by repeating `secret add` + `avp env`.
+**2. Install the skill** so your agent writes the binding for you:
 
-No Bitwarden account? `--static` keeps secrets in a local YAML file owned by the service user. Upgrade later by editing `backend:` in `/etc/agent-vault-proxy/bindings.yaml` (setup never overwrites an existing config).
+```
+/plugin marketplace add inflightsec/agent-vault-proxy
+/plugin install avp@agent-vault-proxy
+```
 
-On Mac: `brew install inflightsec/avp/agent-vault-proxy`
+**3. Ask the skill to broker a service** — say *"route the Stripe API through AVP."* It mints the placeholder and prints the exact note to paste into BitWarden; it never sees your key.
+
+**4. Put the secret in your vault** — add the real key to Bitwarden Secrets Manager (or Google Secret Manager) with that note, then route your agent through the proxy:
+
+```bash
+avp env && avp run claude
+```
+
+Done — the agent only ever sends the placeholder; AVP swaps in the real key on the wire.
+
+*Rather than `avp run`, you can export the proxy + CA vars in your agent's `~/.zshrc` (or any shell rc) — see [Usage](docs/usage.md) for the canonical block. It's persistent, but it routes your whole shell through AVP, not just the agent AVP launches.*
 
 ## See it in action
 

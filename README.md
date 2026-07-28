@@ -95,7 +95,7 @@ ln -s "$PWD/skills/avp" ~/.claude/skills/avp
 - **[bindings.example.yaml](bindings.example.yaml)** — full config schema
 - **[avp skill](skills/avp/)** — let an AI assistant author your notes/annotation bindings (propose-only, no config edit, no redeploy)
 - **[Architecture](docs/architecture.md)** — threat model, G1–G9 invariants, hardening, residual risks
-- **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden + Google Secret Manager ship today, `static` for dev) and how to add another
+- **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden, Google Secret Manager, and AWS Secrets Manager ship today, `static` for dev) and how to add another
 - **[Google Secret Manager](docs/gcp-secret-manager.md)** — keep secrets in GSM: setup, keyless auth, and end-to-end testing
 - **[Comparison](docs/comparison.md)** — vs. Vault Agent, Doppler, `op run`, `superfly/tokenizer`, OneCLI, and other agent credential tools (use whichever fits — the point is more agents protected, not lock-in)
 - **[CHANGELOG](./CHANGELOG.md)** · **[SECURITY](./SECURITY.md)** · **[CONTRIBUTING](./CONTRIBUTING.md)** · **[CREDITS](./CREDITS.md)**

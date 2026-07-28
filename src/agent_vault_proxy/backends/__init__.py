@@ -302,10 +302,12 @@ def _reset_registry_for_tests() -> None:
     raises mid-way.
     """
     _registry.clear()
+    from agent_vault_proxy.backends.aws import AwsConfig, AwsSecretsManagerBackend
     from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
     from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig
     from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
+    register_backend("aws-secrets-manager", AwsSecretsManagerBackend, AwsConfig)
     register_backend("bws", BitwardenBackend, BwsConfig)
     register_backend("gsm", GsmBackend, GsmConfig)
     register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
@@ -313,6 +315,7 @@ def _reset_registry_for_tests() -> None:
 
 # Import backend modules at package import time so their register_backend()
 # calls run. Order doesn't matter (each registers under a unique name).
+from agent_vault_proxy.backends import aws as _aws_module  # noqa: E402, F401
 from agent_vault_proxy.backends import bws as _bws_module  # noqa: E402, F401
 from agent_vault_proxy.backends import gsm as _gsm_module  # noqa: E402, F401
 from agent_vault_proxy.backends import static as _static_module  # noqa: E402, F401

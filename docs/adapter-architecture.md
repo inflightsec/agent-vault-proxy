@@ -2,7 +2,7 @@
 
 How `agent-vault-proxy` talks to a secrets vault, and how to add a new one.
 
-**What ships today:** three backends. `bws` (Bitwarden Secrets Manager) and `gsm` (Google Secret Manager) are the production backends; `static` reads `{name: value}` pairs from a plaintext YAML file and exists only for development, testing, and the docker-e2e harness (it refuses world-readable files and warns loudly when selected, never use it in production). The `SecretsBackend` protocol, the registry, and the discriminated `backend: {type, config}` form in `bindings.yaml` are all live as of v0.4.0. The remaining vault backends in the coverage matrix below are the design target, not yet shipped: the matrix exists to prove the protocol holds across substantially different vaults, and to give a contributor the map for adding one.
+**What ships today:** four backends. `bws` (Bitwarden Secrets Manager), `gsm` (Google Secret Manager), and `aws-secrets-manager` (AWS Secrets Manager — ADR-0038) are the production backends; `static` reads `{name: value}` pairs from a plaintext YAML file and exists only for development, testing, and the docker-e2e harness (it refuses world-readable files and warns loudly when selected, never use it in production). The `SecretsBackend` protocol, the registry, and the discriminated `backend: {type, config}` form in `bindings.yaml` are all live as of v0.4.0. The remaining vault backends in the coverage matrix below are the design target, not yet shipped: the matrix exists to prove the protocol holds across substantially different vaults, and to give a contributor the map for adding one.
 
 ## Why an adapter layer
 
@@ -112,7 +112,7 @@ Validation rules:
 
 ### Backend coverage matrix
 
-Of the vaults, `bws` and `gsm` ship today (the `static` test backend aside). The rest are the design target: the matrix is the proof that one protocol plus a per-backend config block spans substantially different auth models (machine-account tokens, AppRole, IAM role chains, AAD credential chain, ADC).
+Of the vaults, `bws`, `gsm`, and `aws-secrets-manager` ship today (the `static` test backend aside). The rest are the design target: the matrix is the proof that one protocol plus a per-backend config block spans substantially different auth models (machine-account tokens, AppRole, IAM role chains, AAD credential chain, ADC).
 
 | `backend.type` | `config:` fields (sketch) | Notes |
 |---|---|---|
@@ -120,7 +120,7 @@ Of the vaults, `bws` and `gsm` ship today (the `static` test backend aside). The
 | `doppler` | `service_token_path`, `project`, `config` | HTTP-only, no SDK dep, simplest adapter (~50 LOC). |
 | `onepassword-sa` | `service_account_token_path`, `vault`, `secrets: {NAME: {item_uuid, field}}` | Uses 1Password's **Service Accounts SDK** (`onepassword-sdk-python`). Address items by UUID (not title: `get_item_by_title` raises on count != 1) and require per-secret field name, because field IDs vary by category (`API_CREDENTIAL` uses `credential`, `LOGIN`/`PASSWORD` use `password`, `SSH_KEY` uses `private_key`). Rate limits are tight (1000-10000/day per token by plan), so caching is a correctness requirement, not an optimization. |
 | `hashicorp-vault` | `url`, `namespace?`, `auth: {type: approle, role_id_path, secret_id_path \| wrapping_token_path, token_type: batch}`, `secrets: {NAME: {path, field}}` OR `prefix: <path>` | Per-secret explicit map, OR prefix+convention shorthand (more idiomatic for Vault users). Uses **batch tokens** (current HashiCorp recommendation), so no renewal thread: the adapter re-logs-in on each token expiry. Supports wrapped `secret_id` delivery via `wrapping_token_path` + `sys.unwrap()`. |
-| `aws-secrets-manager` | `region`, `secrets: {NAME: {secret_id, json_pointer?}}` | Uses ambient AWS creds (IAM role / env). `json_pointer` handles SecretString JSON blobs. |
+| `aws-secrets-manager` ✅ (Slice 1) | `region`, `secret_prefix`, `version_stage`, `self_check`, `require_temporary_credentials` | Keyless: `botocore` RESOLVES temporary creds (Roles Anywhere / SSO / instance profile), the in-repo SigV4 signer makes the `GetSecretValue` call over `urllib`. Host binding = `avp-binding` tag (bare host) or a `# avp-binding` Description marker. No static-key field; permanent keys refused. SSM driver = next slice (ADR-0038). |
 | `azure-key-vault` | `vault_url`, `auth: {type: default-credential\|service-principal, ...}` | Bare names; uses Azure SDK credential chain. |
 | `gsm` **(shipped)** | `project_id`, `version_alias`, `secret_prefix?`, `impersonate_service_account?`, `credential_config_path?`, `self_check`, `reject_ambient_key` | **Google Secret Manager.** Keyless auth only — ADC / SA-impersonation / Workload Identity Federation (**no key-file field**); boot-time deny-if-broad `self_check` (refuses to start under a broad identity); host binding via each secret's `avp-binding` annotation (bare host or flat-YAML) under `binding_source: notes`. REST over `google-auth`, not the gRPC SDK. See [ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md). |
 

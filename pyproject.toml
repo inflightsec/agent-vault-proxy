@@ -4,7 +4,7 @@ version = "0.9.0"
 description = "Loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space."
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = "Apache-2.0"
 authors = [{ name = "Radek Maciaszek" }]
 keywords = [
     "security",
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Security",
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Topic :: Internet :: Proxy Servers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",

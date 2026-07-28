@@ -1,6 +1,6 @@
 # Acknowledgments
 
-`agent-vault-proxy` is original work licensed under MIT (see [`LICENSE`](./LICENSE)). A few projects influenced the design:
+`agent-vault-proxy` is original work licensed under Apache-2.0 (see [`LICENSE`](./LICENSE)). A few projects influenced the design:
 
 - **[Kloak](https://www.getkloak.com)** — sparked the idea of substituting credentials on the wire instead of handing them to the agent.
 - **[`superfly/tokenizer`](https://github.com/superfly/tokenizer)** — the injector-strategy taxonomy introduced in v0.5.0 (`type: header`, `body`, `hmac`, `sigv4`, `oauth2_*`, `jwt_bearer`, `github_app`, `multi`) was informed by its processor catalog. v0.5.0 implements `header`, `body`, and `multi`; the rest are in the schema as planned and fail config-load with a one-line "not yet implemented" error until they ship. Implementations are written from the underlying public specs (RFC 6749, RFC 7523, AWS SigV4, GitHub Apps docs, etc.).

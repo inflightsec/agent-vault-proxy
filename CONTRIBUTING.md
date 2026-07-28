@@ -167,6 +167,16 @@ We don't require Conventional Commits. We do appreciate messages that explain mo
 
 The first line is a summary (≤72 chars). The body explains *why* the change was made if non-obvious.
 
+## License and sign-off (DCO)
+
+Contributions are accepted under the project license, [Apache-2.0](./LICENSE) — inbound = outbound, per Section 5 of the license. There is no CLA. Instead, every commit must carry a `Signed-off-by:` line certifying the [Developer Certificate of Origin](https://developercertificate.org/):
+
+```bash
+git commit -s
+```
+
+The sign-off certifies that you wrote the change (or otherwise have the right to submit it) under the project license.
+
 ## Scope
 
 This project is intentionally narrow. The injector taxonomy is complete and shipped (static `header`/`body`/`multi`, `oauth2_refresh`, `oauth2_client_credentials`, `github_app`, `sigv4`, `hmac`, `jwt_bearer`) and backends are BWS + GSM + static. We're unlikely to merge:

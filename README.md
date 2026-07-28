@@ -5,7 +5,7 @@
 AVP protects you from credential stealers (Shai-Hulud and similar) and prompt-injected agents leaking your secrets. It's a local proxy that injects real secrets into requests in-flight, so a compromised or prompt-injected agent has nothing to steal.
 
 [![PyPI](https://img.shields.io/pypi/v/agent-vault-proxy.svg)](https://pypi.org/project/agent-vault-proxy/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![CI](https://github.com/inflightsec/agent-vault-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/inflightsec/agent-vault-proxy/actions/workflows/test.yml)
 
 ![How agent-vault-proxy substitutes secrets on the wire](docs/how-it-works-animated.svg)
@@ -14,7 +14,7 @@ Under the hood: a loopback HTTPS proxy that fetches credentials from [Bitwarden 
 
 ## Fully open source, deliberately simple
 
-Every feature is in this repo under MIT. There is no paywalled tier, no enterprise edition, no cloud you have to trust, no telemetry — you can read the whole thing end to end (a few thousand lines) and run it forever.
+Every feature is in this repo under Apache-2.0. There is no paywalled tier, no enterprise edition, no cloud you have to trust, no telemetry — you can read the whole thing end to end (a few thousand lines) and run it forever.
 
 The whole workflow is one move: ask the bundled skill to route a service, it tells you the single line to paste into Bitwarden (or your vault), you paste it, and the agent is brokered. Done. Because every brokered credential is one binding, the config **is** the complete, auditable list of exactly which secrets each agent can reach — nothing implicit, nothing hidden.
 
@@ -104,4 +104,4 @@ The proxy never phones home. The only outbound connections it makes are to the B
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Every feature ships here: no open-core, no enterprise tier, no hosted service. Fork it, read it end to end, run it forever. Prior art acknowledged in [`CREDITS.md`](./CREDITS.md).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE); the explicit patent grant is deliberate for a security tool ([ADR-0037](docs/adrs/ADR-0037-relicense-apache-2.0.md)). Every feature ships here: no open-core, no enterprise tier, no hosted service — fork it, read it end to end, run it forever. Releases up to 0.9.0 remain available under their original MIT terms. Prior art acknowledged in [`CREDITS.md`](./CREDITS.md).

@@ -10,7 +10,7 @@ AVP is a small local proxy that keeps API keys out of your AI agent's process. T
 - **Binds each secret to its own destinations.** A secret is injected only for the hosts its binding names, optionally narrowed by HTTP method and URL path, and checked against the connection's *real* TLS host rather than the spoofable `Host:` header. That is what blocks exfil-by-redirect.
 - **Fails closed.** Any uncertainty means no real secret is injected, never a guessed or degraded one.
 - **Records every decision.** An append-only, local-only audit log notes which secret went where and why, and never records secret values, headers, or bodies.
-- **Sources from the vault you already run.** Bitwarden Secrets Manager or Google Secret Manager today. AVP never becomes a second place your secrets live.
+- **Sources from the vault you already run.** Bitwarden Secrets Manager, Google Secret Manager, or AWS Secrets Manager today. AVP never becomes a second place your secrets live.
 
 ## What it deliberately does not do
 

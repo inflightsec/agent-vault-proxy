@@ -22,7 +22,7 @@ These are non-negotiable. Violating any of them turns a PR into a security incid
 6. **Never modify `.github/workflows/*.yml` without re-running `zizmor` and `pinact`.** Specifically: every third-party action reference must be pinned to a 40-character commit SHA (not `@v1` or other mutable tag); every checkout must set `persist-credentials: false`; every job needs an explicit `permissions:` block scoped to least privilege; downloaded artifacts must extract to `/tmp/`, never the workspace. Use `pull_request`, never `pull_request_target`. The existing workflows in this repo are the reference shape, match them.
 7. **Never use `pull_request_target`** in any workflow. Forks would get secret access.
 8. **Never commit or push.** Open a PR and let the human merge.
-9. **Keep AVP single-license MIT.** Don't vendor code from non-MIT-compatible sources. Designs from prior art may be referenced — see [`CREDITS.md`](./CREDITS.md) — but code is original Python written from the underlying public specs (RFC / vendor docs / standard).
+9. **Keep AVP single-license Apache-2.0.** Don't vendor code from sources that aren't Apache-2.0-compatible (MIT/BSD/Apache are fine; GPL/LGPL/AGPL/SSPL are not). Designs from prior art may be referenced — see [`CREDITS.md`](./CREDITS.md) — but code is original Python written from the underlying public specs (RFC / vendor docs / standard).
 
 ## Setup
 

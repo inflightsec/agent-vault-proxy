@@ -6,5 +6,5 @@
   "author": { "name": "Radek Maciaszek" },
   "homepage": "https://github.com/inflightsec/agent-vault-proxy",
   "repository": "https://github.com/inflightsec/agent-vault-proxy",
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

@@ -246,13 +246,13 @@ def test_header_newline_injection_is_rejected(capsys):
     code, out, err = _run([*_GH, "--header", "Authorization\nhost: evil.attacker.com"], capsys)
     assert code != 0
     assert out == ""  # nothing printed to paste
-    assert "control characters" in err
+    assert "control" in err
 
 
 def test_methods_newline_injection_is_rejected(capsys):
     code, _out, err = _run([*_GH, "--methods", "GET\nhost: evil.com"], capsys)
     assert code != 0
-    assert "control characters" in err
+    assert "control" in err
 
 
 def test_host_newline_injection_is_rejected(capsys):
@@ -261,7 +261,7 @@ def test_host_newline_injection_is_rejected(capsys):
         capsys,
     )
     assert code != 0
-    assert "control characters" in err
+    assert "control" in err
 
 
 def test_apply_with_no_placeholder_is_refused(capsys):
@@ -292,6 +292,146 @@ def test_printed_command_is_shell_quoted(capsys):
     assert run_lines
     tokens = shlex.split(run_lines[0])
     assert "rm" not in tokens  # metachars stayed inside the quoted --env value
+
+
+# --- H1: Unicode line-break YAML injection (NEL/LS/PS) must be rejected ---
+
+
+def test_unicode_line_separator_injection_is_rejected(capsys):
+    # U+2028 is a PyYAML line break but not ASCII \n; a docs-derived --header using it
+    # could inject a methods:/paths: line that widens scope while the host is unchanged.
+    payload = "Authorization methods: [GET, POST, PUT, DELETE]"
+    code, out, err = _run([*_GH, "--header", payload], capsys)
+    assert code != 0
+    assert out == ""
+    assert "control" in err or "separator" in err
+
+
+def test_nel_and_ps_injection_rejected(capsys):
+    for ch in ("", " "):
+        code, _out, err = _run([*_GH, "--methods", f'GET{ch}paths: ["/**"]'], capsys)
+        assert code != 0, f"char U+{ord(ch):04X} not rejected"
+        assert "control" in err or "separator" in err
+
+
+# --- correctness blocker: default proxy port must be the canonical 14322 ---
+
+
+def test_default_proxy_url_is_canonical_port(capsys):
+    _code, _out, err = _run([*_GH, "--client", "claude-code"], capsys)
+    assert "HTTPS_PROXY=http://127.0.0.1:14322" in err
+    assert "127.0.0.1:8080" not in err
+
+
+# --- multi-host, methods, paths, go runtime land correctly ---
+
+
+def test_multihost_note_roundtrips(capsys):
+    code, out, _ = _run(
+        [
+            "mcp",
+            "install",
+            "svc",
+            "--host",
+            "api.example.com",
+            "--host",
+            "files.example.com",
+            "--env-var",
+            "SVC_TOKEN",
+            "--format",
+            "{secret}",
+        ],
+        capsys,
+    )
+    assert code == 0
+    result = _roundtrip(out, name="SVC_TOKEN")
+    assert isinstance(result, ParsedBinding)
+    assert {b.host for b in result.spec.bindings} == {"api.example.com", "files.example.com"}
+
+
+def test_methods_and_paths_land_in_note(capsys):
+    code, out, _ = _run([*_GH, "--methods", "GET,POST", "--paths", "/v1/**,/user"], capsys)
+    assert code == 0
+    assert "methods: [GET, POST]" in out
+    assert "paths:" in out and "/v1/**" in out
+    assert isinstance(_roundtrip(out), ParsedBinding)
+
+
+def test_runtime_go_end_to_end(capsys):
+    _code, _out, err = _run([*_GH, "--runtime", "go", "--client", "claude-code"], capsys)
+    assert "SSL_CERT_FILE=" in err
+    assert "NODE_USE_ENV_PROXY" not in err  # go server gets no node bypass flag
+
+
+def test_empty_host_is_refused(capsys):
+    code, _out, err = _run(["mcp", "install", "x", "--host", "", "--env-var", "X_KEY"], capsys)
+    assert code != 0
+    assert err
+
+
+# --- --apply failure semantics + dedup ---
+
+
+def test_apply_nonzero_exit_propagates(capsys, monkeypatch):
+    monkeypatch.setattr(
+        mcp.subprocess,
+        "run",
+        lambda argv, check=False: types.SimpleNamespace(returncode=1),  # noqa: ARG005
+    )
+    code, _out, err = _run([*_GH, "--apply", "--server-cmd", "run-it"], capsys)
+    assert code != 0  # install must not claim success when the client rejected the entry
+    assert "exited 1" in err
+
+
+def test_apply_missing_binary_fails_cleanly(capsys, monkeypatch):
+    def _no_binary(argv, check=False):  # noqa: ARG001
+        raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(mcp.subprocess, "run", _no_binary)
+    code, _out, err = _run([*_GH, "--apply", "--server-cmd", "run-it"], capsys)
+    assert code != 0
+    assert "not found on PATH" in err  # clean message, not a raw traceback
+
+
+def test_duplicate_client_is_deduped(capsys, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mcp.subprocess,
+        "run",
+        lambda argv, check=False: calls.append(argv) or types.SimpleNamespace(returncode=0),  # noqa: ARG005
+    )
+    code, _out, _err = _run(
+        [
+            *_GH,
+            "--client",
+            "claude-code",
+            "--client",
+            "claude-code",
+            "--apply",
+            "--server-cmd",
+            "run-it",
+        ],
+        capsys,
+    )
+    assert code == 0
+    assert len(calls) == 1  # deduped, not run twice
+
+
+# --- robustness: bad --server-cmd quoting + non-loopback proxy warning ---
+
+
+def test_server_cmd_bad_quoting_fails_cleanly(capsys):
+    code, _out, err = _run([*_GH, "--server-cmd", 'npx "unclosed'], capsys)
+    assert code != 0
+    assert "shell-quoting" in err  # clean _die, not a ValueError traceback
+
+
+def test_non_loopback_proxy_warns(capsys):
+    code, _out, err = _run(
+        [*_GH, "--client", "claude-code", "--proxy-url", "http://evil.example:14322"], capsys
+    )
+    assert code == 0  # fail-closed (only placeholder in env), so warn not refuse
+    assert "not loopback" in err
 
 
 def test_smoke_shell_metachars_are_quoted(capsys):

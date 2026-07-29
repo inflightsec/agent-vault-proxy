@@ -36,7 +36,9 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 
+from agent_vault_proxy.cli.run import _DEFAULT_PROXY, _default_ca_path, _proxy_is_loopback
 from agent_vault_proxy.notes_binding import (
     NOTES_MARKER,
     InvalidBinding,
@@ -67,12 +69,19 @@ _CLIENTS = tuple(_CLIENT_BIN)
 _SERVER_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _ENV_NAME_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
-# The note is flat YAML assembled line-by-line; a newline/CR in any note-bound field
-# (header/format/methods/paths/host) would inject a SECOND top-level line — e.g. a
-# `host:` line that, under YAML duplicate-key "last wins", silently overrides the
-# operator-confirmed host and redirects the credential to an attacker (CRITICAL:
-# defeats the ADR-0040 host-confirm guarantee). Reject control characters fail-closed.
-_CTRL_CHARS = ("\n", "\r", "\t", "\x00")
+# The note is flat YAML assembled line-by-line; a line break in any note-bound field
+# (header/format/methods/paths/host) injects a SECOND key — a `host:` line that
+# overrides the operator-confirmed host (credential exfil), or a `methods:`/`paths:`
+# line that silently WIDENS scope (defeats ADR-0040 §5 method-scoping). PyYAML honors
+# more break chars than ASCII \n\r\t: NEL (U+0085), LS (U+2028), PS (U+2029). Reject the
+# whole Unicode control/format/separator space (categories Cc, Cf, Zl, Zp) so no current
+# or future break char can split the note. Fail-closed; legit header/format/method/path
+# values are printable and never fall in these categories.
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def _has_forbidden_char(value: str) -> bool:
+    return any(unicodedata.category(ch) in _FORBIDDEN_CATEGORIES for ch in value)
 
 
 def _die(msg: str) -> int:
@@ -115,10 +124,14 @@ def _env_block(
     (ADR-0040 §Context), every var — proxy, CA trust, bypass — must be listed
     explicitly; nothing is inherited from the shell.
     """
+    # Both cases: some runtimes / HTTP stacks honor only the lowercase forms.
     block: dict[str, str] = {
         "HTTPS_PROXY": proxy_url,
         "HTTP_PROXY": proxy_url,
         "NO_PROXY": "localhost,127.0.0.1",
+        "https_proxy": proxy_url,
+        "http_proxy": proxy_url,
+        "no_proxy": "localhost,127.0.0.1",
     }
     if runtime in ("node", "auto"):
         # undici ignores HTTPS_PROXY unless this is set — the #1 silent-failure trap.
@@ -174,14 +187,18 @@ def _validate_install(args: argparse.Namespace) -> str | None:
             f"--format must contain the {_SECRET_TOKEN} token "
             f'(e.g. "Bearer {_SECRET_TOKEN}"); got {args.format!r}.'
         )
-    # Reject control characters in every note-bound field — closes the YAML
-    # line-injection vector that could override the confirmed host (see _CTRL_CHARS).
+    # Reject control/format/separator chars in every note-bound field — closes the
+    # YAML line-injection class (host override AND scope widening) for every break
+    # character PyYAML honors, ASCII or Unicode (see _FORBIDDEN_CATEGORIES).
     note_fields = [("--header", args.header), ("--format", args.format)]
     note_fields += [("--methods", args.methods), ("--paths", args.paths)]
     note_fields += [("--host", h) for h in args.host]
     for label, value in note_fields:
-        if value and any(c in value for c in _CTRL_CHARS):
-            return f"{label} must not contain control characters (newline, CR, tab)."
+        if value and _has_forbidden_char(value):
+            return (
+                f"{label} must not contain control, format, or line-separator "
+                "characters (newline, tab, NEL, U+2028/U+2029, zero-width, etc.)."
+            )
     if args.apply and args.no_placeholder:
         return (
             "--apply cannot be combined with --no-placeholder: it would write the "
@@ -195,10 +212,17 @@ def _validate_install(args: argparse.Namespace) -> str | None:
     return None
 
 
-def _emit_client_commands(args: argparse.Namespace, env_block: dict[str, str]) -> None:
-    """Render (default) or run (--apply) each client's `mcp add --env` command."""
-    server_cmd = shlex.split(args.server_cmd) if args.server_cmd else []
-    for client in args.client or list(_CLIENTS):
+def _emit_client_commands(
+    args: argparse.Namespace, env_block: dict[str, str], server_cmd: list[str]
+) -> bool:
+    """Render (default) or run (--apply) each client's `mcp add --env` command.
+
+    Returns False if any --apply invocation failed (missing binary or non-zero exit),
+    so the caller can propagate a non-zero exit — an install that silently fails to
+    register the server is worse than a loud one.
+    """
+    ok = True
+    for client in dict.fromkeys(args.client) if args.client else list(_CLIENTS):
         argv = _client_argv(
             client=client, server=args.server, env_block=env_block, server_cmd=server_cmd
         )
@@ -207,11 +231,22 @@ def _emit_client_commands(args: argparse.Namespace, env_block: dict[str, str]) -
         rendered = shlex.join(argv)
         if args.apply:
             print(f"avp mcp: applying [{client}]: {rendered}", file=sys.stderr)
-            proc = subprocess.run(argv, check=False)  # noqa: S603 — argv list, no shell
+            try:
+                proc = subprocess.run(argv, check=False)  # noqa: S603 — argv list, no shell
+            except FileNotFoundError:
+                ok = False
+                print(
+                    f"avp mcp: [{client}] binary {_CLIENT_BIN[client]!r} not found on PATH "
+                    "— install the client, or drop --apply and run the printed command.",
+                    file=sys.stderr,
+                )
+                continue
             if proc.returncode != 0:
+                ok = False
                 print(f"avp mcp: [{client}] `mcp add` exited {proc.returncode}", file=sys.stderr)
         else:
             print(f"avp mcp: add to [{client}] — run:\n  {rendered}", file=sys.stderr)
+    return ok
 
 
 def _emit_reminders(*, minted: str | None, name: str) -> None:
@@ -299,6 +334,21 @@ def run_mcp(args: argparse.Namespace) -> int:
             "injection via header/format/methods/paths)."
         )
 
+    # --server-cmd is shell-quoted by the operator; a malformed quote must fail cleanly
+    # (not a raw ValueError traceback).
+    try:
+        server_cmd = shlex.split(args.server_cmd) if args.server_cmd else []
+    except ValueError as exc:
+        return _die(f"--server-cmd is not valid shell-quoting: {exc}")
+
+    if not _proxy_is_loopback(args.proxy_url):
+        print(
+            f"avp mcp: WARNING: --proxy-url {args.proxy_url!r} is not loopback. AVP's "
+            "model assumes a local proxy; only the placeholder (never the real secret) "
+            "reaches client env, so this fails closed — but double-check the URL.",
+            file=sys.stderr,
+        )
+
     env_block = _env_block(
         runtime=args.runtime,
         proxy_url=args.proxy_url,
@@ -310,11 +360,11 @@ def run_mcp(args: argparse.Namespace) -> int:
     # stdout stays the pure paste artifact (the vault note), like `avp binding new`;
     # all operator guidance goes to stderr.
     print(note, end="")
-    _emit_client_commands(args, env_block)
+    applied_ok = _emit_client_commands(args, env_block, server_cmd)
     _emit_reminders(minted=minted, name=name)
     if args.smoke:
         _emit_smoke(args, placeholder_value)
-    return 0
+    return 0 if applied_ok else 1
 
 
 def register_mcp_subparser(parent_subparsers: argparse._SubParsersAction) -> None:
@@ -389,14 +439,14 @@ def register_mcp_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
     install_p.add_argument(
         "--proxy-url",
         dest="proxy_url",
-        default="http://127.0.0.1:8080",
-        help="AVP proxy URL for HTTPS_PROXY/HTTP_PROXY (default: http://127.0.0.1:8080).",
+        default=_DEFAULT_PROXY,
+        help=f"AVP proxy URL for HTTPS_PROXY/HTTP_PROXY (default: {_DEFAULT_PROXY}).",
     )
     install_p.add_argument(
         "--ca-cert",
         dest="ca_cert",
-        default="/etc/agent-vault-proxy/mitmproxy-ca-cert.pem",
-        help="Path the runtime CA-trust vars point at (the AVP CA).",
+        default=str(_default_ca_path()),
+        help="Path the runtime CA-trust vars point at (the AVP CA; platform default).",
     )
     install_p.add_argument(
         "--server-cmd",

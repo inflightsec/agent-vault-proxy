@@ -15,13 +15,20 @@ references:
 
 # ADR-0040: AVP as an MCP-server credential broker (skill-derived bindings, env-block onboarding)
 
-> **Number provisional.** The AVP ADR sequence is written concurrently across
-> sessions (0034→0036 renumbered once; 0037 vacant; 0039 is `proposed`). 0040 was
-> the next free slot above the live max at authoring time — re-check and renumber
-> on collision before merge.
+> **Implemented 2026-07-30.** Landed as `avp mcp install` —
+> `cli/mcp.py` (`register_mcp_subparser` + `run_mcp`), wired in `cli/main.py`,
+> covered by `tests/test_cli_mcp.py`; full unit suite green. The bundled `avp` skill
+> gained the `InstallMcp` workflow (docs-derived binding, mandatory human host-confirm).
+> Hardened after a three-lens review + two Oracle passes: Unicode-line-break YAML
+> injection closed (Cc/Cf/Zl/Zp reject), host-intent assertion, `shlex`-quoted output,
+> `--apply` failure/missing-binary handling, canonical proxy/CA defaults.
 >
-> **Status: accepted (decided 2026-07-29 via grilling session), not yet
-> implemented.** The Decision below is the agreed shape; no code has landed.
+> **Delta from the plan below:** the §3 step-5 post-install smoke ships as a printed
+> `--smoke` command, not an auto-executed fail-closed check. Propose-only install can't
+> authenticate before the note is pasted into the vault and the daemon reloads, so an
+> automatic request literally can't verify injection at install time — the printed
+> command (run once the note is live) is the correct realization. The design sections
+> below are preserved as the record of the decision.
 
 ## Context
 

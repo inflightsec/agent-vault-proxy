@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-24
 relates_to: docs/architecture.md §3 (G5 enforcement by omission), BindingSpec.matches_scope, matching.path_glob_matches
 ---

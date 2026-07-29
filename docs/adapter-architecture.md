@@ -34,7 +34,7 @@ Two exceptions, one method, return-type `str`. The narrow surface is the point.
 What the protocol deliberately does NOT include:
 - `fetch(name, field=...)` : field selection is per-backend config, not API.
 - `fetch(name, version=...)` : version pinning is per-backend config.
-- `list_names()` : the addon doesn't enumerate, doesn't need it.
+- `list_names()` : not in the required protocol — the inject hot path never enumerates. (Listable backends may add optional `list_secret_names` / `list_secret_notes`, used only by `avp env` and notes-mode binding activation, never the request path.)
 - `refresh()` / `invalidate()` : the caching wrapper owns this, backends don't.
 - Async: the addon is sync; the protocol stays sync to match. Async backends use `asgiref.sync.async_to_sync` (which reuses a single per-thread event loop) rather than `asyncio.run()` per call (which creates a fresh loop every fetch and serializes them).
 
@@ -167,16 +167,16 @@ The other backends use the name as-is (BWS looks it up by secret name; Doppler u
 ## Backend registration
 
 ```python
-# src/agent_vault_proxy/backends/__init__.py
-def _register_builtins() -> None:
-    from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
-    from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig
-    from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
+# Each backend module self-registers at its own bottom (module top-level code):
+#   backends/bws.py    → register_backend("bws", BitwardenBackend, BwsConfig)
+#   backends/gsm.py    → register_backend("gsm", GsmBackend, GsmConfig)
+#   backends/aws.py    → register_backend("aws-secrets-manager", AwsSecretsManagerBackend, AwsConfig)
+#   backends/static.py → register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
 
-    register_backend("bws", BitwardenBackend, BwsConfig)
-    register_backend("gsm", GsmBackend, GsmConfig)
-    register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
-    # future: register_backend("doppler", ...), ("hashicorp-vault", ...), ...
+# src/agent_vault_proxy/backends/__init__.py imports each module at package-import
+# time so those register_backend() calls run (order doesn't matter — unique names):
+from agent_vault_proxy.backends import aws, bws, gsm, static  # noqa: F401
+# future: add doppler.py / hashicorp_vault.py, each self-registering, + one import line here
 ```
 
 `BACKEND_REGISTRY` is exposed read-only (a `MappingProxyType`); all writes go through `register_backend()`, which NFKC-normalizes + casefolds the name and rejects duplicates. Adding a backend is one `register_backend(...)` call plus one new file under `src/agent_vault_proxy/backends/<vault>.py`.

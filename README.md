@@ -83,6 +83,17 @@ Invoke it as `/avp:avp`, or just say *"route the Acme API through AVP"* and it t
 ln -s "$PWD/skills/avp" ~/.claude/skills/avp
 ```
 
+## Broker an MCP server
+
+MCP servers are a fast-growing credential-leak surface: each holds a long-lived upstream token (a GitHub PAT, a Slack/Brave/Perplexity key) **in cleartext in your client config**, where every server the client loads can read it. `avp mcp install` replaces that standing secret with a placeholder and routes the server's egress through the proxy, so the real value never lives in the config:
+
+```
+avp mcp install github --host api.github.com --env-var GITHUB_PERSONAL_ACCESS_TOKEN \
+  --server-cmd "npx -y @modelcontextprotocol/server-github"
+```
+
+It prints the vault note to paste **and** the exact `claude mcp add --env` / `codex mcp add --env` command (proxy + per-runtime CA-trust + placeholder env) — propose-only for the vault, the secret value is never touched. The bundled **[avp skill](skills/avp/)** can derive the host/header/format from the server's docs and confirm the host with you first. Design + threat model: **[ADR-0040](docs/adrs/ADR-0040-mcp-server-credential-broker.md)**.
+
 ## Docs
 
 - **[Is AVP for you?](docs/is-it-for-you.md)** — what it does, what it deliberately does not do, why, and when to reach for it (start here if you're evaluating)
@@ -94,6 +105,7 @@ ln -s "$PWD/skills/avp" ~/.claude/skills/avp
 - **[Linux isolation](docs/linux-isolation.md)** — composing AVP with `bubblewrap` for filesystem sandboxing
 - **[bindings.example.yaml](bindings.example.yaml)** — full config schema
 - **[avp skill](skills/avp/)** — let an AI assistant author your notes/annotation bindings (propose-only, no config edit, no redeploy)
+- **[Broker an MCP server](docs/adrs/ADR-0040-mcp-server-credential-broker.md)** — run Claude Code / Codex MCP servers with no plaintext credential (`avp mcp install`)
 - **[Architecture](docs/architecture.md)** — threat model, G1–G9 invariants, hardening, residual risks
 - **[Adapter architecture](docs/adapter-architecture.md)** — vault backends (Bitwarden, Google Secret Manager, and AWS Secrets Manager ship today, `static` for dev) and how to add another
 - **[Google Secret Manager](docs/gcp-secret-manager.md)** — keep secrets in GSM: setup, keyless auth, and end-to-end testing

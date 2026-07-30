@@ -20,6 +20,7 @@ from agent_vault_proxy.cli.binding import register_binding_subparser, run_bindin
 from agent_vault_proxy.cli.doctor import run_doctor
 from agent_vault_proxy.cli.env import default_env_path, run_env
 from agent_vault_proxy.cli.gcp_setup import run_gcp_setup
+from agent_vault_proxy.cli.mcp import register_mcp_subparser, run_mcp
 from agent_vault_proxy.cli.run import register_run_subparser, run_run
 from agent_vault_proxy.cli.secret import register_secret_subparser, run_secret
 from agent_vault_proxy.cli.setup import run_setup
@@ -223,6 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     register_secret_subparser(sub)
     register_run_subparser(sub)
     register_binding_subparser(sub)
+    register_mcp_subparser(sub)
     return parser
 
 
@@ -292,6 +294,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return run_run(args)
     if args.command == "binding":
         return run_binding(args)
+    if args.command == "mcp":
+        return run_mcp(args)
 
     # No subcommand — print help and signal misuse.
     parser.print_help(sys.stderr)

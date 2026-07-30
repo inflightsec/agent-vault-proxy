@@ -19,7 +19,7 @@ Requests whose destinations aren't bound to any secret are forwarded unmodified,
 Scope:
 
 - **In scope:** static API keys (Anthropic, OpenAI, GitHub PAT, etc.); BWS as backing store; per-secret destination bindings; sandbox-only CA; structured audit log.
-- **Out of scope:** kernel-level egress enforcement, multi-tenant routing. (Request signing shipped: AWS SigV4 as `inject.type: sigv4` — ADR-0027, S3-hardened in ADR-0036; `hmac` / `jwt_bearer` — ADR-0028. OAuth refresh-token flows shipped in v0.7 as `inject.type: oauth2_refresh` — ADR-0017.)
+- **Out of scope:** kernel-level egress enforcement, multi-tenant routing. (Request signing shipped: AWS SigV4 as `inject.type: sigv4` — ADR-0027, S3-hardened in ADR-0036; `hmac` / `jwt_bearer` — ADR-0028. OAuth refresh-token flows shipped in v0.7 as `inject.type: oauth2_refresh` — ADR-0017; `oauth2_client_credentials` and `github_app` — ADR-0030.)
 
 The implementation is a few thousand lines of Python (≈2,500 statements across ~20 modules — the credential hot path is concentrated in `addon.py`) plus a systemd unit. Operational complexity stays small: one daemon, one config file, one audit log.
 
@@ -196,16 +196,17 @@ Whitelisted callables (anything else is rejected at config-load):
 
 **Config-load invariants:**
 
+- Wildcard hosts are OFF by default: any `*.` binding fails config load unless `allow_wildcard_hosts: true` (ADR-0034 adds a `subdomains:` label allowlist to narrow one)
 - Wildcard depth ≤ 1 DNS label (reject `*.com`)
 - Empty `bindings: []` rejected explicitly (deny-all must be intentional, not via omission)
 - `methods: []` and `methods: [*]` rejected: omit the field instead
 - Bad config on hot-reload: keep old config, log error, never crash
-- Placeholder length checked against operator-declared `expected_real_length` when supplied
+- Placeholder validated fail-closed at config load: marker present, minimum length (`_PLACEHOLDER_MIN_LEN` = 24), uniqueness across the secret set, and no substring overlap
 
 **Host-matching semantics (read before you write a binding):**
 
 - **Exact match is byte-for-byte string equality.** `api.openai.com` matches `api.openai.com` and nothing else. Case-sensitive in principle, though real DNS is case-insensitive: write hostnames lowercase.
-- **Wildcards use a `*.` prefix and match exactly one DNS label.** `*.openai.com` matches `api.openai.com` but NOT `evil.api.openai.com` (two labels). The wildcard prefix cannot itself contain `.`. This is enforced both at config load (wildcard depth ≥ 2 DNS labels) and at match time (the matched prefix has no dot).
+- **Wildcards use a `*.` prefix and match exactly one DNS label.** `*.openai.com` matches `api.openai.com` but NOT `evil.api.openai.com` (two labels). The wildcard prefix cannot itself contain `.`. This is enforced both at config load (wildcard depth ≥ 2 DNS labels) and at match time (the matched prefix has no dot). Wildcard bindings additionally require the `allow_wildcard_hosts` opt-in — off by default, any `*.` host is rejected at config load.
 - **No IDNA / punycode normalization.** A host like `xn--bcher-kva.example` matches only that exact ASCII form. If the agent's HTTPS client sends the Unicode form (`bücher.example`), it won't match the punycode binding, and vice versa. Pick one form and use it consistently in both BWS-side state and your bindings.
 - **No trailing-dot normalization.** `api.example.com` and `api.example.com.` are different hosts to the matcher. mitmproxy typically strips the trailing dot, but don't rely on it - match what your client actually sends.
 - **No port handling.** The host string is the hostname only. There is no `host: "api.example.com:443"` form. If you need port-scoped routing, use the host alone: the proxy listens on a single inbound port (14322) and forwards to upstream's chosen port.
@@ -237,7 +238,7 @@ A request carrying a placeholder whose secret has **no binding** in its note (in
 
 **Notes host allowlist (`notes_host_allowlist`, ADR-0024).** Opt-in top-level key that bounds where notes/annotation bindings may route: **annotations may only narrow scope, never add a host.** When absent (default), nothing changes. When set, a notes/annotation host outside the list has its binding dropped fail-closed and a request toward it audits the distinct reason `host_not_in_allowlist`. Motive: on GCP, `secretmanager.secrets.update` (edit the `avp-binding` annotation) and `versions.access` (read the value) are independently grantable, so without this an annotation-only writer could route a secret to a host they control (confused deputy). Multi-host notes (ADR-0021) are judged per host — a disallowed host drops only its own fan-out entry. `*.suffix` allowlist entries ride the `allow_wildcard_hosts` opt-in. File `secrets:` bindings are the trusted tier and exempt. IAM hygiene (restricting annotation-write) remains the primary GCP control; this is the structural backstop.
 
-> Listing secrets requires a listable backend (`bws`, `gsm`, `static`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file) AND re-resolved in the background every `notes_refresh_seconds` (ADR-0032, default 60s) for vault backends, so a newly-added secret is brokered without a restart; the refresh keeps the warm value/token caches and fails safe (keeps live bindings) if the vault can't be listed. Per-request credential VALUE fetches still honour `cache.ttl_seconds`.
+> Listing secrets requires a listable backend (`bws`, `gsm`, `static`, `aws-secrets-manager`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file) AND re-resolved in the background every `notes_refresh_seconds` (ADR-0032, default 60s) for vault backends, so a newly-added secret is brokered without a restart; the refresh keeps the warm value/token caches and fails safe (keeps live bindings) if the vault can't be listed. Per-request credential VALUE fetches still honour `cache.ttl_seconds`.
 
 ### 4.3 Request lifecycle
 
@@ -304,7 +305,7 @@ Rules:
 - `fail_on_unwritable: true` - disk full / attribute removed / permission flip = proxy returns 503 (G4 + G6)
 - Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
 - **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
-- **Closed event-type set (ADR-0023):** `AUDIT_EVENT_TYPES` in `audit.py` enumerates every `type` the stream may carry; `AuditWriter.emit()` raises on any unlisted type. A new event type cannot ship without a conscious edit there plus no-leak test coverage.
+- **Closed event-type set (ADR-0023):** `AUDIT_EVENT_TYPES` in `audit.py` enumerates every `type` the stream may carry; `AuditWriter.emit()` raises on any unlisted type. A new event type cannot ship without a conscious edit there plus no-leak test coverage. The current set is `inject_decision`, `deny`, `token_exchange`, `refresh_token_rotated`, `honeytoken_triggered`, `proxy_restart`, `upstream_response`, `tls_passthrough` (ADR-0026 — a TLS connection tunnelled un-terminated because its destination is unbound; dest host + reason only, never decrypted), and `notes_refreshed` (ADR-0032 — the background refresh changed the bound set; added/removed names only).
 - Off-host shipping: a separate tailer forwards this stream to a central collector (ADR-0019); the local log stays the fail-closed source of truth and is never in the shipper's failure path
 
 **Reason taxonomy on `inject_decision` events** (use these to filter and alert from the audit stream):
@@ -344,7 +345,7 @@ For multi-injector secrets (`inject.type: multi`), each substituted leaf emits i
 - Token at `/etc/agent-vault-proxy/bws-token`, mode `0440 root:avp` - root owns, `avp` group reads.
 - `bitwarden-sdk` Python bindings (in-process), not a shell-out.
 - EU and US regions supported via explicit `api_url` / `identity_url`.
-- Cache: in-memory `OrderedDict` with LRU eviction, TTL 300 s ± 30 s jitter per entry (jitter clamped to `ttl/2`). Capacity bounded by `cache.max_entries` (default 100). On 429: serve stale within `2 * ttl` grace, audit-flag `cache_status=stale`; else fail closed.
+- Cache: in-memory `OrderedDict` with LRU eviction, TTL 300 s ± 30 s jitter per entry (jitter clamped to `ttl/2`). Capacity bounded by `cache.max_entries` (default 100). A backend failure is not cached (`BackendUnavailableError`): the fetch raises and the request fails closed — the placeholder forwards verbatim, no stale value is served.
 
 ### 4.6 Calling-shell environment
 
@@ -455,7 +456,7 @@ The proxy holds every bound secret in flight. Compromising its dependency graph 
 | F7 | CA install drifts when launcher / sandbox profile is regenerated | M | CA install + caller env in the same managed unit |
 | F8 | A subprocess doesn't honor `HTTPS_PROXY` | M | Documented limitation; file upstream issues when found |
 | F9 | BWS SDK has a bug that leaks secret to logs | L | Never `print()` returns; zero cache entries on eviction |
-| F10 | Operator declares wrong placeholder length → content-length disagrees with body | L | Length validation at config load; reject with clear error |
+| F10 | Operator hand-writes a malformed / too-short placeholder → weak or ambiguous match | L | Fixed-format + min-length (24) + uniqueness / no-substring-overlap validation at config load; reject with clear error |
 | F11 | Upstream adds cert pinning → proxy MITM fails | M | Per-secret `bypass: true` escape hatch; documented limitation |
 | F12 | First OAuth need surfaces, design has no extension point | H | `inject:` block extensible; OAuth injector type can be added |
 | F13 | NTP drift → cache TTL math negative, JWT validation fails | M | Startup precondition `timedatectl show -p NTPSynchronized=yes` |

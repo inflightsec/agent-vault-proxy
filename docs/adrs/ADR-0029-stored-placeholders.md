@@ -1,8 +1,10 @@
-# ADR-0029 — Stored placeholders: the note pins what the consumer emits
+---
+status: accepted
+date: 2026-07-20
+relates_to: ADR-0011 (notes bindings, salt-derived placeholders), ADR-0018 (annotation trust), ADR-0025 (binding marker)
+---
 
-- **Status:** Accepted
-- **Date:** 2026-07-20
-- **Relates to:** ADR-0011 (notes bindings, salt-derived placeholders), ADR-0018 (annotation trust), ADR-0025 (binding marker)
+# ADR-0029 — Stored placeholders: the note pins what the consumer emits
 
 ## Context
 

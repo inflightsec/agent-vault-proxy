@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-24
 relates_to: ADR-0021 (multi-host notes binding), docs/architecture.md §4.2, BindingSpec.matches_host, config.allow_wildcard_hosts
 ---

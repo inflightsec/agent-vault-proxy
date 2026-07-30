@@ -18,6 +18,7 @@ references:
   - OWASP MCP Security Cheat Sheet — never store OAuth tokens in plaintext
   - Claude Code MCP docs — `claude mcp add --transport http`, `--client-id/--client-secret/--callback-port`, `headersHelper`
   - Codex CLI MCP docs — `codex mcp login`, `mcp_oauth_credentials_store` (keyring), `mcp_oauth_callback_port`
+  - Security-status-quo evidence (see References §): Anthropic connectors doc [A1], Claude Code MCP docs [A2], Mitiga plaintext-token/MitM disclosure [R1], Trail of Bits world-readable MCP config [R2], OWASP MCP Security Cheat Sheet [S1] — all verified resolving 2026-07-30
 ---
 
 # ADR-0042: Interactive-OAuth bootstrap and remote-MCP token custody (`avp oauth login`)
@@ -58,12 +59,28 @@ favour of Client ID Metadata Documents, which have near-zero provider support to
 major providers never implemented DCR — so **pre-registered client credentials are the
 pragmatic reality**, not a fallback.
 
-**The status quo AVP displaces.** Today the clients that *do* run the remote OAuth dance
-persist the resulting access **and** refresh tokens in plaintext — Claude Code in
-`~/.claude.json`, bridge shims in a per-server cache dir; only Codex offers optional OS
-keyring storage. OWASP's MCP guidance and the MCP spec's own confidentiality requirement
-both say tokens must never sit in plaintext. Scattered, broadly-scoped, plaintext token
-files are precisely the leak AVP exists to close, applied to OAuth.
+**The status quo AVP displaces (verified 2026-07).** The surface splits three ways, and only
+one is AVP's to fix:
+
+- **Hosted web clients (claude.ai / Claude Desktop remote connectors)** run the connector and
+  hold the OAuth token **server-side in the vendor's cloud, not on the user's device**
+  ("Custom connectors connect to your MCP server from Anthropic's cloud, not from your local
+  device" [A1]). AVP is not in that path and does not claim to be.
+- **Local CLI clients (Claude Code)** are the wedge. The vendor docs say MCP tokens go to the
+  OS keychain / a credentials file, "not in your config" [A2] — but independent research found
+  the MCP **bearer/refresh tokens sitting in plaintext in `~/.claude.json`**, the same file that
+  carries endpoint routing and trust flags [R1], and the vendor classified the report
+  **out-of-scope / "by design" and declined to patch** (disclosed 2026-04-10, out-of-scope
+  2026-04-12) [R1]. So for a server added directly to a local CLI, a live refresh token most
+  likely rests in cleartext on disk, indefinitely, by vendor policy.
+- **Local stdio servers** frequently hold a long-lived API key in a **world-readable** config
+  (`claude_desktop_config.json` at `-rw-r--r--`, plaintext keys [R2]) — the ADR-0040 case.
+
+Against all three, the standard is explicit: OWASP's MCP guidance says *"Never store OAuth
+tokens in plaintext in MCP config files or application settings"* [S1] and the MCP spec itself
+requires refresh-token confidentiality. AVP moves the durable refresh token off disk into the
+vault and leases only short-lived access tokens — precisely the plaintext-token leak the
+vendor-of-record has declined to close for the local client.
 
 ### The gap, from first principles
 
@@ -290,9 +307,24 @@ the ADR-0017 §8 concern, unchanged by this ADR.
   deprecation).
 - RFC 8252 (native-app loopback), RFC 7636 (PKCE), RFC 8628 (device grant), RFC 8707 (resource
   indicators), RFC 9728 (PRM), RFC 9207 (`iss`), RFC 7591 (DCR — deprecated), RFC 6749 / 6750.
-- OWASP MCP Security Cheat Sheet — plaintext-token prohibition.
 - Claude Code MCP docs (`headersHelper`, `--client-id/--client-secret/--callback-port`); Codex
   CLI MCP docs (`mcp login`, keyring credential store, callback port).
+
+Security-status-quo evidence (threat-model motivation; all URLs verified to resolve 2026-07-30):
+- **[A1]** Anthropic, "Use connectors to extend Claude's capabilities" — connectors run from
+  Anthropic's cloud, not the local device.
+  https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities
+- **[A2]** Claude Code MCP docs — documented secure-storage claim (keychain / credentials file,
+  not config) and claude.ai connectors surfaced into Claude Code. https://code.claude.com/docs/en/mcp
+- **[R1]** Mitiga, "MCP Token Theft in Claude Code: a MitM attack chain" — MCP bearer/refresh
+  tokens found in plaintext in `~/.claude.json`; vendor classified out-of-scope / by-design,
+  no patch (disclosed 2026-04-10). https://www.mitiga.io/blog/claude-code-mcp-token-theft-mitm
+- **[R2]** Trail of Bits, "Insecure credential storage plagues MCP" (2025-04-30) — local stdio
+  MCP config (`claude_desktop_config.json`) world-readable (`-rw-r--r--`) holding plaintext API
+  keys. https://blog.trailofbits.com/2025/04/30/insecure-credential-storage-plagues-mcp/
+- **[S1]** OWASP MCP Security Cheat Sheet — "Never store OAuth tokens in plaintext in MCP config
+  files or application settings." https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html
+
 - ADR-0040 (the broker this extends), ADR-0017 (`oauth2_refresh` + write-back), ADR-0030
   (client-credentials + github_app), ADR-0035 (pinned token egress), ADR-0029 (stored
   placeholders), ADR-0031 (echo scrubbing), ADR-0024 (host allowlist), ADR-0026 (TLS scoping).

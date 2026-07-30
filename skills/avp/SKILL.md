@@ -7,7 +7,9 @@ description: >
   with NO config-file edit and NO redeploy. Proposes only; never writes the secret to
   the vault. USE WHEN add avp secret, avp binding, broker or route an API key/token
   through agent-vault-proxy, "what do I put in the bitwarden notes", "add a secret to
-  gsm for avp", new backend secret, onboard a credential to the vault proxy. NOT FOR
+  gsm for avp", new backend secret, onboard a credential to the vault proxy, connect an
+  OAuth service through AVP, "avp oauth login", sign in / add a Google/GitHub/Microsoft
+  OAuth login, get a refresh token into the vault, help me set up OAuth for AVP. NOT FOR
   editing the AVP config file directly (that's the discouraged file source), running or
   deploying the proxy, or having the assistant store the secret value.
 ---
@@ -27,6 +29,7 @@ Helps an agent walk a user through brokering a **new** secret through **agent-va
 | Trigger | Workflow |
 |---------|----------|
 | "add/route/broker a secret through AVP", "what do I put in the notes" | `Workflows/AddSecret.md` |
+| "connect an OAuth service", "avp oauth login", "sign in with Google/GitHub through AVP", "get a refresh token into the vault" | `Workflows/OauthLogin.md` |
 
 ## Quick reference — the note is tiny
 
@@ -92,3 +95,5 @@ and wire the value they return.
 - **Wildcard hosts need explicit opt-in.** A note cannot widen a credential's blast radius to `*.suffix` unless `allow_wildcard_hosts` is enabled — fail-closed by default. Keep hosts exact.
 - **Annotation-write is a trust boundary (ADR-0018).** Whoever can edit a secret's notes/annotation can redirect the credential to a host they control (confused-deputy). Annotation-write must be locked to the same trust tier as value-read; `avp doctor` warns when it isn't. So "anyone can add a binding" is only safe when note-write is gated.
 - **Never pre-encode a secret the assistant can see.** For Basic/base64 cases, tell the user to compute the encoding themselves (or use the file-source composite template); don't ask them to paste the raw credential to you to encode.
+- **OAuth is config-source only today, and it's the least-simple flow.** An `oauth2_refresh` binding can't be expressed in a note (the parser has no OAuth support), so `Workflows/OauthLogin.md` necessarily emits a `bindings.yaml` block + a daemon reload — the one place the "notes-first, no config" rule bends. It also needs three vault secrets (client id, client secret, refresh token) and the runtime injector currently *requires* a client secret. Guide it patiently and do the mechanical parts; the refresh token is still minted by consent and never seen by the agent.
+- **OAuth North Star (follow-ups to reach static-key simplicity).** To make OAuth as one-touch as `AddSecret`, three changes are needed and NOT yet built: (1) **note-based `oauth2_refresh` bindings** — teach the note parser `type: oauth2_refresh` so the binding lives in the vault, killing the config edit; (2) **client-id-in-note** — the client id is *public*, so carry it inline in the annotation instead of a separate vault secret (drops one entry); (3) **public-client support in the runtime injector** — make `client_secret_secret` optional so true PKCE public clients (no secret) work end to end. Target end-state: create one refresh-token secret + paste one annotation → run `avp oauth login` → done. Propose these as an ADR before building; don't hand-roll them from this skill.

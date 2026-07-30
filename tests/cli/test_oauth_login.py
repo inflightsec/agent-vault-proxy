@@ -536,6 +536,66 @@ def test_run_oauth_rejects_out_of_range_callback_port(monkeypatch: pytest.Monkey
 # --- headless detection -----------------------------------------------------
 
 
+# --- SMOKE: whole loopback OAuth flow end to end -----------------------------
+# Run just this one in isolation with:  pytest tests/cli/test_oauth_login.py -k smoke
+# Hermetic: real `run_oauth` dispatch, real ephemeral 127.0.0.1 callback server, real
+# PKCE/state, real `_oauth_post` request-build + JSON parse, real vault-write dispatch.
+# Only the socket egress (`_transport_open`), the SSRF DNS lookup, the browser, and the
+# backend are stubbed — nothing in the credential path is bypassed.
+
+
+class _FakeResp:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _FakeResp:
+        return self
+
+    def __exit__(self, *_a: object) -> bool:
+        return False
+
+
+def test_oauth_login_smoke_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    _patch_backend(monkeypatch, be)
+    # No DNS in a hermetic run — the SSRF prevet's getaddrinfo would fail closed; the guard
+    # itself is unit-tested separately (test_prevet_*).
+    monkeypatch.setattr(ol, "check_url_not_internal", lambda _u: None)
+    token_response = (
+        b'{"token_type":"Bearer","access_token":"AT-do-not-log",'
+        b'"refresh_token":"' + _LIVE_TOKEN.encode() + b'"}'
+    )
+    monkeypatch.setattr(ol, "_transport_open", lambda _req, timeout: _FakeResp(token_response))
+
+    def _browser(url: str) -> bool:
+        q = parse_qs(urlparse(url).query)
+        assert q["code_challenge_method"] == ["S256"]  # PKCE actually sent
+        redirect, state = q["redirect_uri"][0], q["state"][0]
+
+        def _hit() -> None:
+            urllib.request.urlopen(f"{redirect}?code=SMOKE&state={state}", timeout=5).read()
+
+        threading.Thread(target=_hit, daemon=True).start()
+        return True
+
+    monkeypatch.setattr(ol.webbrowser, "open", _browser)
+
+    import contextlib
+    import io
+
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = ol.run_oauth(_args(device=False, loopback=True))
+
+    assert rc == 0
+    assert be.written["GOOGLE_REFRESH"] == _LIVE_TOKEN  # token reached the vault
+    combined = out.getvalue() + err.getvalue()
+    assert _LIVE_TOKEN not in combined and "AT-do-not-log" not in combined  # nothing leaked
+
+
 def test_is_headless_true_under_ssh(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22")
     assert ol._is_headless() is True

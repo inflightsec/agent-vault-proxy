@@ -553,6 +553,19 @@ def run_oauth(args: argparse.Namespace) -> int:  # noqa: C901 — flow-select + 
                 f"cannot read client secret {args.client_secret_secret!r}: {type(exc).__name__}"
             )
 
+    # Refuse the secret-less (public-client) path BEFORE consent. The runtime oauth2_refresh
+    # injector requires a client secret (config_models: client_secret_secret is mandatory, and
+    # exchange() always transmits it), so a secret-less token would be minted, vaulted, and then
+    # unusable — burning a one-shot authorization the provider may not re-issue. Fail closed until
+    # runtime public-client support lands (ADR-0042 §7). (Silas H1.)
+    if client_secret is None:
+        return _die(
+            "the oauth2_refresh runtime requires a client secret — pass --client-secret-secret "
+            "with a vault secret holding it. Secret-less public clients are not yet consumable at "
+            "runtime (ADR-0042 §7); refusing before consent so a one-time authorization is not "
+            "spent on an unusable token."
+        )
+
     try:
         if use_device:
             assert device_ep is not None

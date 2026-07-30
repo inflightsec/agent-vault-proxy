@@ -66,7 +66,7 @@ def _args(**over: object) -> argparse.Namespace:
         "binding": "GOOGLE",
         "provider": "google",
         "client_id_secret": "GOOGLE_CLIENT_ID",
-        "client_secret_secret": None,
+        "client_secret_secret": "GOOGLE_CLIENT_SECRET",  # runtime requires one (Silas H1)
         "refresh_token_secret": "GOOGLE_REFRESH",
         "scopes": "openid email",
         "resource": None,
@@ -333,7 +333,9 @@ def _patch_backend(monkeypatch: pytest.MonkeyPatch, be: FakeBackend) -> None:
 
 
 def test_run_oauth_device_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     seq = [_device_start(), {"refresh_token": _LIVE_TOKEN}]
     monkeypatch.setattr(ol.time, "sleep", lambda _s: None)
@@ -344,7 +346,9 @@ def test_run_oauth_device_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_oauth_rejects_malformed_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     seq = [_device_start(), {"refresh_token": "x"}]  # too short → malformed
     monkeypatch.setattr(ol.time, "sleep", lambda _s: None)
@@ -357,7 +361,9 @@ def test_run_oauth_rejects_malformed_token(monkeypatch: pytest.MonkeyPatch) -> N
 def test_run_oauth_never_prints_the_token(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     seq = [_device_start(), {"refresh_token": _LIVE_TOKEN, "access_token": "SECRET-ACCESS"}]
     monkeypatch.setattr(ol.time, "sleep", lambda _s: None)
@@ -370,8 +376,22 @@ def test_run_oauth_never_prints_the_token(
     assert "SECRET-ACCESS" not in out.err
 
 
-def test_run_oauth_device_without_endpoint_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_oauth_refuses_public_client_before_consent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Silas H1: no client secret → the runtime can't consume the token, so refuse BEFORE any
+    # browser/network consent is spent.
     be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    _patch_backend(monkeypatch, be)
+    monkeypatch.setattr(ol.webbrowser, "open", lambda _u: pytest.fail("must not open browser"))
+    monkeypatch.setattr(ol, "_oauth_post", lambda *_a, **_k: pytest.fail("must not reach network"))
+    rc = ol.run_oauth(_args(client_secret_secret=None, device=True))
+    assert rc == 1
+    assert "GOOGLE_REFRESH" not in be.written
+
+
+def test_run_oauth_device_without_endpoint_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     # no provider + device forced + no explicit device endpoint → clean failure
     rc = ol.run_oauth(_args(provider=None, device=True, token_endpoint="https://x.test/t"))
@@ -519,7 +539,9 @@ def test_device_flow_clamps_hostile_numerics(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_run_oauth_rejects_provider_with_explicit_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     rc = ol.run_oauth(_args(token_endpoint="https://evil.test/token"))  # provider=google + explicit
     assert rc == 1
@@ -527,7 +549,9 @@ def test_run_oauth_rejects_provider_with_explicit_endpoint(monkeypatch: pytest.M
 
 
 def test_run_oauth_rejects_out_of_range_callback_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     rc = ol.run_oauth(_args(callback_port=99999))
     assert rc == 1
@@ -559,7 +583,9 @@ class _FakeResp:
 
 
 def test_oauth_login_smoke_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    be = FakeBackend({"GOOGLE_CLIENT_ID": "cid", "GOOGLE_REFRESH": ""})
+    be = FakeBackend(
+        {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sek", "GOOGLE_REFRESH": ""}
+    )
     _patch_backend(monkeypatch, be)
     # No DNS in a hermetic run — the SSRF prevet's getaddrinfo would fail closed; the guard
     # itself is unit-tested separately (test_prevet_*).

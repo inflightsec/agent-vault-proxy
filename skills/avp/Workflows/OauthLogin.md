@@ -64,8 +64,10 @@ Bitwarden Secrets Manager entries:
 
 > 1. **`GCAL_CLIENT_ID`** — value = the Client ID you copied.
 > 2. **`GCAL_CLIENT_SECRET`** — value = the Client secret you copied.
-> 3. **`GCAL_REFRESH_TOKEN`** — create it **empty** (or a single character). Leave it blank; the
->    next step fills it for you.
+> 3. **`GCAL_REFRESH_TOKEN`** — create it **empty**. If your vault UI won't accept a truly empty
+>    value, use a real placeholder string that starts with `avp-PLACEHOLDER-` — **not** a bare
+>    character or word: `avp oauth login` treats any non-empty, non-placeholder value as an
+>    already-live token and refuses to overwrite it without `--force`. The next step fills it.
 
 State plainly: "I never see these — you paste them into your vault, same as an API key."
 

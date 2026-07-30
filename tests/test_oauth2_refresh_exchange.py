@@ -657,3 +657,20 @@ def test_request_carries_avp_user_agent(
     ):
         exchange(spec_body_post, "cid", "csec", "rtok")
     assert captured == ["agent-vault-proxy/oauth2-refresh"]
+
+
+def test_parse_error_sanitizes_and_caps_provider_error_description() -> None:
+    """Silas M2: a hostile token endpoint could reflect posted secret material or inject ANSI
+    control sequences via ``error_description``, which lands in the fsynced audit stream. It must
+    be control-stripped and length-capped before it can be emitted."""
+    from agent_vault_proxy.injectors.oauth2_refresh import _parse_error
+
+    hostile = json.dumps(
+        {"error": "invalid_client", "error_description": "leak\x1b[2J\n\r" + "A" * 400}
+    ).encode()
+    result = _parse_error(400, hostile)
+    desc = result.error_description
+    assert desc is not None
+    assert "\x1b" not in desc and "\n" not in desc and "\r" not in desc  # control chars stripped
+    assert len(desc) <= 200  # length capped
+    assert result.outcome == "token_endpoint_error:invalid_client"

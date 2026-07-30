@@ -201,8 +201,15 @@ short-lived bearer per connection** through the client's own dynamic-header hook
   on provider support (near-zero today).
 - **Not passthrough:** the custody path **mints a fresh token bound to the target resource**
   (RFC 8707 `resource`) from the vaulted refresh token; it never relays the client's own token
-  upstream (the spec's token-passthrough prohibition). A leaked minted token cannot be replayed
-  against another resource because of the audience binding.
+  upstream (the spec's token-passthrough prohibition). Where the mint carries `resource`, a leaked
+  minted token can't be replayed against another resource.
+  **Honest bound (v1):** `avp oauth login` sends `resource` at consent, but the shipped
+  `oauth2_refresh` runtime injector has **no `resource` field and drops it on every refresh** — so
+  audience is established at consent, **not re-asserted per refresh**. If a granted refresh token
+  can mint tokens for several audiences, the runtime-injected bearer is not audience-pinned, and a
+  binding pointed at the wrong host would inject a usable token there. Do **not** rely on
+  per-refresh audience isolation on the v1 runtime path; adding `resource` to the injector is a
+  follow-up (tracked with §7).
 
 ### 4. Security model
 
@@ -285,14 +292,24 @@ inline public `client_id` + `refresh_token_secret` ref + scopes + host), run `av
 done. No config edit; the agent never sees a secret; the refresh token is minted by consent and
 written to the vault. That is static-key parity for OAuth.
 
-**Security delta.** The note parser gains OAuth awareness, and a note now *selects which vault
-secrets are consumed* for a token exchange — so the **annotation-write trust boundary (ADR-0018)
-becomes load-bearing for OAuth**: whoever can edit the note can repoint the `client_secret_secret` /
-`refresh_token_secret` references or the `host`. Mitigated exactly as elsewhere — references name
-vault secret *names* (an attacker who can't read the vault can't substitute a known-good secret),
-the auth/token `host` stays a confirmed field, and `avp doctor` already warns when annotation-write
-isn't gated to the value-read tier. No new secret-exposure path; the residual is the same
-confused-deputy class ADR-0018 governs.
+**Security delta (BLOCKING pre-conditions for §7, not just a warning).** The note parser gains
+OAuth awareness, and a note now *selects which vault secrets are consumed* for a token exchange.
+This is **broader than the confused-deputy class ADR-0018 already governs**: the dangerous move is
+not substituting a *known* secret in — it is a note **naming an arbitrary high-value vault secret
+as `client_secret_secret`**, whose *value the runtime then transmits* to the token endpoint
+(`oauth2_refresh.exchange`). A note-writer who cannot read the vault can still cause AVP to *emit*
+any named secret's value — toward any confirmed `host`, or into a provider's error log via
+`invalid_client` even on a preset-pinned host. `avp doctor`'s advisory warning is therefore
+**insufficient** for note-native OAuth. Before §7 ships, these are **hard preconditions enforced at
+note activation** (fail-closed, not advisory):
+1. Annotation-write for an `oauth2_refresh` note MUST be gated to the value-read trust tier — a
+   note-writer who cannot read the vault MUST NOT be able to activate an OAuth binding.
+2. A note MUST NOT be allowed to name a `*_secret` reference (`client_secret_secret`,
+   `refresh_token_secret`) that the note-writer's tier cannot itself read — closing the
+   name-an-arbitrary-secret exfiltration path.
+3. The auth/token `host` stays a mandatory human-confirm field (as in §1/§4).
+With those enforced, the residual returns to the ADR-0018 confused-deputy class; without them,
+note-native OAuth is a vault-secret exfiltration primitive and MUST NOT ship. (Silas D1.)
 
 ## Consequences
 

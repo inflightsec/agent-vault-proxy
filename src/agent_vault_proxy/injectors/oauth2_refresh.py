@@ -27,6 +27,7 @@ import base64
 import json
 import logging
 import time
+import unicodedata
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -71,6 +72,20 @@ def is_well_formed_refresh_token(value: str) -> bool:
     if not _MIN_REFRESH_TOKEN_LEN <= len(value) <= _MAX_REFRESH_TOKEN_LEN:
         return False
     return all(0x20 <= ord(c) <= 0x7E for c in value)
+
+
+# Provider-supplied ``error_description`` is attacker-influenceable (a hostile or compromised
+# public token endpoint passes the SSRF guard, which only blocks internal hosts) and lands in the
+# fsynced audit stream. Strip control/format chars and cap the length before it is emitted, so a
+# reflected secret / injected control sequence can't ride into the "no secret material" log (Silas
+# M2 — mirrors the CLI's clean+cap discipline).
+_MAX_ERROR_DESCRIPTION = 200
+_ERR_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def _sanitize_error_description(text: str) -> str:
+    cleaned = "".join(ch for ch in text if unicodedata.category(ch) not in _ERR_UNSAFE_CATEGORIES)
+    return cleaned[:_MAX_ERROR_DESCRIPTION]
 
 
 class OauthExchangeFailedError(Exception):
@@ -337,7 +352,7 @@ def _parse_error(status: int, body_bytes: bytes) -> ExchangeResult:
         if isinstance(payload, dict) and isinstance(payload.get("error"), str):
             desc = payload.get("error_description")
             if isinstance(desc, str):
-                error_description = desc
+                error_description = _sanitize_error_description(desc)
             return ExchangeResult(
                 outcome=f"token_endpoint_error:{payload['error']}",
                 error_description=error_description,

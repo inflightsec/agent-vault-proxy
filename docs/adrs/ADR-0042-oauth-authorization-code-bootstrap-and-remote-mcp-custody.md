@@ -253,6 +253,47 @@ strand each other (the second refresher gets `invalid_grant`). v1 **carries ADR-
 naming), and the bootstrap **warns when the target secret is already bound on another host**. The
 proper cross-fleet coordination lock (ADR-0022 direction) is a follow-up ADR, not a v1 blocker.
 
+### 7. North-Star simplification (v-next, proposed) — note-native OAuth onboarding
+
+**Problem.** AVP's onboarding North Star (ADR-0040): add a credential *entirely in the vault* — a
+marked note on the secret, no config edit, no redeploy, agent never sees the value. Static keys hit
+it in ~2 steps. OAuth does **not**: `oauth2_refresh` is config-source only (the note parser has no
+OAuth awareness), it needs **three** vault secrets, the runtime injector **requires** a client
+secret, and a `bindings.yaml` edit + reload must precede the consent — ~7 steps, and the one place
+the "notes-first, config never" rule bends. For the non-engineer target this is the real barrier,
+not the consent itself. Three independently-landable changes close it.
+
+1. **Note-native `oauth2_refresh` bindings.** Teach `notes_binding.py` to accept a marked note with
+   `type: oauth2_refresh` (fields: `provider` or `token_url` + `client_auth_method`,
+   `client_secret_secret`, `refresh_token_secret`, `scopes`, `host`). The note lives on the
+   **injection-target secret** (the `*_API` placeholder the consumer emits) and references the input
+   secrets by name — mirroring the config shape, resolved at fetch. This removes the config edit +
+   reload: an OAuth binding is added purely in the vault UI like every other binding.
+2. **Client-id-in-note.** The `client_id` is *public* (OAuth clients are *identified*, not
+   authenticated, by it — only `client_secret` authenticates). Allow the note to carry
+   `client_id: <value>` inline instead of a `client_id_secret:` vault reference. Drops one vault
+   entry; the note already carries only non-secret annotation data, so an inline public id fits.
+3. **Public-client support in the runtime injector.** Make `client_secret_secret` **optional** in
+   the `oauth2_refresh` schema; when absent, the refresh exchange (RFC 6749 §6) sends only
+   `client_id` (valid for public clients). This makes true PKCE public clients (no secret) work end
+   to end **and closes a v1 inconsistency** — `avp oauth login` already treats `client_secret` as
+   optional, but the runtime injector currently rejects a secret-less binding. Smallest change of
+   the three and a correctness fix, so it can land first.
+
+**End-state UX:** create the `*_API` + refresh-token secrets, paste **one** marked note (provider +
+inline public `client_id` + `refresh_token_secret` ref + scopes + host), run `avp oauth login` —
+done. No config edit; the agent never sees a secret; the refresh token is minted by consent and
+written to the vault. That is static-key parity for OAuth.
+
+**Security delta.** The note parser gains OAuth awareness, and a note now *selects which vault
+secrets are consumed* for a token exchange — so the **annotation-write trust boundary (ADR-0018)
+becomes load-bearing for OAuth**: whoever can edit the note can repoint the `client_secret_secret` /
+`refresh_token_secret` references or the `host`. Mitigated exactly as elsewhere — references name
+vault secret *names* (an attacker who can't read the vault can't substitute a known-good secret),
+the auth/token `host` stays a confirmed field, and `avp doctor` already warns when annotation-write
+isn't gated to the value-read tier. No new secret-exposure path; the residual is the same
+confused-deputy class ADR-0018 governs.
+
 ## Consequences
 
 **Good**

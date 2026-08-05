@@ -25,7 +25,7 @@ And the point isn't lock-in. The goal is simply that fewer real keys sit inside 
 **1. Install** — Linux `pipx`, macOS `brew`:
 
 ```bash
-pipx install agent-vault-proxy
+pipx install 'agent-vault-proxy[bitwarden]'   # [bitwarden] adds the Bitwarden backend SDK; drop it for AWS/GSM/env only
 # macOS: brew install inflightsec/avp/agent-vault-proxy
 sudo avp setup --bws        # paste your Bitwarden token — generates the CA, starts the daemon
 ```
@@ -117,3 +117,5 @@ The proxy never phones home. The only outbound connections it makes are to the B
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE); the explicit patent grant is deliberate for a security tool ([ADR-0037](docs/adrs/ADR-0037-relicense-apache-2.0.md)). Every feature ships here: no open-core, no enterprise tier, no hosted service — fork it, read it end to end, run it forever. Releases up to 0.9.0 remain available under their original MIT terms. Prior art acknowledged in [`CREDITS.md`](./CREDITS.md).
+
+**One dependency is not open source, and it's opt-in.** The optional Bitwarden backend pulls [`bitwarden-sdk`](https://pypi.org/project/bitwarden-sdk/), which is under Bitwarden's own [proprietary SDK license](https://github.com/bitwarden/sdk) — not Apache-2.0. AVP never bundles it; you install it yourself (`pip install 'agent-vault-proxy[bitwarden]'`) only if you use that backend. The default install and the AWS Secrets Manager, Google Secret Manager, and env backends are 100% open source.

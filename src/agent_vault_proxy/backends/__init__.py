@@ -19,7 +19,8 @@ See docs/adapter-architecture.md for the full design rationale.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -48,6 +49,31 @@ class BackendAuthLostError(BackendUnavailableError):
     raising this is informationally useful but treated identically to
     BackendUnavailableError by the cache.
     """
+
+
+@contextmanager
+def require(backend: str, package: str, extra: str, *, note: str = "") -> Iterator[None]:
+    """Guard an optional backend's lazy third-party import.
+
+    Wrap the backend's ``import`` in this context so a missing optional
+    dependency becomes one actionable :class:`BackendUnavailableError` with a
+    uniform install hint (both pip and pipx), instead of a raw ImportError.
+
+        with require("aws", "botocore", "aws"):
+            import botocore.session
+
+    ``note`` appends backend-specific context (e.g. the Bitwarden SDK's
+    proprietary-license caveat) after the first line.
+    """
+    try:
+        yield
+    except ImportError as e:  # pragma: no cover — dep-not-installed path
+        raise BackendUnavailableError(
+            f"the {backend} backend needs the '{package}' package, which is not "
+            f"installed.{note}\n"
+            f"  pip install 'agent-vault-proxy[{extra}]'\n"
+            f"  pipx inject agent-vault-proxy {package}   # if AVP was installed with pipx"
+        ) from e
 
 
 @dataclass(frozen=True)

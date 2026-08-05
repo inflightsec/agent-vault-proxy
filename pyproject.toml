@@ -40,7 +40,11 @@ dependencies = [
     # PR history.)
     "pydantic==2.11.10",
     "pyyaml>=6.0",
-    "bitwarden-sdk>=2.0",
+    # NOTE: bitwarden-sdk is deliberately NOT here. It ships under the
+    # proprietary Bitwarden SDK License (not Apache-2.0 / not open source),
+    # so the default install stays 100% open source. The Bitwarden backend
+    # pulls it in via the `bitwarden` extra below; AWS/GSM/env backends
+    # need no extra install. See README "License" and CREDITS.md.
     # Composite bindings (inject.template + compose) use Jinja2's
     # ImmutableSandboxedEnvironment for parsing and evaluating templated
     # credential assembly. We further constrain it via an AST-level
@@ -58,6 +62,13 @@ Issues = "https://github.com/inflightsec/agent-vault-proxy/issues"
 Changelog = "https://github.com/inflightsec/agent-vault-proxy/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+# Bitwarden Secrets Manager backend. Separate because bitwarden-sdk is under
+# the proprietary Bitwarden SDK License, not Apache-2.0. Install with
+#   pip install 'agent-vault-proxy[bitwarden]'
+#   pipx inject agent-vault-proxy bitwarden-sdk   # if AVP was installed via pipx
+bitwarden = [
+    "bitwarden-sdk>=2.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

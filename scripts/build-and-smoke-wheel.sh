@@ -60,6 +60,17 @@ if [ -z "$WHEEL" ]; then
 fi
 green "  ✓ Built $(basename "$WHEEL")"
 
+# Assert the wheel actually SHIPS the entrypoint module. A wheel missing
+# __main__.py installs cleanly but crash-loops under `-m agent_vault_proxy`
+# (the 2026-08-03 incident). Catch it here, before the wheel is ever cached
+# or published.
+if ! unzip -l "$WHEEL" | grep -q 'agent_vault_proxy/__main__.py'; then
+    red "Wheel is missing agent_vault_proxy/__main__.py — 'python -m agent_vault_proxy' would crash-loop."
+    red "Contents:"; unzip -l "$WHEEL" | grep agent_vault_proxy || true
+    exit 1
+fi
+green "  ✓ Wheel ships agent_vault_proxy/__main__.py"
+
 # ============================================================================
 # 2. Run the PyPI smoke harness against the local wheel
 # ============================================================================

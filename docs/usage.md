@@ -29,6 +29,14 @@ Why several CA variables: the proxy presents its own TLS certificate (signed by 
 
 The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/agent-vault-proxy/audit.jsonl`.
 
+### Excluding a host from the proxy (and why)
+
+`NO_PROXY` is **host-scoped**: only the hosts you list bypass the proxy — every other host still goes through it and still gets its credential injected. This is important for a common case: **your agent's own model/control-plane endpoint.** An LLM API the agent talks to (e.g. its own provider) authenticates itself and usually has *no* brokered secret here, so routing it through the proxy buys nothing — and it makes the agent depend on the proxy being up. Add that host to `NO_PROXY` and the agent reaches it directly, so a proxy restart or outage can never take the agent down, and you aren't terminating TLS on a stream you have no secret to inject into.
+
+Crucially, this does **not** turn the proxy off for the agent's children. A script the agent spawns inherits `HTTPS_PROXY`/`NO_PROXY`, so any call it makes to a *brokered* host (your GitHub, cloud, or SaaS credentials) still routes through the proxy and is injected on the wire — only the excluded hosts go direct. Exclude the narrowest set that works; list the exact host, and add a leading-dot form (`.example.com`) if the client must also bypass subdomains. `NO_PROXY` matching differs by client (curl supports CIDR; Node/undici and Python `requests` match by host/suffix), so verify with the stack your agent actually uses.
+
+> Caveat: if you launch the agent via `avp run`, it **strips** `NO_PROXY` (and `no_proxy`) from the child environment on purpose — otherwise an injected agent could set `NO_PROXY=*` to escape the proxy. To exclude a host under `avp run`, set the exclusion in the agent's own launch environment (the wrapper/service that starts it), not inside the `avp run` child.
+
 ## Configuration
 
 YAML at `/etc/agent-vault-proxy/bindings.yaml`. Re-read on service restart. Minimal example:

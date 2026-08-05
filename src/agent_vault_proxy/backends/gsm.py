@@ -316,16 +316,15 @@ class GsmBackend:
         the dependency installed.
         """
         assert self._config is not None
-        from agent_vault_proxy.backends import BackendAuthLostError, BackendUnavailableError
+        from agent_vault_proxy.backends import (
+            BackendAuthLostError,
+            BackendUnavailableError,
+            require,
+        )
 
-        try:
+        with require("gsm", "google-auth", "gsm"):
             import google.auth
             from google.auth.transport.requests import Request as GoogleAuthRequest
-        except ImportError as e:  # pragma: no cover — dep-not-installed path
-            raise BackendUnavailableError(
-                "the gsm backend needs the 'google-auth' package; install the "
-                "'gsm' extra (pip install agent-vault-proxy[gsm])"
-            ) from e
 
         cfg = self._config
         try:

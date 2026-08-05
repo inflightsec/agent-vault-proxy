@@ -40,6 +40,11 @@ class ProviderPreset:
     # same refresh token on each grant by default; True = a new one each
     # time and the write-back path is the load-bearing surface.
     rotates_refresh_token: bool
+    # ADR-0042: the ``avp oauth login`` bootstrap reads these. Optional so existing
+    # oauth2_refresh presets are untouched; backfilled per concrete binding, never speculatively.
+    authorization_endpoint: str | None = None
+    device_authorization_endpoint: str | None = None
+    default_scopes: str | None = None
 
 
 # The Bandit/Ruff S106 rule treats the kwarg name ``token_url`` as a
@@ -49,6 +54,8 @@ PROVIDER_PRESETS: dict[ProviderName, ProviderPreset] = {
     "google": ProviderPreset(
         token_url="https://oauth2.googleapis.com/token",  # noqa: S106  # nosec B106
         client_auth_method="body_post",
+        authorization_endpoint="https://accounts.google.com/o/oauth2/v2/auth",  # noqa: S106  # nosec B106
+        device_authorization_endpoint="https://oauth2.googleapis.com/device/code",  # noqa: S106  # nosec B106
         rotates_refresh_token=False,
     ),
     "microsoft": ProviderPreset(

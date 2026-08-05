@@ -12,6 +12,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+# Appended to the missing-dependency error (via backends.require `note=`).
+# Bitwarden is the one backend whose SDK is NOT open source, so we say why it
+# ships separately rather than bundled — the "why" here is legally load-bearing,
+# not decorative.
+_BWS_LICENSE_NOTE = (
+    " It ships separately because it is under Bitwarden's proprietary SDK "
+    "license, not the Apache-2.0 license the rest of AVP uses; the default "
+    "install stays fully open source. (The AWS and GSM backends use "
+    "open-source SDKs via their own extras.)"
+)
+
 
 class BwsConfig(BaseModel):
     """`backend.config` schema for `type: bws`.
@@ -226,7 +237,7 @@ class BitwardenBackend:
                 "config; use BitwardenBackend(config=BwsConfig(...)) or pass a "
                 "test-double sdk_client"
             )
-        from agent_vault_proxy.backends import BackendUnavailableError
+        from agent_vault_proxy.backends import BackendUnavailableError, require
 
         access_token = os.environ.get("BWS_ACCESS_TOKEN")
         if access_token is not None and self._config.access_token_path:
@@ -252,7 +263,8 @@ class BitwardenBackend:
                 "no BWS access token (set BWS_ACCESS_TOKEN env or configure bws.access_token_path)"
             )
 
-        from bitwarden_sdk import BitwardenClient, client_settings_from_dict
+        with require("Bitwarden", "bitwarden-sdk", "bitwarden", note=_BWS_LICENSE_NOTE):
+            from bitwarden_sdk import BitwardenClient, client_settings_from_dict
 
         sdk_client = BitwardenClient(
             client_settings_from_dict(

@@ -324,15 +324,10 @@ class AwsSecretsManagerBackend:
         botocore is used ONLY to RESOLVE + refresh credentials; the actual
         GetSecretValue call is signed by our own SigV4 signer over urllib.
         """
-        from agent_vault_proxy.backends import BackendUnavailableError
+        from agent_vault_proxy.backends import BackendUnavailableError, require
 
-        try:
+        with require("aws", "botocore", "aws"):
             import botocore.session
-        except ImportError as e:  # pragma: no cover — dep-not-installed path
-            raise BackendUnavailableError(
-                "the aws backend needs the 'botocore' package; install the "
-                "'aws' extra (pip install agent-vault-proxy[aws])"
-            ) from e
 
         session = botocore.session.get_session()
         resolved = session.get_credentials()

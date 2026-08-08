@@ -278,10 +278,14 @@ jobs:
         #   PYSEC-2026-3552/3/4  cryptography X.509-verify + PKCS#7-decrypt CVEs;
         #                        N/A, AVP only loads a PEM key + signs RS256/ES256
         #                        JWTs (never verifies chains / decrypts PKCS#7).
+        #   GHSA-6hr6-w5qg-qmwg  h2 HTTP request smuggling (dup Host on HTTP/2
+        #                        ->1.1 downgrade), CVSS 5.3, transitive; needs an
+        #                        untrusted HTTP/2 client (AVP's client is local).
         # tornado fixes (6.5.6+) are blocked by mitmproxy's tornado<=6.5.5 pin,
-        # msgpack 1.2.1 by its msgpack<=1.1.2 pin, and cryptography 49/50 by its
-        # cryptography<=48.1 pin; drop each waiver when a mitmproxy release
-        # relaxes the pin and a lockfile regen pulls the fix.
+        # msgpack 1.2.1 by its msgpack<=1.1.2 pin, cryptography 49/50 by its
+        # cryptography<=48.1 pin, and h2 4.4.1 by mitmproxy's exact h2==4.3.0 pin;
+        # drop each waiver when a mitmproxy release relaxes the pin and a
+        # lockfile regen pulls the fix.
         run: >-
           pip-audit --strict --requirement requirements.lock
           --ignore-vuln GHSA-cx3h-4qpv-8hc9
@@ -292,6 +296,7 @@ jobs:
           --ignore-vuln PYSEC-2026-3552
           --ignore-vuln PYSEC-2026-3553
           --ignore-vuln PYSEC-2026-3554
+          --ignore-vuln GHSA-6hr6-w5qg-qmwg
 
       - name: Audit dev lockfile
         # Dev-only CVEs (ruff, pytest, mypy) aren't shipped to users, but
@@ -311,6 +316,7 @@ jobs:
           --ignore-vuln PYSEC-2026-3552
           --ignore-vuln PYSEC-2026-3553
           --ignore-vuln PYSEC-2026-3554
+          --ignore-vuln GHSA-6hr6-w5qg-qmwg
 
   wheel-smoke:
     # Build the wheel and install it into a fresh venv. Catches the

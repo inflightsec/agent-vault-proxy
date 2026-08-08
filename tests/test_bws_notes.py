@@ -18,7 +18,7 @@ fork validation.
 
 from __future__ import annotations
 
-from agent_vault_proxy.notes_binding import (
+from kow.notes_binding import (
     EXCEPTION_TABLE,
     InvalidBinding,
     NoBinding,

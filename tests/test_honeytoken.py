@@ -21,12 +21,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.audit import (
+from kow.audit import (
     AUDIT_CONTRACT_VERSION,
     EVENT_HONEYTOKEN_TRIGGERED,
     AuditWriter,
 )
-from agent_vault_proxy.config import SecretSpec
+from kow.config import SecretSpec
 
 
 def _read(path: Path) -> list[dict]:

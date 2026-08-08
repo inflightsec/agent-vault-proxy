@@ -564,7 +564,7 @@ green "[11/17] HOST-VALIDATION: installed image rejects junk/TLD-wildcard hosts,
 # wildcards are rejected by default and accepted only with the opt-in flag.
 docker exec avp-e2e python -c "
 import sys
-from agent_vault_proxy.config import Config
+from kow.config import Config
 from pydantic import ValidationError
 def mk(host, allow=None):
     d = {'version': 1, 'secrets': {'F': {'placeholder': 'F-PLACEHOLDER-01HXY1234567890ABCD',
@@ -599,8 +599,8 @@ green "  ✓ image rejects empty/whitespace/bare-*/public-suffix; wildcards gate
 green "[12/17] FORWARD-UNMODIFIED: installed policy forwards an unbound destination un-injected"
 docker exec avp-e2e python -c "
 import sys
-from agent_vault_proxy.config import Config
-from agent_vault_proxy.policy import decide
+from kow.config import Config
+from kow.policy import decide
 def cfg(policy):
     return Config.model_validate({'version': 1, 'secrets': {'F': {'placeholder': 'F-PLACEHOLDER-01HXY1234567890ABCD', 'inject': {'header': 'Authorization', 'format': 'Bearer {F}'}, 'bindings': [{'host': 'bound.test'}]}}, 'audit': {'path': '/tmp/x.jsonl'}, 'unmatched_destination_policy': policy, 'backend': {'type': 'static', 'config': {'type': 'static', 'path': '/tmp/s.yml'}}})
 d = decide(config=cfg('forward_unmodified'), host='unbound.test', port=80, method='GET', path='/', connect_host=None, header_get=lambda n: None)
@@ -616,8 +616,8 @@ green "  ✓ forward_unmodified forwards unbound; deny returns 403 (installed po
 green "[13/17] SNI-MISMATCH: installed policy denies CONNECT-host vs request-host disagreement"
 docker exec avp-e2e python -c "
 import sys
-from agent_vault_proxy.config import Config
-from agent_vault_proxy.policy import decide
+from kow.config import Config
+from kow.policy import decide
 c = Config.model_validate({'version': 1, 'secrets': {'F': {'placeholder': 'F-PLACEHOLDER-01HXY1234567890ABCD', 'inject': {'header': 'Authorization', 'format': 'Bearer {F}'}, 'bindings': [{'host': 'bound.test'}]}}, 'audit': {'path': '/tmp/x.jsonl'}, 'backend': {'type': 'static', 'config': {'type': 'static', 'path': '/tmp/s.yml'}}})
 d = decide(config=c, host='bound.test', port=443, method='GET', path='/', connect_host='evil.test', header_get=lambda n: None)
 if not (d.decision == 'denied' and d.reason == 'sni_host_mismatch' and d.response_status == 403):
@@ -629,9 +629,9 @@ green "  ✓ CONNECT/request host mismatch denied as sni_host_mismatch (installe
 green "[14/17] BINDING-SOURCE-BOTH: file-only binding survives in both mode (2026-07-02 regression)"
 docker exec avp-e2e python -c "
 import sys
-from agent_vault_proxy.config import Config
-from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
-from agent_vault_proxy.placeholders import derive_placeholder
+from kow.config import Config
+from kow.runtime_bindings import resolve_runtime_bindings
+from kow.placeholders import derive_placeholder
 SALT = b'\x05' * 32
 np = derive_placeholder('NOTED', SALT); fp = derive_placeholder('FILEONLY', SALT)
 cfg = Config.model_validate({'version': 1, 'secrets': {
@@ -657,7 +657,7 @@ green "[15/17] OAUTH2-CONFIG: installed image loads oauth2_refresh + SSRF-guards
 # token_url at config-load.
 docker exec avp-e2e python -c "
 import sys
-from agent_vault_proxy.config import Config
+from kow.config import Config
 from pydantic import ValidationError
 base = {'version': 1, 'audit': {'path': '/tmp/x.jsonl'}, 'backend': {'type': 'static', 'config': {'type': 'static', 'path': '/tmp/s.yml'}}}
 def mk(inj):

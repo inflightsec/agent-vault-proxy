@@ -25,7 +25,7 @@ relates_to: docs/architecture.md (G1-G10), CHANGELOG.md (v0.5.0 discriminated-un
 
 ## Context
 
-AVP today ships three injector types — `header`, `body`, `multi` — verified at v0.6.0 (Unreleased). The discriminated-union table in `src/agent_vault_proxy/config.py` already names `oauth2_refresh` as `"planned: P1"`; the schema rejects it at config-load with a precise message. `docs/architecture.md` §22 lists OAuth refresh-token flows as out-of-scope. README "Not yet supported" lists the same.
+AVP today ships three injector types — `header`, `body`, `multi` — verified at v0.6.0 (Unreleased). The discriminated-union table in `src/kow/config.py` already names `oauth2_refresh` as `"planned: P1"`; the schema rejects it at config-load with a precise message. `docs/architecture.md` §22 lists OAuth refresh-token flows as out-of-scope. README "Not yet supported" lists the same.
 
 The gap matters because every modern SaaS that issues short-lived access tokens (Google, Microsoft Graph, Atlassian, Slack OAuth, Okta-fronted apps, the entire OIDC-aware estate) uses the OAuth2 refresh-token grant defined in RFC 6749 §6. Without this injector, an agent calling those APIs through AVP must either hold the refresh token itself (defeats the proxy) or hold a pre-exchanged access token that expires within the hour (also defeats it).
 
@@ -83,7 +83,7 @@ class Oauth2RefreshInjector(BaseModel):
     refresh_token_write_back: bool = True
 ```
 
-XOR validator: `provider` set ⇒ `token_url` / `client_auth_method` optional and fall back to the preset; `provider` unset ⇒ `token_url` and `client_auth_method` both required. The provider preset catalog ships as a frozen Python dict in `src/agent_vault_proxy/oauth_providers.py`, one entry per supported provider, no external file load.
+XOR validator: `provider` set ⇒ `token_url` / `client_auth_method` optional and fall back to the preset; `provider` unset ⇒ `token_url` and `client_auth_method` both required. The provider preset catalog ships as a frozen Python dict in `src/kow/oauth_providers.py`, one entry per supported provider, no external file load.
 
 `extra="forbid"` matches every other AVP config class since v0.4.1. Operator typos fail at config-load.
 
@@ -119,7 +119,7 @@ Two layers:
 1. **Config-load**: resolve `token_url`'s host via `socket.getaddrinfo`; reject if any resolved address is in RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), loopback (`127/8`, `::1`), link-local (`169.254/16`, `fe80::/10`), or carrier-grade NAT (`100.64/10`). Reject IMDS endpoints explicitly: `169.254.169.254`, `fd00:ec2::254`.
 2. **Request-time**: re-resolve and re-check before each token exchange. DNS rebinding defense — a public DNS name that resolved to a public IP at config-load may resolve to a private IP later.
 
-Both checks share one helper in `src/agent_vault_proxy/_ssrf_guard.py`.
+Both checks share one helper in `src/kow/_ssrf_guard.py`.
 
 ### 6. OAuth error response parsing
 
@@ -161,7 +161,7 @@ Race handling: two concurrent agent requests can both trigger refresh, but the i
 
 ### 9. Provider-aware presets
 
-Frozen Python dict shipped at `src/agent_vault_proxy/oauth_providers.py`. One entry per supported provider:
+Frozen Python dict shipped at `src/kow/oauth_providers.py`. One entry per supported provider:
 
 ```python
 PROVIDER_PRESETS = {
@@ -289,9 +289,9 @@ These are scoped to v0.7. Each adds ~0.5-1 day. Total v0.7 estimate: ~8 days acr
 
 - RFC 6749 §2.3 (Client Authentication), §4.4 (Client Credentials), §5.1 (Successful Response), §5.2 (Error Response), §6 (Refreshing an Access Token), §10 (Security Considerations).
 - `docs/architecture.md` §22 (out-of-scope flip), G1-G9 (invariants this ADR extends with G10), §8 (test plan extension).
-- `src/agent_vault_proxy/config.py:23` — `_INJECTOR_TYPES` table.
-- `src/agent_vault_proxy/caching.py:39` — `CacheEntry`, `CachingSecretsClient`.
-- `src/agent_vault_proxy/audit.py` — schema v2 → v3 (this ADR adds two event types).
+- `src/kow/config.py:23` — `_INJECTOR_TYPES` table.
+- `src/kow/caching.py:39` — `CacheEntry`, `CachingSecretsClient`.
+- `src/kow/audit.py` — schema v2 → v3 (this ADR adds two event types).
 - ADR-0011 (BWS-notes bindings — this injector type also honours both binding sources).
 - ADR-0013 (declarative policy fixtures — this ADR's tests use the same fixture format).
 

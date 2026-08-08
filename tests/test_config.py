@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.config import Config, load_config
+from kow.config import Config, load_config
 
 EXAMPLE_PATH = Path(__file__).parent.parent / "bindings.example.yaml"
 
@@ -154,7 +154,7 @@ def test_mixed_case_host_is_lowercased_with_warning(caplog) -> None:
     operator gets a visible log warning. Silent rewrites lose audit value."""
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.config"):
+    with caplog.at_level(logging.WARNING, logger="kow.config"):
         cfg = Config.model_validate(
             {
                 "version": 1,
@@ -175,7 +175,7 @@ def test_mixed_case_host_is_lowercased_with_warning(caplog) -> None:
 def test_lowercase_host_does_not_warn(caplog) -> None:
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.config"):
+    with caplog.at_level(logging.WARNING, logger="kow.config"):
         Config.model_validate(
             {
                 "version": 1,
@@ -781,7 +781,7 @@ def test_known_but_unimplemented_inject_type_clean_error(
     # temporarily mark one planned. An operator writing an unimplemented type
     # gets a clear "not yet implemented" error pointing at the CHANGELOG,
     # rather than a Pydantic validation error about missing fields.
-    from agent_vault_proxy import config_models
+    from kow import config_models
 
     monkeypatch.setitem(config_models._INJECTOR_TYPES, "github_app", "planned: P9")
     with pytest.raises(ValidationError, match=r"not yet implemented in this version"):
@@ -889,7 +889,7 @@ def test_inject_spec_backcompat_alias() -> None:
     # Third-party code (and AVP's own pre-v0.5.0 tests) imports `InjectSpec`
     # directly. The alias keeps `InjectSpec` valid through v0.6.0; new code
     # should use `HeaderInjector`.
-    from agent_vault_proxy.config import HeaderInjector, InjectSpec
+    from kow.config import HeaderInjector, InjectSpec
 
     assert InjectSpec is HeaderInjector
 

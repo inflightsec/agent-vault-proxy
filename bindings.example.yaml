@@ -251,7 +251,7 @@ secrets:
   #
   # Provider presets pin the token_url + client_auth_method + rotation
   # disposition per vendor (catalogue lives in
-  # ``agent_vault_proxy/oauth_providers.py``); operator picks one of
+  # ``kow/oauth_providers.py``); operator picks one of
   # ``provider:`` OR supplies ``token_url:`` + ``client_auth_method:``
   # explicitly. Tenant-specific providers (auth0, okta) take ``provider:``
   # AND ``token_url:`` together — the preset pins auth method + rotation

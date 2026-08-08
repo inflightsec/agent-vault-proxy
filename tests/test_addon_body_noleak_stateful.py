@@ -33,11 +33,11 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import load_config
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import FetchContext
+from kow.caching import CachingSecretsClient
+from kow.config import load_config
 
 REAL = "tok-REAL-DO-NOT-LEAK-0xDEADBEEF"
 PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars (matches body tests)

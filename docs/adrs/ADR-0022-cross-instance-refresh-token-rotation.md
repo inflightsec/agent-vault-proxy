@@ -334,7 +334,7 @@ plus adversarial interleaving. Invariants:
   deferred multi-instance anti-criterion this ADR closes.
 - ADR-0013 (declarative policy fixtures) — test fixture format reused.
 - RFC 6749 §6 (Refreshing an Access Token), §10.4 (refresh-token security).
-- `src/agent_vault_proxy/_derived_token_cache.py` — process-local dedup this ADR
+- `src/kow/_derived_token_cache.py` — process-local dedup this ADR
   extends across processes.
-- `src/agent_vault_proxy/backends/__init__.py` — `SecretsBackend` protocol the
+- `src/kow/backends/__init__.py` — `SecretsBackend` protocol the
   `SupportsConditionalWrite` capability extends.

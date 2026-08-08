@@ -98,7 +98,7 @@ The release loop is three commands + one editor session. Do not bump version lit
 
 ```bash
 # 1. Bump every mechanical version reference (pyproject.toml,
-#    src/agent_vault_proxy/__init__.py, README install + clone tag,
+#    src/kow/__init__.py, README install + clone tag,
 #    docker-compose.yml image tag, smoke-test usage examples).
 #    Reads the current version from pyproject.toml and rewrites
 #    every known location to the target.

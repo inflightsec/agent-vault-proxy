@@ -173,13 +173,13 @@ The other backends use the name as-is (BWS looks it up by secret name; Doppler u
 #   backends/aws.py    → register_backend("aws-secrets-manager", AwsSecretsManagerBackend, AwsConfig)
 #   backends/static.py → register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
 
-# src/agent_vault_proxy/backends/__init__.py imports each module at package-import
+# src/kow/backends/__init__.py imports each module at package-import
 # time so those register_backend() calls run (order doesn't matter — unique names):
-from agent_vault_proxy.backends import aws, bws, gsm, static  # noqa: F401
+from kow.backends import aws, bws, gsm, static  # noqa: F401
 # future: add doppler.py / hashicorp_vault.py, each self-registering, + one import line here
 ```
 
-`BACKEND_REGISTRY` is exposed read-only (a `MappingProxyType`); all writes go through `register_backend()`, which NFKC-normalizes + casefolds the name and rejects duplicates. Adding a backend is one `register_backend(...)` call plus one new file under `src/agent_vault_proxy/backends/<vault>.py`.
+`BACKEND_REGISTRY` is exposed read-only (a `MappingProxyType`); all writes go through `register_backend()`, which NFKC-normalizes + casefolds the name and rejects duplicates. Adding a backend is one `register_backend(...)` call plus one new file under `src/kow/backends/<vault>.py`.
 
 The proxy does **not** use Python entry-point plugin discovery. Explicit registration is auditable, keeps the install boundary inspectable (a malicious package can't sneak a backend into the registry), and matches the small-project, transparent-design stance.
 

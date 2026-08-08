@@ -14,13 +14,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BACKEND_REGISTRY,
     BackendAuthLostError,
     BackendUnavailableError,
     SecretNotFoundError,
 )
-from agent_vault_proxy.backends.aws import (
+from kow.backends.aws import (
     AwsConfig,
     AwsCredentials,
     AwsSecretsManagerBackend,

@@ -14,7 +14,7 @@ relates_to: docs/architecture.md (§4.1 process layout, §4.4 audit log, G4/G5/G
 >
 > **Built 2026-07-03.** Landed: audit contract v3 + the `honeytoken_triggered` event
 > (`audit.py`), the per-secret `honeytoken` flag (`config.py`), the Fluent Bit shipper via the
-> `agent_vault_proxy_shipper` selector — with an `agent_vault_proxy_shipper_extra_outputs`
+> `kow_shipper` selector — with an `kow_shipper_extra_outputs`
 > passthrough for hosted log services (Datadog, Splunk, Elasticsearch, …) and first-class GCP
 > Cloud Logging — in the Ansible role, and the `avp-audit-collector` service
 > (`src/avp-audit-collector`). **Deltas from the plan:** (1) the `honeytoken` flag lives on the
@@ -157,7 +157,7 @@ same contract:
   case of a catastrophic shipper loss is "central view is behind," not "audit lost."
 
 The Ansible role selects the implementation per host via
-`agent_vault_proxy_shipper: fluentbit | vector | native` (default `fluentbit`). Adding Vector
+`kow_shipper: fluentbit | vector | native` (default `fluentbit`). Adding Vector
 later is flipping that variable on the hosts that need it — no schema change, no ADR reopen.
 
 **Default — Fluent Bit (Apache-2.0).** Chosen for this workload: small (~15 MB binary,
@@ -316,7 +316,7 @@ that consumes the same on-disk JSONL; it is out of scope for v1.
   G4 (fail-closed classes), G5 (enforcement by omission — the exfil-attempt signal),
   G6 (fsync-before-bytes-leave, preserved), G9 (restart loses no audit history — the
   checkpoint mirrors this for shipping).
-- `src/agent_vault_proxy/audit.py` — `AuditWriter`, `AUDIT_CONTRACT_VERSION` (2 → 3 with
+- `src/kow/audit.py` — `AuditWriter`, `AUDIT_CONTRACT_VERSION` (2 → 3 with
   the new event type).
 - `roles/agent-vault-proxy/tasks/bootstrap.yml` — `chattr +a` initialization; the new
   shipper unit is added alongside.
@@ -326,4 +326,4 @@ that consumes the same on-disk JSONL; it is out of scope for v1.
   object, honored regardless of binding source.
 - Shipper implementations behind the §4 contract: Fluent Bit (Apache-2.0, default), Vector
   (MPL-2.0, opt-in), native `avp audit-ship` (fallback) — all run as separate processes,
-  none linked into AVP's MIT code; selected per host via `agent_vault_proxy_shipper`.
+  none linked into AVP's MIT code; selected per host via `kow_shipper`.

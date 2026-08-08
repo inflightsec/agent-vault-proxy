@@ -13,11 +13,11 @@ from __future__ import annotations
 import shlex
 import types
 
-import agent_vault_proxy.cli.mcp as mcp
-from agent_vault_proxy.cli.main import main
-from agent_vault_proxy.cli.mcp import _client_argv, _env_block
-from agent_vault_proxy.notes_binding import NOTES_MARKER, ParsedBinding, parse_notes_binding
-from agent_vault_proxy.placeholders import PLACEHOLDER_PREFIX
+import kow.cli.mcp as mcp
+from kow.cli.main import main
+from kow.cli.mcp import _client_argv, _env_block
+from kow.notes_binding import NOTES_MARKER, ParsedBinding, parse_notes_binding
+from kow.placeholders import PLACEHOLDER_PREFIX
 
 _PH = "avp-PLACEHOLDER-test-0000000000"
 _GH = [

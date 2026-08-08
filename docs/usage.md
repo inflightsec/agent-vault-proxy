@@ -85,29 +85,29 @@ The audit log is a local, fail-closed source of truth. To forward it to a centra
 Enable it per host in inventory:
 
 ```yaml
-agent_vault_proxy_shipping_enabled: true
-agent_vault_proxy_shipper_collector_host: "collector.your-tailnet.ts.net"
+kow_shipping_enabled: true
+kow_shipper_collector_host: "collector.your-tailnet.ts.net"
 # Pinned + checksum-verified at provision time (never a runtime fetch):
-agent_vault_proxy_shipper_fluentbit_url: "https://.../fluent-bit"
-agent_vault_proxy_shipper_fluentbit_sha256: "<sha256>"
+kow_shipper_fluentbit_url: "https://.../fluent-bit"
+kow_shipper_fluentbit_sha256: "<sha256>"
 ```
 
-The default shipper is **Fluent Bit** (~15 MB, ~10% of the deployed footprint). Switching to Vector later is a per-host swap — set `agent_vault_proxy_shipper: vector` once that path lands; `vector` / `native` currently fail fast with a "not yet implemented" message so the seam is explicit. The design, transport (Tailscale node identity, no mTLS), and threat model are in [ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md).
+The default shipper is **Fluent Bit** (~15 MB, ~10% of the deployed footprint). Switching to Vector later is a per-host swap — set `kow_shipper: vector` once that path lands; `vector` / `native` currently fail fast with a "not yet implemented" message so the seam is explicit. The design, transport (Tailscale node identity, no mTLS), and threat model are in [ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md).
 
 #### Shipping to a hosted log service
 
 Fluent Bit can fan out to the major log platforms at the same time as (or instead of) the collector. **GCP Cloud Logging** is first-class — just set the role vars:
 
 ```yaml
-agent_vault_proxy_shipper_gcl_enabled: true
-agent_vault_proxy_shipper_gcl_project_id: "your-gcp-project"
-agent_vault_proxy_shipper_gcl_credentials_path: "/etc/avp-audit-shipper/gcl.json"
+kow_shipper_gcl_enabled: true
+kow_shipper_gcl_project_id: "your-gcp-project"
+kow_shipper_gcl_credentials_path: "/etc/avp-audit-shipper/gcl.json"
 ```
 
-For any other service, paste the vendor's `[OUTPUT]` block into `agent_vault_proxy_shipper_extra_outputs` — one variable, any number of sinks, no per-vendor role code. Source tokens from vault (the rendered config is root-owned `0640`). **Datadog** and **Splunk**:
+For any other service, paste the vendor's `[OUTPUT]` block into `kow_shipper_extra_outputs` — one variable, any number of sinks, no per-vendor role code. Source tokens from vault (the rendered config is root-owned `0640`). **Datadog** and **Splunk**:
 
 ```yaml
-agent_vault_proxy_shipper_extra_outputs: |
+kow_shipper_extra_outputs: |
   [OUTPUT]
       Name        datadog
       Match       avp.audit

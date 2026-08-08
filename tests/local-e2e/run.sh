@@ -103,7 +103,7 @@ done
 # ── real proxy process ───────────────────────────────────────────────────────
 # NOT setsid: kept in this script's process group so a pytest-timeout SIGKILL of
 # the group reaps it too (no orphan); the EXIT trap reaps it on normal runs.
-"$MITM" -s "$REPO/src/agent_vault_proxy/addon.py" \
+"$MITM" -s "$REPO/src/kow/addon.py" \
     --listen-host 127.0.0.1 --listen-port "$PROXY_PORT" \
     --set confdir="$WORKDIR/mitm" \
     --set avp_config="$WORKDIR/bindings.yaml" > "$WORKDIR/proxy.log" 2>&1 &

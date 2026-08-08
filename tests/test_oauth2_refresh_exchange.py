@@ -24,8 +24,8 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from agent_vault_proxy.config import Config, Oauth2RefreshInjector
-from agent_vault_proxy.injectors.oauth2_refresh import (
+from kow.config import Config, Oauth2RefreshInjector
+from kow.injectors.oauth2_refresh import (
     ExchangeResult,
     _transport_open,
     exchange,
@@ -137,9 +137,7 @@ def _capture(calls: list[Any]) -> Any:
 
 def test_body_post_success(spec_body_post: Oauth2RefreshInjector) -> None:
     calls: list[Any] = []
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "success"
     assert result.access_token == "at-A"
@@ -163,9 +161,7 @@ def test_basic_auth_success(spec_basic_auth: Oauth2RefreshInjector) -> None:
     """Basic auth method — credentials in Authorization header, NOT in
     body. ``scopes`` is forwarded in the form body."""
     calls: list[Any] = []
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=_capture(calls)):
         result = exchange(spec_basic_auth, "cid", "csec", "rtok")
     assert result.outcome == "success"
     req, _ = calls[0]
@@ -204,9 +200,7 @@ def test_rotated_refresh_token_captured(spec_body_post: Oauth2RefreshInjector) -
             ).encode()
         )
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         result = exchange(spec_body_post, "cid", "csec", "rtok-OLD")
     assert result.outcome == "success"
     assert result.new_refresh_token == "rtok-NEW"
@@ -230,9 +224,7 @@ def test_same_refresh_token_returned_not_rotation(
             ).encode()
         )
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         result = exchange(spec_body_post, "cid", "csec", "rtok-SAME")
     assert result.outcome == "success"
     assert result.new_refresh_token is None  # echoed = no rotation
@@ -249,9 +241,7 @@ def test_expires_in_missing_uses_default_with_flag(
     def side_effect(req: Any, timeout: float | None = None) -> _FakeResponse:
         return _FakeResponse(json.dumps({"access_token": "at-A"}).encode())
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "success"
     assert result.access_token == "at-A"
@@ -273,7 +263,7 @@ def test_invalid_grant_400_categorised(spec_body_post: Oauth2RefreshInjector) ->
         400,
         json.dumps({"error": "invalid_grant", "error_description": "Token expired"}).encode(),
     )
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_grant"
     assert result.access_token is None
@@ -282,7 +272,7 @@ def test_invalid_grant_400_categorised(spec_body_post: Oauth2RefreshInjector) ->
 
 def test_invalid_client_401_categorised(spec_body_post: Oauth2RefreshInjector) -> None:
     err = _make_http_error(401, json.dumps({"error": "invalid_client"}).encode())
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_client"
 
@@ -293,7 +283,7 @@ def test_arbitrary_oauth_error_code_passes_through(
     """Any RFC 6749 §5.2 error code surfaces in the outcome verbatim.
     The taxonomy isn't restricted — providers extend it."""
     err = _make_http_error(400, json.dumps({"error": "invalid_scope"}).encode())
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_error:invalid_scope"
 
@@ -302,7 +292,7 @@ def test_4xx_without_json_body_falls_back_to_status(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
     err = _make_http_error(403, b"Forbidden")
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert result.outcome == "token_endpoint_status:403"
 
@@ -331,9 +321,7 @@ def test_5xx_retried_once_then_success(spec_body_post: Oauth2RefreshInjector) ->
         return item
 
     with (
-        patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-        ),
+        patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect),
         patch("time.sleep") as sleep_mock,
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -354,9 +342,7 @@ def test_5xx_twice_does_not_retry_third(spec_body_post: Oauth2RefreshInjector) -
         raise _make_http_error(500, b"err")
 
     with (
-        patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-        ),
+        patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect),
         patch("time.sleep"),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -374,9 +360,7 @@ def test_4xx_does_not_retry(spec_body_post: Oauth2RefreshInjector) -> None:
         call_count += 1
         raise _make_http_error(400, json.dumps({"error": "invalid_grant"}).encode())
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
     assert call_count == 1
     assert result.outcome == "token_endpoint_error:invalid_grant"
@@ -387,7 +371,7 @@ def test_connection_refused_categorised_unreachable(
 ) -> None:
     with (
         patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            "kow.injectors.oauth2_refresh._transport_open",
             side_effect=URLError("connection refused"),
         ),
         patch("time.sleep"),
@@ -400,7 +384,7 @@ def test_connection_refused_categorised_unreachable(
 def test_timeout_categorised_unreachable(spec_body_post: Oauth2RefreshInjector) -> None:
     with (
         patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            "kow.injectors.oauth2_refresh._transport_open",
             side_effect=TimeoutError("timed out"),
         ),
         patch("time.sleep"),
@@ -416,7 +400,7 @@ def test_timeout_categorised_unreachable(spec_body_post: Oauth2RefreshInjector) 
 
 def test_non_json_response_parse_failed(spec_body_post: Oauth2RefreshInjector) -> None:
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: _FakeResponse(b"<html>not json</html>"),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -427,7 +411,7 @@ def test_json_without_access_token_parse_failed(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: _FakeResponse(
             json.dumps({"token_type": "Bearer", "expires_in": 3600}).encode()
         ),
@@ -452,10 +436,10 @@ def test_request_time_ssrf_blocks_dns_rebound_url(
     def stub(host: str, *_a: object, **_kw: object) -> list[tuple]:
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 0))]
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", stub)
     urlopen_called: list[bool] = []
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True) or _FakeResponse(b""),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -486,9 +470,7 @@ def test_exchange_async_uses_run_in_executor(
 
     async def runner() -> ExchangeResult:
         loop_thread_id.append(threading.get_ident())
-        with patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-        ):
+        with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
             return await exchange_async(spec_body_post, "cid", "csec", "rtok")
 
     result = asyncio.run(runner())
@@ -526,7 +508,7 @@ def test_redirect_refused_never_followed(
         )
 
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=refuse,
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -565,11 +547,11 @@ def test_transport_opener_refuses_redirect_on_the_wire(
 
     with run_loopback_tls_http_server(tmp_path, _Handler) as server:
         monkeypatch.setattr(
-            "agent_vault_proxy.injectors._token_transport.resolve_and_vet",
+            "kow.injectors._token_transport.resolve_and_vet",
             lambda url: [(socket.AF_INET, "127.0.0.1")],
         )
         monkeypatch.setattr(
-            "agent_vault_proxy.injectors._token_transport._TLS_CONTEXT",
+            "kow.injectors._token_transport._TLS_CONTEXT",
             server.client_context,
         )
         req = urllib.request.Request(f"https://pinned.test:{server.port}/start")
@@ -590,7 +572,7 @@ def test_token_type_bearer_accepted_case_insensitive(
             {"access_token": "at-A", "token_type": variant, "expires_in": 3600}
         ).encode()
         with patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            "kow.injectors.oauth2_refresh._transport_open",
             return_value=_FakeResponse(body),
         ):
             result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -611,7 +593,7 @@ def test_token_type_non_bearer_rejected(
             {"access_token": "at-A", "token_type": bad_type, "expires_in": 3600}
         ).encode()
         with patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            "kow.injectors.oauth2_refresh._transport_open",
             return_value=_FakeResponse(body),
         ):
             result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -631,7 +613,7 @@ def test_token_type_omitted_accepted_with_warning(
     assumption is implicit either way)."""
     body = json.dumps({"access_token": "at-A", "expires_in": 3600}).encode()
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=_FakeResponse(body),
     ):
         result = exchange(spec_body_post, "cid", "csec", "rtok")
@@ -652,9 +634,7 @@ def test_request_carries_avp_user_agent(
         captured.append(req.get_header("User-agent"))
         return _FakeResponse(b'{"access_token":"at-Z","expires_in":3600}')
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         exchange(spec_body_post, "cid", "csec", "rtok")
     assert captured == ["agent-vault-proxy/oauth2-refresh"]
 
@@ -663,7 +643,7 @@ def test_parse_error_sanitizes_and_caps_provider_error_description() -> None:
     """Silas M2: a hostile token endpoint could reflect posted secret material or inject ANSI
     control sequences via ``error_description``, which lands in the fsynced audit stream. It must
     be control-stripped and length-capped before it can be emitted."""
-    from agent_vault_proxy.injectors.oauth2_refresh import _parse_error
+    from kow.injectors.oauth2_refresh import _parse_error
 
     hostile = json.dumps(
         {"error": "invalid_client", "error_description": "leak\x1b[2J\n\r" + "A" * 400}

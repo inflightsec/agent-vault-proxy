@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.backends import BackendCannotListError
+from kow.addon import AgentVaultProxyAddon
+from kow.backends import BackendCannotListError
 
 _SALT = b"\x11" * 32
 _HOST_A = "api.aaa-example.com"

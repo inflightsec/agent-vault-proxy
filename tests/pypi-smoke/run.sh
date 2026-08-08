@@ -28,7 +28,7 @@
 #   PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.9.0
 #
 #   bash tests/pypi-smoke/run.sh --local-wheel <path>                     # install from local wheel
-#   bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.9.0-py3-none-any.whl
+#   bash tests/pypi-smoke/run.sh --local-wheel dist/keys_on_the_wire-0.9.0-py3-none-any.whl
 #
 # The --local-wheel form is the dry-run before tagging a release: build
 # the wheel locally (`python -m build`), smoke it through this harness,
@@ -54,7 +54,7 @@ Usage:
   $0 --local-wheel <path-to-wheel> [--keep]      # install from local wheel
 
   <version>          e.g. 0.6.0  (no leading 'v')
-  --local-wheel PATH path to a built wheel — typically dist/agent_vault_proxy-<ver>-py3-none-any.whl
+  --local-wheel PATH path to a built wheel — typically dist/keys_on_the_wire-<ver>-py3-none-any.whl
   --keep             don't tear down after the run (for debugging)
 EOF
     exit 2
@@ -108,12 +108,12 @@ if [ "$INSTALL_SOURCE" = "local" ]; then
     # regardless of where the script is called from.
     LOCAL_WHEEL="$(cd "$(dirname "$LOCAL_WHEEL")" && pwd)/$(basename "$LOCAL_WHEEL")"
     # Parse the version out of the wheel filename:
-    #   agent_vault_proxy-0.4.3-py3-none-any.whl → 0.4.3
+    #   keys_on_the_wire-0.4.3-py3-none-any.whl → 0.4.3
     WHEEL_BASE="$(basename "$LOCAL_WHEEL")"
-    PACKAGE_VERSION="$(printf '%s' "$WHEEL_BASE" | sed -nE 's/^agent_vault_proxy-([0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?)-.*\.whl$/\1/p')"
+    PACKAGE_VERSION="$(printf '%s' "$WHEEL_BASE" | sed -nE 's/^keys_on_the_wire-([0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?)-.*\.whl$/\1/p')"
     if [ -z "$PACKAGE_VERSION" ]; then
         red "Could not parse version from wheel filename: $WHEEL_BASE"
-        red "Expected: agent_vault_proxy-X.Y.Z[-...]-py3-none-any.whl"
+        red "Expected: keys_on_the_wire-X.Y.Z[-...]-py3-none-any.whl"
         exit 2
     fi
 elif [ -z "$PACKAGE_VERSION" ]; then
@@ -168,9 +168,9 @@ teardown() {
 trap teardown EXIT
 
 if [ "$INSTALL_SOURCE" = "local" ]; then
-    green "[1/5] PyPI smoke: agent-vault-proxy==$PACKAGE_VERSION from local wheel $(basename "$LOCAL_WHEEL")"
+    green "[1/5] PyPI smoke: keys-on-the-wire==$PACKAGE_VERSION from local wheel $(basename "$LOCAL_WHEEL")"
 else
-    green "[1/5] PyPI smoke: agent-vault-proxy==$PACKAGE_VERSION from $PACKAGE_INDEX_URL"
+    green "[1/5] PyPI smoke: keys-on-the-wire==$PACKAGE_VERSION from $PACKAGE_INDEX_URL"
 fi
 
 green "[2/5] Tearing down any previous run..."
@@ -201,7 +201,7 @@ fi
 dump_diagnostics() {
     red "----- BEGIN DIAGNOSTICS -----"
     red "[installed version inside avp-pypi-smoke]"
-    docker exec avp-pypi-smoke sh -c 'cat /etc/agent-vault-proxy-version 2>/dev/null; pip show agent-vault-proxy 2>/dev/null | head -3' >&2 || true
+    docker exec avp-pypi-smoke sh -c 'cat /etc/agent-vault-proxy-version 2>/dev/null; pip show keys-on-the-wire 2>/dev/null | head -3' >&2 || true
     red "[avp container logs (last 80 lines)]"
     docker compose logs --no-color --tail=80 avp >&2 || true
     red "[audit log inside avp-pypi-smoke (last 40 lines)]"
@@ -335,7 +335,7 @@ green "  ✓ unbound destination handled fail-closed; audit recorded the decisio
 
 echo
 green "════════════════════════════════════════════════════════════════════"
-green "✓ PyPI smoke passed for agent-vault-proxy==$PACKAGE_VERSION"
+green "✓ PyPI smoke passed for keys-on-the-wire==$PACKAGE_VERSION"
 if [ "$INSTALL_SOURCE" = "local" ]; then
     green "  (installed from local wheel $(basename "$LOCAL_WHEEL"))"
 else

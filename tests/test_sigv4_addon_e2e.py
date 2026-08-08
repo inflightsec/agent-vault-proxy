@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.config import Config
+from kow.addon import AgentVaultProxyAddon
+from kow.config import Config
 from tests._oauth_helpers import FakeBackend, make_request
 
 _PH = "aws-sig-PLACEHOLDER-01HXY1234567890"

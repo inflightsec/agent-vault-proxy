@@ -96,7 +96,7 @@ This needs two terminals.
 
 ```bash
 cd <your-checkout>/agent-vault-proxy
-.venv/bin/python -m agent_vault_proxy --set avp_config=tests/smoke/bindings.smoke.yaml
+.venv/bin/python -m kow --set avp_config=tests/smoke/bindings.smoke.yaml
 ```
 
 Expected: mitmproxy banner, listening on 127.0.0.1:14322. Leave this

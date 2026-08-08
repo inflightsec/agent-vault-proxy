@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig
-from agent_vault_proxy.cli.doctor_gcp import run_gcp_probe
-from agent_vault_proxy.cli.gcp_setup import run_gcp_setup
-from agent_vault_proxy.cli.main import main
+from kow.backends.gsm import GsmBackend, GsmConfig
+from kow.cli.doctor_gcp import run_gcp_probe
+from kow.cli.gcp_setup import run_gcp_setup
+from kow.cli.main import main
 
 # ── gcp-setup ────────────────────────────────────────────────────────────────
 
@@ -141,9 +141,7 @@ def test_probe_gcp_warns_on_annotation_trust_when_notes(tmp_path, capsys, monkey
         def diagnose(self):
             return [("OK", "auth", "ok")]
 
-    monkeypatch.setattr(
-        "agent_vault_proxy.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None)
-    )
+    monkeypatch.setattr("kow.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None))
     run_gcp_probe(config_path=str(p))
     assert "annotation-trust" in capsys.readouterr().out
 
@@ -168,9 +166,7 @@ def test_probe_gcp_no_annotation_warn_in_file_mode(tmp_path, capsys, monkeypatch
         def diagnose(self):
             return [("OK", "auth", "ok")]
 
-    monkeypatch.setattr(
-        "agent_vault_proxy.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None)
-    )
+    monkeypatch.setattr("kow.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None))
     run_gcp_probe(config_path=str(p))
     assert "annotation-trust" not in capsys.readouterr().out
 
@@ -204,9 +200,7 @@ def test_probe_gcp_annotation_trust_downgrades_with_allowlist(
         def diagnose(self):
             return [("OK", "auth", "ok")]
 
-    monkeypatch.setattr(
-        "agent_vault_proxy.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None)
-    )
+    monkeypatch.setattr("kow.cli.doctor_gcp.build_backend", lambda cfg: (_Stub(), None))
     run_gcp_probe(config_path=str(p))
     out = capsys.readouterr().out
     assert "annotations can only narrow scope" in out

@@ -15,8 +15,8 @@ only), both (notes win over file).
 
 from __future__ import annotations
 
-from agent_vault_proxy.placeholders import derive_placeholder
-from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
+from kow.placeholders import derive_placeholder
+from kow.runtime_bindings import resolve_runtime_bindings
 
 _SALT = b"\x05" * 32
 
@@ -39,7 +39,7 @@ class _FakeNotesListBackend:
 
 
 def _load_file_config(tmp_path, secret_name: str, placeholder: str, host: str):
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     yaml = f"""
 version: 1
@@ -176,7 +176,7 @@ audit:
   path: {tmp_path / "a.jsonl"}
 binding_source: both
 """
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     p = tmp_path / "bindings.yaml"
     p.write_text(yaml)
@@ -225,8 +225,8 @@ def test_both_mode_invalid_note_excludes_same_name_file_binding(tmp_path) -> Non
 def test_collision_raises_hard(monkeypatch) -> None:
     """A derived-placeholder collision across the BWS secret set is a hard
     startup failure (never a silent coalesce)."""
-    import agent_vault_proxy.placeholders as pmod
-    from agent_vault_proxy.placeholders import PlaceholderCollisionError
+    import kow.placeholders as pmod
+    from kow.placeholders import PlaceholderCollisionError
 
     monkeypatch.setattr(pmod, "_derive_tail", lambda name, salt: "z" * 21)
     backend = _FakeNotesListBackend(

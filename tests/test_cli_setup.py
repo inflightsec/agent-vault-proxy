@@ -8,9 +8,9 @@ import xml.dom.minidom
 import pytest
 import yaml
 
-from agent_vault_proxy.cli import setup as setup_mod
-from agent_vault_proxy.cli.main import main
-from agent_vault_proxy.cli.setup import (
+from kow.cli import setup as setup_mod
+from kow.cli.main import main
+from kow.cli.setup import (
     CommandStep,
     FileStep,
     PromptStep,
@@ -19,7 +19,7 @@ from agent_vault_proxy.cli.setup import (
     plan_setup,
     run_setup,
 )
-from agent_vault_proxy.config import Config
+from kow.config import Config
 
 
 def _plan(
@@ -300,7 +300,7 @@ def test_plan_systemd_unit_linux() -> None:
     service = _file_step(steps, paths.service_file)
     assert "ProtectSystem=strict" in service.content
     assert "NoNewPrivileges=yes" in service.content
-    assert "-m agent_vault_proxy" in service.content
+    assert "-m kow" in service.content
 
 
 def test_plan_systemd_unit_linux_no_service() -> None:
@@ -384,14 +384,14 @@ def test_execute_file_step_writes(tmp_path) -> None:
 
 
 def test_run_setup_requires_root_unless_dry_run(monkeypatch, capsys) -> None:
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.platform.system", lambda: "Linux")
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.os.geteuid", lambda: 1000)
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.run_doctor", lambda **kwargs: 0)
+    monkeypatch.setattr("kow.cli.setup.platform.system", lambda: "Linux")
+    monkeypatch.setattr("kow.cli.setup.os.geteuid", lambda: 1000)
+    monkeypatch.setattr("kow.cli.setup.run_doctor", lambda **kwargs: 0)
     rc = run_setup(user=None, dry_run=False, prefix=None)
     assert rc != 0
     assert "sudo" in capsys.readouterr().err
 
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.execute_plan", lambda steps, dry_run: 0)
+    monkeypatch.setattr("kow.cli.setup.execute_plan", lambda steps, dry_run: 0)
     rc = run_setup(user=None, dry_run=True, prefix=None)
     assert rc == 0
 
@@ -403,7 +403,7 @@ def test_main_setup_dispatch(monkeypatch) -> None:
         seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
         return 23
 
-    monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
+    monkeypatch.setattr("kow.cli.main.run_setup", _fake_run_setup)
     rc = main(["setup", "--dry-run", "--no-service"])
     assert rc == 23
     assert seen["args"] == (None, True, None, False, True, False)
@@ -416,7 +416,7 @@ def test_main_setup_static_dispatch(monkeypatch) -> None:
         seen["args"] = (user, dry_run, prefix, allow_mutable_audit, no_service, static)
         return 29
 
-    monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
+    monkeypatch.setattr("kow.cli.main.run_setup", _fake_run_setup)
     rc = main(["setup", "--dry-run", "--static"])
     assert rc == 29
     assert seen["args"] == (None, True, None, False, False, True)
@@ -429,7 +429,7 @@ def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
         seen["args"] = (allow_mutable_audit, no_service, static)
         return 0
 
-    monkeypatch.setattr("agent_vault_proxy.cli.main.run_setup", _fake_run_setup)
+    monkeypatch.setattr("kow.cli.main.run_setup", _fake_run_setup)
     rc = main(["setup", "--dry-run", "--allow-mutable-audit"])
     assert rc == 0
     assert seen["args"] == (True, False, False)

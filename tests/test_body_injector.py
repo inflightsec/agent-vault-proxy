@@ -28,12 +28,12 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import BackendUnavailableError, FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import load_config
-from agent_vault_proxy.injectors.body import _BodyReplacer
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import BackendUnavailableError, FetchContext
+from kow.caching import CachingSecretsClient
+from kow.config import load_config
+from kow.injectors.body import _BodyReplacer
 
 BODY_PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars
 BODY_REAL = "tok-real-XYZ"
@@ -741,7 +741,7 @@ def test_body_composite_totp_end_to_end(tmp_path: Path, monkeypatch: pytest.Monk
     """The motivating use case: a 2FA TOTP code computed inside AVP from a
     base32 secret and injected into the request body. Time is frozen against
     the RFC 6238 §5.2 SHA-1 vector at T=59s → 6-digit code 287082."""
-    import agent_vault_proxy.template as template_module
+    import kow.template as template_module
 
     monkeypatch.setattr(template_module.time, "time", lambda: 59.0)
 
@@ -943,7 +943,7 @@ def test_body_composite_render_failure_does_not_leak_input_to_stderr(
     )
     addon.requestheaders(flow)
 
-    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.addon"):
+    with caplog.at_level(logging.WARNING, logger="kow.addon"):
         body_in = json.dumps({"sig": COMPOSITE_BODY_PLACEHOLDER}).encode()
         _stream_through(flow.request.stream, [body_in])
 

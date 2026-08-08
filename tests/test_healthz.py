@@ -15,7 +15,7 @@ from typing import Any
 
 from mitmproxy.test import tflow
 
-from agent_vault_proxy._healthz import HEALTHZ_HOST, HEALTHZ_PATH
+from kow._healthz import HEALTHZ_HOST, HEALTHZ_PATH
 
 from .test_addon import PLACEHOLDER, REAL_SECRET, _build_addon, _read_audit
 

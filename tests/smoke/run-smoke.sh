@@ -125,7 +125,7 @@ green "  Layer 2 PASS"
 hdr "Starting proxy in background"
 
 BWS_ACCESS_TOKEN="$BWS_ACCESS_TOKEN" \
-nohup .venv/bin/python -m agent_vault_proxy \
+nohup .venv/bin/python -m kow \
     --set avp_config="$SMOKE_CONFIG" \
     > "$PROXY_LOG" 2>&1 &
 echo $! > "$PROXY_PID_FILE"

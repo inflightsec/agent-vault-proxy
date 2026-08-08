@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_vault_proxy.audit import (
+from kow.audit import (
     AUDIT_CONTRACT_VERSION,
     REASON_INVALID_BINDING_METADATA,
     REASON_NO_BINDING_IN_NOTES,

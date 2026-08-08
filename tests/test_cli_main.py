@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy.cli.main import main
+from kow.cli.main import main
 
 
 def test_no_subcommand_prints_help_and_errors(capsys) -> None:
@@ -31,7 +31,7 @@ def test_env_dispatch_invokes_run_env(monkeypatch) -> None:
         called.update(kwargs)
         return 0
 
-    monkeypatch.setattr("agent_vault_proxy.cli.main.run_env", fake_run_env)
+    monkeypatch.setattr("kow.cli.main.run_env", fake_run_env)
     rc = main(["env", "--config", "/tmp/b.yaml", "--print"])
     assert rc == 0
     assert called["config_path"] == "/tmp/b.yaml"
@@ -45,7 +45,7 @@ def test_doctor_dispatch_invokes_run_doctor(monkeypatch) -> None:
         called.update(kwargs)
         return 0
 
-    monkeypatch.setattr("agent_vault_proxy.cli.main.run_doctor", fake_run_doctor)
+    monkeypatch.setattr("kow.cli.main.run_doctor", fake_run_doctor)
     rc = main(["doctor"])
     assert rc == 0
     # run_doctor is called (kwargs may be all-None defaults).

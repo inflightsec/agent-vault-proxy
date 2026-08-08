@@ -24,11 +24,11 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import load_config
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import FetchContext
+from kow.caching import CachingSecretsClient
+from kow.config import load_config
 
 PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 REAL = "sk-REAL-DO-NOT-LEAK-0xDEADBEEF"

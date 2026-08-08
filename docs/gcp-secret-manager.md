@@ -142,7 +142,7 @@ Two ways to close it, ideally both:
 
 Start the proxy (listens on `127.0.0.1:14322`):
 ```bash
-python -m agent_vault_proxy --set avp_config=./bindings.yaml
+python -m kow --set avp_config=./bindings.yaml
 ```
 
 In another terminal, get the **placeholder** the agent should use (AVP never lets

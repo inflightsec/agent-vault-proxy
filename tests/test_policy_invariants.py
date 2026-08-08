@@ -42,16 +42,16 @@ from typing import Any
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from agent_vault_proxy.bindings_resolver import BindingsResolver
-from agent_vault_proxy.config import (
+from kow.bindings_resolver import BindingsResolver
+from kow.config import (
     Config,
     HeaderInjector,
     Oauth2RefreshInjector,
     iter_leaf_injectors,
     load_config,
 )
-from agent_vault_proxy.matching import host_matches_pattern
-from agent_vault_proxy.policy import Decision, decide
+from kow.matching import host_matches_pattern
+from kow.policy import Decision, decide
 
 # Two placeholders known to co-exist in one config (they load together in
 # test_addon.py, so the substring-overlap validator accepts the pair).

@@ -117,7 +117,7 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # the container's published port is reachable from the host. Host-side,
 # compose publishes 127.0.0.1:14322 so the listener is still loopback-only
 # from outside the host.
-CMD ["python", "-m", "agent_vault_proxy", \
+CMD ["python", "-m", "kow", \
      "--listen-host", "0.0.0.0", \
      "--set", "avp_config=/etc/agent-vault-proxy/bindings.yaml"]
 

@@ -77,10 +77,10 @@ Any change here needs human review and most likely an issue first:
 
 | Path | Why it's sensitive |
 |---|---|
-| `src/agent_vault_proxy/addon.py` | The substitution path. G1, G3, G5, G6 all enforced here. |
-| `src/agent_vault_proxy/bws.py` | Secret fetch + cache. Misorder = secret leak to wrong destination. |
-| `src/agent_vault_proxy/audit.py` | The integrity backstop. Do not reorder the fsync - see the "do not reorder" comment in `addon.py`. |
-| `src/agent_vault_proxy/config.py` | Pydantic validators enforce the invariants. Don't relax them. |
+| `src/kow/addon.py` | The substitution path. G1, G3, G5, G6 all enforced here. |
+| `src/kow/bws.py` | Secret fetch + cache. Misorder = secret leak to wrong destination. |
+| `src/kow/audit.py` | The integrity backstop. Do not reorder the fsync - see the "do not reorder" comment in `addon.py`. |
+| `src/kow/config.py` | Pydantic validators enforce the invariants. Don't relax them. |
 | `.github/workflows/*.yml` | Compromising these compromises the publish path to PyPI. |
 | `pyproject.toml` / `requirements.lock` | Supply chain. Regenerate with cooldown if you touch deps. |
 | `bindings.example.yaml` | A bad default here would mislead operators into an insecure config. |

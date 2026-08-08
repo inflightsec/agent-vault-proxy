@@ -134,12 +134,12 @@ You should see `proxy_restart` in the audit lifecycle and either NO preflight ba
 
 ```bash
 docker compose run --rm -e BWS_ACCESS_TOKEN=dummy-trigger-the-warning avp \
-    python -c "from agent_vault_proxy._preflight import emit_preflight; \
-               from agent_vault_proxy.config import load_config; \
+    python -c "from kow._preflight import emit_preflight; \
+               from kow.config import load_config; \
                emit_preflight(load_config('/etc/agent-vault-proxy/bindings.yaml'))"
 ```
 
-Expected output: a banner like `INSECURE: BWS_ACCESS_TOKEN is set as an environment variable inside a container...`. If you don't see it, the preflight isn't running: check that your image actually contains `agent_vault_proxy/_preflight.py`.
+Expected output: a banner like `INSECURE: BWS_ACCESS_TOKEN is set as an environment variable inside a container...`. If you don't see it, the preflight isn't running: check that your image actually contains `kow/_preflight.py`.
 
 **End-to-end substitution smoke test** (proves the wire-format path works, not just the listener):
 

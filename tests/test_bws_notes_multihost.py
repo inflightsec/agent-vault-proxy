@@ -9,7 +9,7 @@ defaults (those bind in their own single-host note).
 
 from __future__ import annotations
 
-from agent_vault_proxy.notes_binding import (
+from kow.notes_binding import (
     InvalidBinding,
     ParsedBinding,
     parse_notes_binding,

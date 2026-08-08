@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BACKEND_REGISTRY,
     BackendAuthLostError,
     BackendUnavailableError,
@@ -38,7 +38,7 @@ def isolated_registry():
     between `register_backend(fake)` and a manual `_reset_registry_for_tests()`
     call leaked the fake backend into the registry, contaminating
     subsequent tests."""
-    from agent_vault_proxy.backends import _reset_registry_for_tests
+    from kow.backends import _reset_registry_for_tests
 
     _reset_registry_for_tests()
     try:
@@ -50,7 +50,7 @@ def isolated_registry():
 def test_register_backend_rejects_duplicate() -> None:
     """Registering the same name twice raises — prevents silent
     registry-collision attacks."""
-    from agent_vault_proxy.backends import register_backend
+    from kow.backends import register_backend
 
     # The 'bws' backend is already registered at module import time.
     class FakeBackend:
@@ -65,7 +65,7 @@ def test_register_backend_rejects_duplicate() -> None:
 
 
 def test_register_backend_normalizes_case(isolated_registry) -> None:
-    from agent_vault_proxy.backends import register_backend
+    from kow.backends import register_backend
 
     class FakeBackend:
         def fetch(self, name: str, ctx=None) -> str:
@@ -84,7 +84,7 @@ def test_register_backend_nfkc_normalizes_unicode(isolated_registry) -> None:
     and other compatibility variants bypass the case-folding dedup check.
     Use NFKC normalization + casefold so visually-identical names collide
     in the registry."""
-    from agent_vault_proxy.backends import register_backend
+    from kow.backends import register_backend
 
     class FakeBackend:
         def fetch(self, name: str, ctx=None) -> str:
@@ -116,7 +116,7 @@ def test_backend_registry_is_read_only_externally() -> None:
 def test_register_backend_rejects_empty_name(isolated_registry) -> None:
     """empty / whitespace-only names silently register an
     unreachable backend. Reject explicitly."""
-    from agent_vault_proxy.backends import register_backend
+    from kow.backends import register_backend
 
     class FakeBackend:
         def fetch(self, name, ctx=None):
@@ -135,7 +135,7 @@ def test_register_backend_rejects_non_string_name(isolated_registry) -> None:
     """non-string names (a TypeError-prone footgun
     for plugin authors that might pass an enum or path) must surface
     immediately, not crash later in build_backend."""
-    from agent_vault_proxy.backends import register_backend
+    from kow.backends import register_backend
 
     class FakeBackend:
         def fetch(self, name, ctx=None):
@@ -183,7 +183,7 @@ def test_fetch_context_is_frozen() -> None:
 # tests/backends/test_<name>_contract.py with:
 #
 #     import pytest
-#     from agent_vault_proxy.backends.<name> import <Name>Backend, <Name>Config
+#     from kow.backends.<name> import <Name>Backend, <Name>Config
 #     from tests.backends.test_protocol_contract import ProtocolContract
 #
 #     class TestMyBackendContract(ProtocolContract):

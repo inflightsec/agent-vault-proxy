@@ -12,9 +12,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.config import Config
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.config import Config
 
 _FOO_PH = "foo_PLACEHOLDER_01HXY1234567890"
 

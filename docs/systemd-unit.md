@@ -19,7 +19,7 @@ Wants=network-online.target
 Type=simple
 User=avp
 Group=avp
-ExecStart=/opt/agent-vault-proxy/.venv/bin/python -m agent_vault_proxy --set avp_config=/etc/agent-vault-proxy/bindings.yaml
+ExecStart=/opt/agent-vault-proxy/.venv/bin/python -m kow --set avp_config=/etc/agent-vault-proxy/bindings.yaml
 
 # HOME must point inside ReadWritePaths so mitmproxy can write its CA at
 # $HOME/.mitmproxy/. ProtectHome=yes still hides /home, /root, /run/user.

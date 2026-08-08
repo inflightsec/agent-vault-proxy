@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
-from agent_vault_proxy.injectors.sigv4 import EMPTY_PAYLOAD_HASH, sign
+from kow.injectors.sigv4 import EMPTY_PAYLOAD_HASH, sign
 
 _AK = "AKIDEXAMPLE"
 _SK = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"

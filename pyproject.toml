@@ -1,6 +1,6 @@
 [project]
-name = "agent-vault-proxy"
-version = "0.9.0"
+name = "keys-on-the-wire"
+version = "1.0.0"
 description = "Loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and injects them into outbound requests, so the calling process never holds the real credential bytes in its address space."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -55,11 +55,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/inflightsec/agent-vault-proxy"
-Documentation = "https://github.com/inflightsec/agent-vault-proxy/blob/main/docs/architecture.md"
-Repository = "https://github.com/inflightsec/agent-vault-proxy"
-Issues = "https://github.com/inflightsec/agent-vault-proxy/issues"
-Changelog = "https://github.com/inflightsec/agent-vault-proxy/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/inflightsec/keys-on-the-wire"
+Documentation = "https://github.com/inflightsec/keys-on-the-wire/blob/main/docs/architecture.md"
+Repository = "https://github.com/inflightsec/keys-on-the-wire"
+Issues = "https://github.com/inflightsec/keys-on-the-wire/issues"
+Changelog = "https://github.com/inflightsec/keys-on-the-wire/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Bitwarden Secrets Manager backend. Separate because bitwarden-sdk is under
@@ -92,15 +92,19 @@ aws = [
 ]
 
 [project.scripts]
-agent-vault-proxy = "agent_vault_proxy.__main__:main"
-avp = "agent_vault_proxy.cli.main:main"
+keys-on-the-wire = "kow.__main__:main"
+kow = "kow.cli.main:main"
+# Deprecated pre-rename aliases — kept one major so existing scripts and muscle
+# memory keep working. Removed in 2.0.0 (ADR-0045).
+agent-vault-proxy = "kow.__main__:main"
+avp = "kow.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_vault_proxy"]
+packages = ["src/kow"]
 
 [tool.ruff]
 line-length = 100

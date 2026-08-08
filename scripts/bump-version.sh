@@ -5,7 +5,7 @@
 #
 # Why this exists: agent-vault-proxy carries the version literal in
 # multiple files that all need to agree at release time. v0.4.2 shipped
-# with src/agent_vault_proxy/__init__.py stuck at "0.4.1" because the
+# with src/kow/__init__.py stuck at "0.4.1" because the
 # bumper only edited pyproject.toml. This script makes that class of
 # bug structurally impossible: one command updates every known location,
 # and scripts/pre-release.sh section 3 then validates the result.
@@ -15,8 +15,8 @@
 #
 # What gets bumped (the STRICT set, pre-release.sh section 3 verifies):
 #   1. pyproject.toml                              version = "X.Y.Z"
-#   2. src/agent_vault_proxy/__init__.py           __version__ = "X.Y.Z"
-#   3. README.md                                   pip install agent-vault-proxy==X.Y.Z
+#   2. src/kow/__init__.py           __version__ = "X.Y.Z"
+#   3. README.md                                   pip install keys-on-the-wire==X.Y.Z
 #                                                  git clone -b vX.Y.Z
 #   4. docker-compose.yml                          image: ...:X.Y.Z
 #
@@ -98,12 +98,12 @@ echo "  [strict] pyproject.toml                  version = \"$NEW\""
 
 # 2. __init__.py
 sed_inplace -E "s|^__version__[[:space:]]*=[[:space:]]*\"$CURRENT\"|__version__ = \"$NEW\"|" \
-    src/agent_vault_proxy/__init__.py
-echo "  [strict] src/agent_vault_proxy/__init__.py  __version__ = \"$NEW\""
+    src/kow/__init__.py
+echo "  [strict] src/kow/__init__.py  __version__ = \"$NEW\""
 
-# 3a. README.md install line: agent-vault-proxy==X.Y.Z
-sed_inplace -E "s|agent-vault-proxy==$CURRENT|agent-vault-proxy==$NEW|g" README.md
-echo "  [strict] README.md                       agent-vault-proxy==$NEW"
+# 3a. README.md install line: keys-on-the-wire==X.Y.Z
+sed_inplace -E "s|keys-on-the-wire==$CURRENT|keys-on-the-wire==$NEW|g" README.md
+echo "  [strict] README.md                       keys-on-the-wire==$NEW"
 
 # 3b. README.md clone tag: git clone -b vX.Y.Z
 sed_inplace -E "s|git clone -b v$CURRENT|git clone -b v$NEW|g" README.md

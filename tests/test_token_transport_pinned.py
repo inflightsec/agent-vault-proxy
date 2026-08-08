@@ -13,8 +13,8 @@ from typing import ClassVar
 
 import pytest
 
-from agent_vault_proxy._ssrf_guard import SsrfBlockedError
-from agent_vault_proxy.injectors._token_transport import (
+from kow._ssrf_guard import SsrfBlockedError
+from kow.injectors._token_transport import (
     _TLS_CONTEXT,
     TokenResult,
     _PinnedHTTPSConnection,
@@ -116,9 +116,9 @@ def test_rebinding_prevented_dials_only_vetted_ip(monkeypatch: pytest.MonkeyPatc
     RecordingPinnedHTTPSConnection.plans = {
         "93.184.216.34": [_ConnectionPlan(status=200, body=b"{}")],
     }
-    monkeypatch.setattr("agent_vault_proxy.injectors._token_transport.resolve_and_vet", resolve)
+    monkeypatch.setattr("kow.injectors._token_transport.resolve_and_vet", resolve)
     monkeypatch.setattr(
-        "agent_vault_proxy.injectors._token_transport._PinnedHTTPSConnection",
+        "kow.injectors._token_transport._PinnedHTTPSConnection",
         RecordingPinnedHTTPSConnection,
     )
 
@@ -135,11 +135,11 @@ def test_rebinding_prevented_dials_only_vetted_ip(monkeypatch: pytest.MonkeyPatc
 def test_sequential_failover_second_vetted_ip_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     RecordingPinnedHTTPSConnection.reset()
     monkeypatch.setattr(
-        "agent_vault_proxy.injectors._token_transport.resolve_and_vet",
+        "kow.injectors._token_transport.resolve_and_vet",
         lambda url: [(socket.AF_INET, "93.184.216.34"), (socket.AF_INET, "93.184.216.35")],
     )
     monkeypatch.setattr(
-        "agent_vault_proxy.injectors._token_transport._PinnedHTTPSConnection",
+        "kow.injectors._token_transport._PinnedHTTPSConnection",
         RecordingPinnedHTTPSConnection,
     )
     RecordingPinnedHTTPSConnection.plans = {
@@ -178,18 +178,18 @@ def test_retry_revets_fresh_on_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
     }
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         lambda host, *a, **kw: [
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
         ],
     )
-    monkeypatch.setattr("agent_vault_proxy.injectors._token_transport.resolve_and_vet", resolve)
+    monkeypatch.setattr("kow.injectors._token_transport.resolve_and_vet", resolve)
     monkeypatch.setattr(
-        "agent_vault_proxy.injectors._token_transport._PinnedHTTPSConnection",
+        "kow.injectors._token_transport._PinnedHTTPSConnection",
         RecordingPinnedHTTPSConnection,
     )
     monkeypatch.setattr(
-        "agent_vault_proxy.injectors._token_transport.time.sleep",
+        "kow.injectors._token_transport.time.sleep",
         lambda seconds: None,
     )
 

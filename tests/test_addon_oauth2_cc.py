@@ -16,13 +16,13 @@ from urllib.error import HTTPError
 
 import pytest
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
+from kow.addon import AgentVaultProxyAddon
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import FakeBackend, FakeResp, make_request
 
 _PH = "cc-PLACEHOLDER-01HXY1234567890ABCD"
 _HOST = "api.example.com"
-_TRANSPORT = "agent_vault_proxy.injectors._token_transport.transport_open"
+_TRANSPORT = "kow.injectors._token_transport.transport_open"
 
 
 @pytest.fixture(autouse=True)

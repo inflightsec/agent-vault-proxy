@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_vault_proxy.config import load_config
+from kow.config import load_config
 
 
 def _cfg(tmp_path: Path, value: str) -> Path:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_vault_proxy.matching import host_matches_pattern, path_glob_matches
+from kow.matching import host_matches_pattern, path_glob_matches
 
 
 def test_host_exact_match() -> None:
@@ -70,7 +70,7 @@ def test_double_star_in_middle() -> None:
 
 # --- git smart-HTTP two-phase canonicalisation ---------------------------
 
-from agent_vault_proxy.matching import git_smart_http_effective_path  # noqa: E402
+from kow.matching import git_smart_http_effective_path  # noqa: E402
 
 
 def test_git_receive_pack_discovery_canonicalised_to_data_path() -> None:

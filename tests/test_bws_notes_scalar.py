@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from agent_vault_proxy.notes_binding import (
+from kow.notes_binding import (
     InvalidBinding,
     NoBinding,
     ParsedBinding,
@@ -99,7 +99,7 @@ def test_unmarked_host_shaped_note_warns_but_is_no_binding(
 ) -> None:
     # No marker -> no binding, even for a perfectly host-shaped note; a
     # forgotten marker must be self-diagnosing via a logged warning.
-    with caplog.at_level(logging.WARNING, logger="agent_vault_proxy.notes_binding"):
+    with caplog.at_level(logging.WARNING, logger="kow.notes_binding"):
         r = parse_notes_binding(secret_name="X", placeholder=_PH, note="api.openai.com")
     assert isinstance(r, NoBinding)
     assert "marker" in caplog.text

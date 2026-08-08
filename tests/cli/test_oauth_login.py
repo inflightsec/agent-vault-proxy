@@ -17,12 +17,12 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BackendWriteConflictError,
     SecretNotFoundError,
 )
-from agent_vault_proxy.cli import oauth_login as ol
-from agent_vault_proxy.placeholders import PLACEHOLDER_PREFIX
+from kow.cli import oauth_login as ol
+from kow.placeholders import PLACEHOLDER_PREFIX
 
 _LIVE_TOKEN = "1//refresh-token-value-abcdefghijklmnop"
 
@@ -326,7 +326,7 @@ def test_populate_write_conflict_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _patch_backend(monkeypatch: pytest.MonkeyPatch, be: FakeBackend) -> None:
-    from agent_vault_proxy import config as cfg
+    from kow import config as cfg
 
     monkeypatch.setattr(cfg, "load_config", lambda _p: object())
     monkeypatch.setattr(cfg, "build_backend", lambda _c: (be, None))

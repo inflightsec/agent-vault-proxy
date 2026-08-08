@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-import agent_vault_proxy.__main__ as entry
+import kow.__main__ as entry
 
 
 def test_main_assembles_mitmdump_args_and_returns_zero(monkeypatch) -> None:

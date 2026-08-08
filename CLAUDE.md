@@ -36,7 +36,7 @@ The git-diff review *before* the operator restarts is the only thing standing be
 - Operator **restarts** after reviewing the diff.
 - Never chain the two from Claude — even for "just a one-line tweak."
 
-The same logic applies to the Ansible role's `agent_vault_proxy_secrets` var: Claude edits the var, the operator runs `ans … --tags agent-vault-proxy`.
+The same logic applies to the Ansible role's `kow_secrets` var: Claude edits the var, the operator runs `ans … --tags agent-vault-proxy`.
 
 **R-RESTART (binding rule).** Any automation that restarts AVP on a `bindings.yaml` change defeats the entire credential isolation model. That includes `fswatch` / `inotify` watchers, `make restart` targets Claude can invoke via shell, `post-commit` / `post-receive` git hooks, GitHub Actions auto-deploys, and "while you're in there, can you also restart so I can verify my unrelated fix?" requests where the operator restarts without re-reading the bindings diff. If diff review feels tedious enough that you want to automate it away, the fix is a better diff tool, not auto-restart. The diff *is* the security control.
 
@@ -45,7 +45,7 @@ The same logic applies to the Ansible role's `agent_vault_proxy_secrets` var: Cl
 1. Ask the operator the **service name** and the **auth shape** (Bearer? Basic? `X-API-Key`? Composite of multiple values?).
 2. Pick a BWS secret name (or names, for composite — up to 4). Write the binding block in `bindings.yaml` with a clearly-fake placeholder string (operator-recognizable, e.g. `slack_PLACEHOLDER_01HXY...`).
 3. Tell the operator: "Add `<BWS_NAME>` to the BWS project with the real value."
-4. Validate config-load (dry-run, no service change): `python -c 'from agent_vault_proxy.config import load_config; load_config("bindings.yaml")'`.
+4. Validate config-load (dry-run, no service change): `python -c 'from kow.config import load_config; load_config("bindings.yaml")'`.
 5. **Hand off to the operator** for the restart. After the operator confirms restart, verify via a real request from the calling shell + grep the audit log for an `inject_decision allowed` event.
 
 For composite bindings (multi-value templates), see `bindings.example.yaml` and `docs/architecture.md` §4.2.

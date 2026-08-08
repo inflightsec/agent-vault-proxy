@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.config import BindingSpec
+from kow.config import BindingSpec
 
 
 def test_matches_host_allows_listed_label() -> None:

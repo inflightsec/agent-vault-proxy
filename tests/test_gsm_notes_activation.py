@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
+from kow.addon import AgentVaultProxyAddon
 
 _SALT = b"\x11" * 32
 

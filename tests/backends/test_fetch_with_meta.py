@@ -14,9 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from agent_vault_proxy.backends import fetch_with_meta
-from agent_vault_proxy.backends.bws import BitwardenBackend
-from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
+from kow.backends import fetch_with_meta
+from kow.backends.bws import BitwardenBackend
+from kow.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
 
 def _mock_sdk_client(secrets: dict[str, tuple[str, str | None]]) -> MagicMock:

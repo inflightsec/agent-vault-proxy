@@ -1,6 +1,6 @@
 """Tests for the OAuth2 derived-token cache (ADR-0017 slice 4).
 
-The cache is intentionally a sibling of :mod:`agent_vault_proxy.caching`,
+The cache is intentionally a sibling of :mod:`kow.caching`,
 not a namespace inside ``CachingSecretsClient``. Vault secrets and
 derived bearer tokens have incompatible invalidation, expiry, and
 audit-attribution semantics (Oracle finding C3); mixing them in one
@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from agent_vault_proxy._derived_token_cache import DerivedTokenCache, KeyInputs
+from kow._derived_token_cache import DerivedTokenCache, KeyInputs
 
 
 def _inputs(

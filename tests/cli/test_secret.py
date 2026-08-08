@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_vault_proxy.cli.main import _build_parser
-from agent_vault_proxy.cli.secret import (
+from kow.cli.main import _build_parser
+from kow.cli.secret import (
     run_secret,
     run_secret_add,
     run_secret_list,
@@ -81,7 +81,7 @@ def _load_secret_map(path: Path) -> dict[str, str]:
 
 def test_add_via_getpass_writes_entry(tmp_path: Path, monkeypatch, capsys) -> None:
     config_path, secrets_path = _make_static_bindings(tmp_path)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "alpha")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "alpha")
 
     rc = run_secret_add("FOO", config_path, False)
 
@@ -161,7 +161,7 @@ def test_remove_idempotent_on_missing_name(tmp_path: Path, capsys) -> None:
 def test_rotate_remove_then_add(tmp_path: Path, monkeypatch) -> None:
     config_path, secrets_path = _make_static_bindings(tmp_path)
     secrets_path.write_text("secrets:\n  FOO: old\n")
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "new")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "new")
 
     rc = run_secret_rotate("FOO", config_path)
 
@@ -197,7 +197,7 @@ def test_refuses_non_static_backend(
 ) -> None:
     config_path = _make_bws_bindings(tmp_path)
     monkeypatch.setattr("sys.stdin", io.StringIO("value\n"))
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "value")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "value")
 
     with pytest.raises(SystemExit) as excinfo:
         handler(config_path=config_path, **kwargs)
@@ -208,7 +208,7 @@ def test_refuses_non_static_backend(
 
 def test_atomic_write_preserves_0600_perms(tmp_path: Path, monkeypatch) -> None:
     config_path, secrets_path = _make_static_bindings(tmp_path)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "alpha")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "alpha")
 
     run_secret_add("FOO", config_path, False)
 
@@ -218,7 +218,7 @@ def test_atomic_write_preserves_0600_perms(tmp_path: Path, monkeypatch) -> None:
 def test_atomic_write_preserves_owner(tmp_path: Path, monkeypatch) -> None:
     config_path, secrets_path = _make_static_bindings(tmp_path)
     before = (secrets_path.stat().st_uid, secrets_path.stat().st_gid)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "alpha")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "alpha")
 
     run_secret_add("FOO", config_path, False)
 
@@ -243,14 +243,14 @@ def test_never_logs_or_prints_values(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     config_path, _secrets_path = _make_static_bindings(tmp_path)
-    caplog.set_level(logging.INFO, logger="agent_vault_proxy")
+    caplog.set_level(logging.INFO, logger="kow")
     values = [secrets.token_hex(32) for _ in range(10)]
     state = {"value": values[0]}
 
     def fake_getpass(prompt: str) -> str:
         return state["value"]
 
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", fake_getpass)
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", fake_getpass)
     for index, value in enumerate(values):
         state["value"] = value
         name = f"SECRET_{index}"
@@ -271,21 +271,21 @@ def test_run_secret_dispatches_each_verb(monkeypatch) -> None:
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     monkeypatch.setattr(
-        "agent_vault_proxy.cli.secret.run_secret_add",
+        "kow.cli.secret.run_secret_add",
         lambda name, config_path, from_stdin: (
             calls.append(("add", (name, config_path, from_stdin))) or 0
         ),
     )
     monkeypatch.setattr(
-        "agent_vault_proxy.cli.secret.run_secret_list",
+        "kow.cli.secret.run_secret_list",
         lambda config_path: calls.append(("list", (config_path,))) or 0,
     )
     monkeypatch.setattr(
-        "agent_vault_proxy.cli.secret.run_secret_remove",
+        "kow.cli.secret.run_secret_remove",
         lambda name, config_path: calls.append(("remove", (name, config_path))) or 0,
     )
     monkeypatch.setattr(
-        "agent_vault_proxy.cli.secret.run_secret_rotate",
+        "kow.cli.secret.run_secret_rotate",
         lambda name, config_path: calls.append(("rotate", (name, config_path))) or 0,
     )
 
@@ -313,8 +313,8 @@ def test_secret_without_nested_subcommand_prints_help(capsys) -> None:
 
 def test_mutating_ops_fail_when_static_file_not_writable(tmp_path: Path, monkeypatch) -> None:
     config_path, _secrets_path = _make_static_bindings(tmp_path)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.os.access", lambda path, mode: False)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "v")
+    monkeypatch.setattr("kow.cli.secret.os.access", lambda path, mode: False)
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "v")
 
     with pytest.raises(SystemExit) as excinfo:
         run_secret_add("FOO", config_path, False)
@@ -326,7 +326,7 @@ def test_list_works_when_file_is_read_only(tmp_path: Path, monkeypatch, capsys) 
     # the operator has read but not write access (e.g. service-group member).
     config_path, secrets_path = _make_static_bindings(tmp_path)
     secrets_path.write_text("secrets:\n  ALPHA: a\n  BETA: b\n")
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.os.access", lambda path, mode: False)
+    monkeypatch.setattr("kow.cli.secret.os.access", lambda path, mode: False)
     rc = run_secret_list(config_path)
     assert rc == 0
     assert capsys.readouterr().out.split() == ["ALPHA", "BETA"]
@@ -346,7 +346,7 @@ def test_refuses_symlinked_secrets_file(tmp_path: Path) -> None:
 def test_refuses_group_world_accessible_parent_dir(tmp_path: Path, monkeypatch) -> None:
     config_path, secrets_path = _make_static_bindings(tmp_path)
     secrets_path.parent.chmod(0o755)
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "v")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "v")
     try:
         with pytest.raises(SystemExit) as excinfo:
             run_secret_add("FOO", config_path, False)
@@ -362,9 +362,9 @@ def test_atomic_write_failure_keeps_original_file_and_cleans_temp(
     config_path, secrets_path = _make_static_bindings(tmp_path)
     secrets_path.write_text("secrets:\n  FOO: old\n")
     original = secrets_path.read_text()
-    monkeypatch.setattr("agent_vault_proxy.cli.secret.getpass.getpass", lambda prompt: "new")
+    monkeypatch.setattr("kow.cli.secret.getpass.getpass", lambda prompt: "new")
     monkeypatch.setattr(
-        "agent_vault_proxy.cli.secret.os.replace",
+        "kow.cli.secret.os.replace",
         lambda src, dst: (_ for _ in ()).throw(OSError("boom")),
     )
 

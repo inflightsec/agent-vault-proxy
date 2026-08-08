@@ -8,12 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BackendUnavailableError,
     SecretNotFoundError,
     SecretsBackend,
 )
-from agent_vault_proxy.caching import CachingSecretsClient
+from kow.caching import CachingSecretsClient
 
 
 class FakeBackend:
@@ -256,7 +256,7 @@ def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
       t3: A's get() must raise BackendUnavailableError.
       t4: Next get must re-fetch fresh.
     """
-    from agent_vault_proxy.backends import BackendUnavailableError
+    from kow.backends import BackendUnavailableError
 
     fetch_started = threading.Event()
     release_fetch = threading.Event()
@@ -306,7 +306,7 @@ def test_flush_during_inflight_propagates_retry_to_waiters() -> None:
     Future must also see the retry signal, not the stale value. Otherwise
     a 10-waiter pile-up would issue 10 outbound requests with the
     rotated-away credential."""
-    from agent_vault_proxy.backends import BackendUnavailableError
+    from kow.backends import BackendUnavailableError
 
     fetch_started = threading.Event()
     release_fetch = threading.Event()

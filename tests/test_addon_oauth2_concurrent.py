@@ -51,7 +51,7 @@ def test_concurrent_cold_requests_all_inject(tmp_path: Path) -> None:
             errors.append(e)
 
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=slow_transport,
     ):
         threads = [threading.Thread(target=drive) for _ in range(n)]

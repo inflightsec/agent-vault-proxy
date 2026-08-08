@@ -13,7 +13,7 @@ source builds specs from each secret's note via parse_notes_binding.
 
 from __future__ import annotations
 
-from agent_vault_proxy.bindings_resolver import (
+from kow.bindings_resolver import (
     BindingsResolver,
     FileSource,
     NotesSource,
@@ -100,7 +100,7 @@ audit:
 
 
 def test_file_source_yields_file_tagged_specs(tmp_path) -> None:
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "api.example.com"))
     src = FileSource(config=cfg)
@@ -117,7 +117,7 @@ def test_file_source_yields_file_tagged_specs(tmp_path) -> None:
 
 
 def test_bws_notes_wins_over_file_for_same_secret(tmp_path) -> None:
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)
@@ -135,7 +135,7 @@ def test_bws_notes_wins_over_file_for_same_secret(tmp_path) -> None:
 def test_file_used_when_no_notes_binding(tmp_path) -> None:
     """If a secret has a file binding but no (or empty) BWS note, the file
     binding is used — the file is the escape hatch, not dead weight."""
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)
@@ -153,7 +153,7 @@ def test_file_used_when_no_notes_binding(tmp_path) -> None:
 def test_invalid_notes_exclude_same_name_file_binding(tmp_path) -> None:
     """A malformed note terminal-denies the secret name; the file source may
     not revive it under the stale file binding."""
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     cfg = load_config(_file_config(tmp_path, _PH_A, "file-host.example.com"))
     file_src = FileSource(config=cfg)

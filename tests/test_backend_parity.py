@@ -33,7 +33,7 @@ from collections.abc import Iterator
 import pytest
 import yaml
 
-from agent_vault_proxy.config import Config
+from kow.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ def stub_ssrf_dns(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0)),
         ]
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", stub)
     yield
 
 
@@ -471,7 +471,7 @@ def test_canonical_schemas_cover_implemented_injector_types() -> None:
     canonical example. When new types ship, this test fails until an
     example is added — forcing parity coverage as a structural gate.
     """
-    from agent_vault_proxy.config import _INJECTOR_TYPES
+    from kow.config import _INJECTOR_TYPES
 
     implemented = {k for k, v in _INJECTOR_TYPES.items() if not v.startswith("planned:")}
 

@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_vault_proxy.config import load_config
-from agent_vault_proxy.policy import decide
+from kow.config import load_config
+from kow.policy import decide
 from tests.test_policy_fixtures import FIXTURE_DIR, run_policy_fixture
 
 _FIXTURES = sorted(FIXTURE_DIR.glob("*.yaml"))

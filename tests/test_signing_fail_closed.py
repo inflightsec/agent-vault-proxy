@@ -25,8 +25,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.policy import Decision
+from kow.addon import AgentVaultProxyAddon
+from kow.policy import Decision
 from tests._oauth_helpers import FakeBackend, make_request
 
 _PH = "aws-sig-PLACEHOLDER-01HXY1234567890"

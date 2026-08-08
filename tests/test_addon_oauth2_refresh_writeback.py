@@ -19,12 +19,12 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import BackendWriteConflictError
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import Oauth2RefreshInjector
-from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import BackendWriteConflictError
+from kow.caching import CachingSecretsClient
+from kow.config import Oauth2RefreshInjector
+from kow.injectors.oauth2_refresh import OauthResolver
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import (
     PLACEHOLDER,
@@ -80,7 +80,7 @@ def test_rotation_writes_new_refresh_token_back_and_audits(tmp_path: Path) -> No
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -112,7 +112,7 @@ def test_rotation_event_ordering_after_token_exchange_before_inject(tmp_path: Pa
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -140,7 +140,7 @@ def test_rotation_flushes_vault_cache_for_refresh_token(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -169,7 +169,7 @@ def test_writeback_failure_still_serves_access_token(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -195,7 +195,7 @@ def test_writeback_unavailable_when_backend_readonly(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -223,7 +223,7 @@ def test_writeback_disabled_skips_update_and_audits_distinct_outcome(tmp_path: P
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         addon.requestheaders(flow)
@@ -252,7 +252,7 @@ def test_no_rotation_when_upstream_echoes_same_refresh_token(tmp_path: Path) -> 
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_no_rotation_response_body(echoed_rt="rtok-real")),
     ):
         addon.requestheaders(flow)
@@ -272,7 +272,7 @@ def test_no_rotation_when_upstream_omits_refresh_token_field(tmp_path: Path) -> 
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_no_refresh_field_response_body()),
     ):
         addon.requestheaders(flow)
@@ -312,9 +312,7 @@ def test_malformed_rotated_token_rejected_no_writeback(tmp_path: Path, junk_toke
     body = json.dumps(
         {"access_token": "at-FRESH", "expires_in": 3600, "refresh_token": junk_token}
     ).encode()
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)):
         addon.requestheaders(flow)
 
     # Vault was NOT mutated — the prior refresh token survives.
@@ -346,7 +344,7 @@ def test_cache_hit_does_not_re_writeback(tmp_path: Path) -> None:
     addon, audit_path, _client = _build_addon(tmp_path, backend)
 
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_rotation_response_body()),
     ):
         for _ in range(2):

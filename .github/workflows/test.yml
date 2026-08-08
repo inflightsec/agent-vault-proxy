@@ -278,10 +278,14 @@ jobs:
         #   PYSEC-2026-3552/3/4  cryptography X.509-verify + PKCS#7-decrypt CVEs;
         #                        N/A, AVP only loads a PEM key + signs RS256/ES256
         #                        JWTs (never verifies chains / decrypts PKCS#7).
+        #   GHSA-6hr6-w5qg-qmwg  h2 HTTP request smuggling (dup Host on HTTP/2
+        #                        ->1.1 downgrade), CVSS 5.3, transitive; needs an
+        #                        untrusted HTTP/2 client (AVP's client is local).
         # tornado fixes (6.5.6+) are blocked by mitmproxy's tornado<=6.5.5 pin,
-        # msgpack 1.2.1 by its msgpack<=1.1.2 pin, and cryptography 49/50 by its
-        # cryptography<=48.1 pin; drop each waiver when a mitmproxy release
-        # relaxes the pin and a lockfile regen pulls the fix.
+        # msgpack 1.2.1 by its msgpack<=1.1.2 pin, cryptography 49/50 by its
+        # cryptography<=48.1 pin, and h2 4.4.1 by mitmproxy's exact h2==4.3.0 pin;
+        # drop each waiver when a mitmproxy release relaxes the pin and a
+        # lockfile regen pulls the fix.
         run: >-
           pip-audit --strict --requirement requirements.lock
           --ignore-vuln GHSA-cx3h-4qpv-8hc9
@@ -292,6 +296,7 @@ jobs:
           --ignore-vuln PYSEC-2026-3552
           --ignore-vuln PYSEC-2026-3553
           --ignore-vuln PYSEC-2026-3554
+          --ignore-vuln GHSA-6hr6-w5qg-qmwg
 
       - name: Audit dev lockfile
         # Dev-only CVEs (ruff, pytest, mypy) aren't shipped to users, but
@@ -311,6 +316,7 @@ jobs:
           --ignore-vuln PYSEC-2026-3552
           --ignore-vuln PYSEC-2026-3553
           --ignore-vuln PYSEC-2026-3554
+          --ignore-vuln GHSA-6hr6-w5qg-qmwg
 
   wheel-smoke:
     # Build the wheel and install it into a fresh venv. Catches the
@@ -348,7 +354,7 @@ jobs:
       - name: Locate wheel
         id: locate
         run: |
-          WHEEL=$(ls dist/agent_vault_proxy-*.whl | head -1)
+          WHEEL=$(ls dist/keys_on_the_wire-*.whl | head -1)
           if [ -z "$WHEEL" ]; then
             echo "::error::No wheel produced under dist/"
             exit 1
@@ -379,7 +385,7 @@ jobs:
           /tmp/smokevenv/bin/pip install --no-cache-dir --only-binary :all: "$WHEEL"
 
       - name: Assert import works
-        run: /tmp/smokevenv/bin/python -c "import agent_vault_proxy; print('import OK')"
+        run: /tmp/smokevenv/bin/python -c "import kow; print('import OK')"
 
       - name: Assert version matches pyproject
         # EXPECTED via env: rather than direct ${{ }} interpolation —
@@ -388,7 +394,7 @@ jobs:
         env:
           EXPECTED: ${{ steps.version.outputs.expected }}
         run: |
-          ACTUAL=$(/tmp/smokevenv/bin/python -c "import agent_vault_proxy; print(agent_vault_proxy.__version__)")
+          ACTUAL=$(/tmp/smokevenv/bin/python -c "import kow; print(kow.__version__)")
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::wheel reports $ACTUAL, pyproject.toml says $EXPECTED"
             exit 1
@@ -401,17 +407,17 @@ jobs:
         # in addon.py / config.py / backends that escaped unit tests
         # (those run from the source tree; this runs against the
         # installed wheel, exercising the wheel's actual file layout).
-        # Previously this step ran `python -m agent_vault_proxy --help`
+        # Previously this step ran `python -m kow --help`
         # which delegates to mitmdump's argparse; mitmdump's behavior
         # on --help with a -s addon flag is fragile across versions and
         # was returning exit 1 on the runner. An import-only check is
         # what the smoke test actually needs.
         run: |
           /tmp/smokevenv/bin/python -c "
-          import agent_vault_proxy
-          from agent_vault_proxy.__main__ import main
-          from agent_vault_proxy import addon, config
-          from agent_vault_proxy.backends import BACKEND_REGISTRY
+          import kow
+          from kow.__main__ import main
+          from kow import addon, config
+          from kow.backends import BACKEND_REGISTRY
           assert 'bws' in BACKEND_REGISTRY, 'bws backend not registered'
           assert 'static' in BACKEND_REGISTRY, 'static backend not registered'
           print('entry point + addon + config + backends importable')

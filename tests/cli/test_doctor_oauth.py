@@ -22,12 +22,12 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_vault_proxy.cli.doctor_oauth import (
+from kow.cli.doctor_oauth import (
     ProbeResult,
     probe_all_oauth_bindings,
     probe_oauth_binding,
 )
-from agent_vault_proxy.config import load_config
+from kow.config import load_config
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import FailingBackend, FakeBackend, FakeResp, ReadOnlyBackend
 
@@ -134,7 +134,7 @@ def test_ssrf_blocked_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     # Re-flip the resolver AFTER config load (config-load already passed via
     # the autouse public stub).
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         lambda *a, **kw: [
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 0)),
         ],
@@ -232,9 +232,7 @@ def test_binding_filter_restricts_scope(tmp_path: Path) -> None:
 def test_exchange_success_no_rotation(tmp_path: Path) -> None:
     cfg = load_config(_config_with_oauth(tmp_path))
     body = json.dumps({"access_token": "at-PROBE", "expires_in": 3600}).encode()
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )
@@ -252,9 +250,7 @@ def test_exchange_success_with_rotation_warns_about_consumed_token(tmp_path: Pat
     body = json.dumps(
         {"access_token": "at-PROBE", "expires_in": 3600, "refresh_token": "rtok-NEW"}
     ).encode()
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", return_value=FakeResp(body)):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )
@@ -274,7 +270,7 @@ def test_exchange_invalid_grant_fails(tmp_path: Path) -> None:
         hdrs=None,  # type: ignore[arg-type]
         fp=__import__("io").BytesIO(json.dumps({"error": "invalid_grant"}).encode()),
     )
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         results = probe_oauth_binding(
             cfg, "GOOGLE_OAUTH", FakeBackend(_GOOD_VAULT), do_exchange=True
         )
@@ -301,11 +297,11 @@ def test_exchange_skipped_if_input_fetch_failed(tmp_path: Path) -> None:
 def test_cli_doctor_probe_oauth_clean_returns_0(tmp_path: Path, capsys: Any) -> None:
     cfg_path = _config_with_oauth(tmp_path)
     # Patch build_backend so we don't try to construct a BWS client.
-    from agent_vault_proxy import cli as _cli_pkg  # noqa: F401
-    from agent_vault_proxy.cli.doctor import run_doctor
+    from kow import cli as _cli_pkg  # noqa: F401
+    from kow.cli.doctor import run_doctor
 
     with patch(
-        "agent_vault_proxy.cli.doctor.build_backend",
+        "kow.cli.doctor.build_backend",
         return_value=(FakeBackend(_GOOD_VAULT), None),
     ):
         rc = run_doctor(
@@ -323,10 +319,10 @@ def test_cli_doctor_probe_oauth_clean_returns_0(tmp_path: Path, capsys: Any) -> 
 
 def test_cli_doctor_probe_oauth_fail_returns_1(tmp_path: Path, capsys: Any) -> None:
     cfg_path = _config_with_oauth(tmp_path)
-    from agent_vault_proxy.cli.doctor import run_doctor
+    from kow.cli.doctor import run_doctor
 
     with patch(
-        "agent_vault_proxy.cli.doctor.build_backend",
+        "kow.cli.doctor.build_backend",
         return_value=(ReadOnlyBackend(_GOOD_VAULT), None),
     ):
         rc = run_doctor(
@@ -341,9 +337,9 @@ def test_cli_doctor_probe_oauth_fail_returns_1(tmp_path: Path, capsys: Any) -> N
 def test_cli_no_probe_oauth_runs_only_ca_checks(tmp_path: Path, capsys: Any) -> None:
     """Default ``avp doctor`` (no --probe-oauth) MUST NOT touch the config
     or the backend — the CA checks are independent of OAuth wiring."""
-    from agent_vault_proxy.cli.doctor import run_doctor
+    from kow.cli.doctor import run_doctor
 
-    with patch("agent_vault_proxy.cli.doctor.build_backend") as bb:
+    with patch("kow.cli.doctor.build_backend") as bb:
         rc = run_doctor(
             ca_cert_path="/nonexistent/cert",
             ca_key_path="/nonexistent/key",

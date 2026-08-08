@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
+from kow.addon import AgentVaultProxyAddon
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import PLACEHOLDER, FakeBackend
 
@@ -244,7 +244,7 @@ def test_e2e_happy_path_plaintext_transport(
     flow = _make_flow({"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(mock_token_endpoint._server.server_port),
     ):
         addon.requestheaders(flow)
@@ -286,7 +286,7 @@ def test_e2e_cache_hit_skips_second_exchange(
 
     port = mock_token_endpoint._server.server_port
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(port),
     ):
         for _ in range(2):
@@ -324,7 +324,7 @@ def test_e2e_rotation_persists_to_vault(
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(port),
     ):
         addon.requestheaders(flow)
@@ -372,7 +372,7 @@ def test_e2e_invalid_grant_denies_request(
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(port),
     ):
         addon.requestheaders(flow)
@@ -409,7 +409,7 @@ def test_e2e_request_forwarded_unmodified_when_no_placeholder(
     addon.http_connect(flow)
     port = mock_token_endpoint._server.server_port
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(port),
     ):
         addon.requestheaders(flow)
@@ -447,7 +447,7 @@ def test_e2e_doctor_probe_against_live_server(
     backend construction were broken; this version proves the real
     construction path works end-to-end.
     """
-    from agent_vault_proxy.cli.doctor import run_doctor
+    from kow.cli.doctor import run_doctor
 
     # Write the static-backend secrets file with the required 0600 perms
     # (StaticSecretsBackend refuses world-readable files; the warning
@@ -498,7 +498,7 @@ unmatched_destination_policy: deny
     )
     port = mock_token_endpoint._server.server_port
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=_urlopen_to_local(port),
     ):
         rc = run_doctor(
@@ -529,7 +529,7 @@ def test_e2e_build_backend_constructs_from_real_config(tmp_path: Path) -> None:
     through the production ``build_backend`` path — without any
     patches. A regression here would make ``avp doctor`` blow up in
     production while the patched doctor test stays green."""
-    from agent_vault_proxy.config import build_backend, load_config
+    from kow.config import build_backend, load_config
 
     secrets_path = tmp_path / "static-secrets.yaml"
     secrets_path.write_text('secrets:\n  X: "y"\n')

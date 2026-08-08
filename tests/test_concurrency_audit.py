@@ -47,17 +47,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from agent_vault_proxy._derived_token_cache import DerivedTokenCache, KeyInputs
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import (
+from kow._derived_token_cache import DerivedTokenCache, KeyInputs
+from kow.audit import AuditWriter
+from kow.backends import (
     BackendUnavailableError,
     BackendWriteConflictError,
     FetchContext,
     SecretNotFoundError,
 )
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import Oauth2RefreshInjector
-from agent_vault_proxy.injectors.oauth2_refresh import OauthResolver
+from kow.caching import CachingSecretsClient
+from kow.config import Oauth2RefreshInjector
+from kow.injectors.oauth2_refresh import OauthResolver
 from tests import _oauth_helpers as oh
 
 # ===========================================================================
@@ -121,7 +121,7 @@ def test_config_reload_no_cross_secret_leak_or_crash(tmp_path: Path) -> None:  #
     placeholder resolves under the live config injects that config's value
     (never the other secret's); a torn view fails closed (503), never
     leaks. This directly exercises the incomplete-snapshot window."""
-    from agent_vault_proxy.addon import AgentVaultProxyAddon
+    from kow.addon import AgentVaultProxyAddon
 
     host = "api.example.com"
     p_a = "avp-A-PLACEHOLDER-01HXY1234567890ABCD"

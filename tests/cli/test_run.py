@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from agent_vault_proxy.cli import run as run_mod
+from kow.cli import run as run_mod
 
 
 @pytest.fixture

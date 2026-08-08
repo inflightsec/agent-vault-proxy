@@ -190,7 +190,7 @@ by the resolved decisions below.
 ## References
 
 - ADR-0027 (the signer), ADR-0028 (sibling signers), ADR-0018 (GSM backend).
-- `src/agent_vault_proxy/injectors/sigv4.py`, `backends/__init__.py`,
+- `src/kow/injectors/sigv4.py`, `backends/__init__.py`,
   `docs/adapter-architecture.md`.
 - AWS SigV4 / STS AssumeRole / Roles Anywhere / container-credential-provider
   docs (front-matter). Prior art: cyberark/secretless-broker AWS connector,

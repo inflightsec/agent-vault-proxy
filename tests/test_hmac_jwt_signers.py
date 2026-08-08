@@ -15,8 +15,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-from agent_vault_proxy.injectors.hmac_signer import build_signing_string, hmac_sign
-from agent_vault_proxy.injectors.jwt_bearer import encode
+from kow.injectors.hmac_signer import build_signing_string, hmac_sign
+from kow.injectors.jwt_bearer import encode
 
 
 def _b64url_decode(segment: str) -> bytes:

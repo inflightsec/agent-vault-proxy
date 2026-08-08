@@ -15,8 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import build_backend, load_config
+from kow.caching import CachingSecretsClient
+from kow.config import build_backend, load_config
 
 
 def main() -> int:

@@ -12,7 +12,7 @@ import socket
 
 import pytest
 
-from agent_vault_proxy._ssrf_guard import SsrfBlockedError, resolve_and_vet
+from kow._ssrf_guard import SsrfBlockedError, resolve_and_vet
 
 _PUBLIC = "93.184.216.34"  # example.com — a real public address
 _IMDS = "169.254.169.254"  # AWS instance-metadata (link-local, blocked)

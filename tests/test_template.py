@@ -14,10 +14,10 @@ import urllib.parse
 
 import pytest
 
-from agent_vault_proxy.template import (
+from kow.template import (
     WHITELISTED_FILTERS,
     WHITELISTED_FUNCTIONS,
-    AvpTemplate,
+    KowTemplate,
     TemplateRenderError,
     UnsupportedTemplateError,
 )
@@ -28,22 +28,22 @@ from agent_vault_proxy.template import (
 
 
 def test_plain_literal_template() -> None:
-    tpl = AvpTemplate("Bearer fixed-string", [])
+    tpl = KowTemplate("Bearer fixed-string", [])
     assert tpl.render({}) == "Bearer fixed-string"
 
 
 def test_simple_variable_substitution() -> None:
-    tpl = AvpTemplate("Bearer {{ TOKEN }}", ["TOKEN"])
+    tpl = KowTemplate("Bearer {{ TOKEN }}", ["TOKEN"])
     assert tpl.render({"TOKEN": "abc123"}) == "Bearer abc123"
 
 
 def test_string_concatenation_with_separator() -> None:
-    tpl = AvpTemplate("{{ USER + ':' + KEY }}", ["USER", "KEY"])
+    tpl = KowTemplate("{{ USER + ':' + KEY }}", ["USER", "KEY"])
     assert tpl.render({"USER": "alice", "KEY": "secret"}) == "alice:secret"
 
 
 def test_b64encode_filter_on_concat() -> None:
-    tpl = AvpTemplate(
+    tpl = KowTemplate(
         "Basic {{ (USER + ':' + TOKEN) | b64encode }}",
         ["USER", "TOKEN"],
     )
@@ -52,18 +52,18 @@ def test_b64encode_filter_on_concat() -> None:
 
 
 def test_b64encode_filter_on_single_var() -> None:
-    tpl = AvpTemplate("{{ X | b64encode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64encode }}", ["X"])
     assert tpl.render({"X": "hello"}) == base64.b64encode(b"hello").decode("ascii")
 
 
 def test_b64decode_filter() -> None:
     encoded = base64.b64encode(b"foo:bar").decode("ascii")
-    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64decode }}", ["X"])
     assert tpl.render({"X": encoded}) == "foo:bar"
 
 
 def test_b64decode_invalid_input_render_error() -> None:
-    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64decode }}", ["X"])
     with pytest.raises(TemplateRenderError, match="b64decode"):
         tpl.render({"X": "not-valid-base64!@#$"})
 
@@ -73,7 +73,7 @@ def test_b64decode_value_error_caught() -> None:
     on some malformed inputs in Python 3.12+. The filter must catch both and
     surface them as a clean render_failed, not an uncaught exception that
     bubbles past the addon's audit boundary."""
-    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64decode }}", ["X"])
     # Empty string after stripping padding is one input class that historically
     # produced ValueError rather than binascii.Error on some CPython versions.
     # Any malformed input that ends up raising ValueError exercises the new
@@ -87,35 +87,35 @@ def test_b64decode_non_ascii_input_caught() -> None:
     Composite secrets passed through b64decode must not let that exception
     bypass the render_failed audit boundary — operators rely on
     render_failed being the catch-all for "composite input was unusable."""
-    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64decode }}", ["X"])
     with pytest.raises(TemplateRenderError, match="b64decode"):
         tpl.render({"X": "café"})  # non-ASCII — fails at .encode("ascii")
 
 
 def test_sha256_filter() -> None:
-    tpl = AvpTemplate("{{ X | sha256 }}", ["X"])
+    tpl = KowTemplate("{{ X | sha256 }}", ["X"])
     assert tpl.render({"X": "hello"}) == hashlib.sha256(b"hello").hexdigest()
 
 
 def test_urlencode_filter() -> None:
-    tpl = AvpTemplate("{{ X | urlencode }}", ["X"])
+    tpl = KowTemplate("{{ X | urlencode }}", ["X"])
     assert tpl.render({"X": "a b/c?d"}) == urllib.parse.quote("a b/c?d", safe="")
 
 
 def test_hmac_sha256_function() -> None:
-    tpl = AvpTemplate("{{ hmac_sha256(KEY, MSG) }}", ["KEY", "MSG"])
+    tpl = KowTemplate("{{ hmac_sha256(KEY, MSG) }}", ["KEY", "MSG"])
     expected = hmac.new(b"k", b"m", "sha256").hexdigest()
     assert tpl.render({"KEY": "k", "MSG": "m"}) == expected
 
 
 def test_hmac_sha512_function() -> None:
-    tpl = AvpTemplate("{{ hmac_sha512(KEY, MSG) }}", ["KEY", "MSG"])
+    tpl = KowTemplate("{{ hmac_sha512(KEY, MSG) }}", ["KEY", "MSG"])
     expected = hmac.new(b"k", b"m", "sha512").hexdigest()
     assert tpl.render({"KEY": "k", "MSG": "m"}) == expected
 
 
 def test_filter_chain_b64_then_sha256() -> None:
-    tpl = AvpTemplate("{{ X | b64encode | sha256 }}", ["X"])
+    tpl = KowTemplate("{{ X | b64encode | sha256 }}", ["X"])
     encoded = base64.b64encode(b"value").decode("ascii")
     expected = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     assert tpl.render({"X": "value"}) == expected
@@ -123,12 +123,12 @@ def test_filter_chain_b64_then_sha256() -> None:
 
 def test_const_string_in_concat() -> None:
     # 'Token ' is a Const(str). Add(Const, Name) is allowed string concat.
-    tpl = AvpTemplate("{{ 'Token ' + KEY }}", ["KEY"])
+    tpl = KowTemplate("{{ 'Token ' + KEY }}", ["KEY"])
     assert tpl.render({"KEY": "abc"}) == "Token abc"
 
 
 def test_multiple_compose_variables() -> None:
-    tpl = AvpTemplate(
+    tpl = KowTemplate(
         "{{ A + '|' + B + '|' + C + '|' + D }}",
         ["A", "B", "C", "D"],
     )
@@ -142,17 +142,17 @@ def test_multiple_compose_variables() -> None:
 
 def test_unknown_variable_rejected_at_construction() -> None:
     with pytest.raises(UnsupportedTemplateError, match="unknown variable 'OTHER'"):
-        AvpTemplate("{{ OTHER }}", ["X"])
+        KowTemplate("{{ OTHER }}", ["X"])
 
 
 def test_unknown_filter_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="unknown filter 'upper'"):
-        AvpTemplate("{{ X | upper }}", ["X"])
+        KowTemplate("{{ X | upper }}", ["X"])
 
 
 def test_unknown_function_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="unknown function 'range'"):
-        AvpTemplate("{{ range(10) }}", [])
+        KowTemplate("{{ range(10) }}", [])
 
 
 def test_function_used_as_variable_rejected() -> None:
@@ -160,7 +160,7 @@ def test_function_used_as_variable_rejected() -> None:
     # it falls into the Name-validator path and gets rejected as not in
     # allowed_vars.
     with pytest.raises(UnsupportedTemplateError, match="unknown variable 'hmac_sha256'"):
-        AvpTemplate("{{ hmac_sha256 | b64encode }}", ["X"])
+        KowTemplate("{{ hmac_sha256 | b64encode }}", ["X"])
 
 
 def test_filter_used_as_function_rejected() -> None:
@@ -168,21 +168,21 @@ def test_filter_used_as_function_rejected() -> None:
     # as a function — ``b64encode(X)`` — fails the WHITELISTED_FUNCTIONS
     # check.
     with pytest.raises(UnsupportedTemplateError, match="unknown function 'b64encode'"):
-        AvpTemplate("{{ b64encode(X) }}", ["X"])
+        KowTemplate("{{ b64encode(X) }}", ["X"])
 
 
 def test_empty_template_renders_empty_string() -> None:
-    tpl = AvpTemplate("", [])
+    tpl = KowTemplate("", [])
     assert tpl.render({}) == ""
 
 
 def test_template_with_only_literal_text() -> None:
-    tpl = AvpTemplate("just plain text", [])
+    tpl = KowTemplate("just plain text", [])
     assert tpl.render({}) == "just plain text"
 
 
 def test_template_with_mixed_literal_and_variable() -> None:
-    tpl = AvpTemplate("prefix {{ X }} suffix", ["X"])
+    tpl = KowTemplate("prefix {{ X }} suffix", ["X"])
     assert tpl.render({"X": "MID"}) == "prefix MID suffix"
 
 
@@ -193,28 +193,28 @@ def test_template_with_mixed_literal_and_variable() -> None:
 
 def test_int_constant_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="non-string constant"):
-        AvpTemplate("{{ 1 }}", [])
+        KowTemplate("{{ 1 }}", [])
 
 
 def test_int_constant_in_add_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="non-string constant"):
-        AvpTemplate("{{ X + 1 }}", ["X"])
+        KowTemplate("{{ X + 1 }}", ["X"])
 
 
 def test_float_constant_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="non-string constant"):
-        AvpTemplate("{{ 1.5 }}", [])
+        KowTemplate("{{ 1.5 }}", [])
 
 
 def test_bool_constant_rejected() -> None:
     # In Jinja2 True/False parse as Const(value=True/False).
     with pytest.raises(UnsupportedTemplateError, match="non-string constant"):
-        AvpTemplate("{{ True }}", [])
+        KowTemplate("{{ True }}", [])
 
 
 def test_none_constant_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="non-string constant"):
-        AvpTemplate("{{ none }}", [])
+        KowTemplate("{{ none }}", [])
 
 
 # ---------------------------------------------------------------------------
@@ -224,12 +224,12 @@ def test_none_constant_rejected() -> None:
 
 def test_filter_with_keyword_args_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="keyword or dynamic args not allowed"):
-        AvpTemplate("{{ X | sha256(foo='bar') }}", ["X"])
+        KowTemplate("{{ X | sha256(foo='bar') }}", ["X"])
 
 
 def test_function_with_keyword_args_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="keyword or dynamic args not allowed"):
-        AvpTemplate("{{ hmac_sha256(key='k', msg='m') }}", [])
+        KowTemplate("{{ hmac_sha256(key='k', msg='m') }}", [])
 
 
 # ---------------------------------------------------------------------------
@@ -238,19 +238,19 @@ def test_function_with_keyword_args_rejected() -> None:
 
 
 def test_render_missing_variable_raises() -> None:
-    tpl = AvpTemplate("{{ X }}", ["X"])
+    tpl = KowTemplate("{{ X }}", ["X"])
     with pytest.raises(TemplateRenderError, match="missing variables"):
         tpl.render({})
 
 
 def test_render_unexpected_variable_raises() -> None:
-    tpl = AvpTemplate("{{ X }}", ["X"])
+    tpl = KowTemplate("{{ X }}", ["X"])
     with pytest.raises(TemplateRenderError, match="unexpected variables"):
         tpl.render({"X": "ok", "EXTRA": "leaked"})
 
 
 def test_render_non_string_value_raises() -> None:
-    tpl = AvpTemplate("{{ X }}", ["X"])
+    tpl = KowTemplate("{{ X }}", ["X"])
     with pytest.raises(TemplateRenderError, match="expected str"):
         tpl.render({"X": 123})  # type: ignore[dict-item]
 
@@ -259,7 +259,7 @@ def test_render_empty_string_value() -> None:
     # Empty strings ARE valid str. AVP's addon will refuse-to-render with
     # empty BWS values upstream, but the template module
     # itself accepts them as valid input.
-    tpl = AvpTemplate("{{ X }}", ["X"])
+    tpl = KowTemplate("{{ X }}", ["X"])
     assert tpl.render({"X": ""}) == ""
 
 
@@ -270,12 +270,12 @@ def test_render_empty_string_value() -> None:
 
 def test_source_preserved() -> None:
     src = "{{ A + B }}"
-    tpl = AvpTemplate(src, ["A", "B"])
+    tpl = KowTemplate(src, ["A", "B"])
     assert tpl.source == src
 
 
 def test_allowed_vars_is_frozenset() -> None:
-    tpl = AvpTemplate("{{ A }}", ["A", "B"])
+    tpl = KowTemplate("{{ A }}", ["A", "B"])
     assert tpl.allowed_vars == frozenset({"A", "B"})
 
 
@@ -371,7 +371,7 @@ def test_func_hmac_sha1_non_string_msg_raises() -> None:
 def _patch_time(monkeypatch: pytest.MonkeyPatch, frozen_unix_seconds: int) -> None:
     """Freeze ``time.time()`` inside the template module to a fixed value so
     TOTP outputs are reproducible against RFC 6238 §5.2's published table."""
-    import agent_vault_proxy.template as template_module
+    import kow.template as template_module
 
     monkeypatch.setattr(template_module.time, "time", lambda: float(frozen_unix_seconds))
 
@@ -436,9 +436,9 @@ def test_func_totp_invalid_base32_chars_raises() -> None:
 
 
 def test_func_totp_via_template_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    """End-to-end: AvpTemplate parses + AST-validates + renders ``{{ totp(X) }}``
+    """End-to-end: KowTemplate parses + AST-validates + renders ``{{ totp(X) }}``
     against a compose-var input, returning a 6-digit code."""
-    tmpl = AvpTemplate("{{ totp(TOTP_SECRET) }}", ["TOTP_SECRET"])
+    tmpl = KowTemplate("{{ totp(TOTP_SECRET) }}", ["TOTP_SECRET"])
     _patch_time(monkeypatch, 59)
     result = tmpl.render({"TOTP_SECRET": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"})
     assert result == "287082"
@@ -448,28 +448,28 @@ def test_totp_arity_is_one() -> None:
     """``totp()`` with zero or two args must fail at config-load (AST arity
     check), not at request time."""
     with pytest.raises(UnsupportedTemplateError, match="takes 1 positional"):
-        AvpTemplate("{{ totp() }}", [])
+        KowTemplate("{{ totp() }}", [])
     with pytest.raises(UnsupportedTemplateError, match="takes 1 positional"):
-        AvpTemplate("{{ totp(X, Y) }}", ["X", "Y"])
+        KowTemplate("{{ totp(X, Y) }}", ["X", "Y"])
 
 
 def test_hmac_sha1_arity_is_two() -> None:
     """``hmac_sha1()`` arity-check at config-load mirrors hmac_sha256/512."""
     with pytest.raises(UnsupportedTemplateError, match="takes 2 positional"):
-        AvpTemplate("{{ hmac_sha1(K) }}", ["K"])
+        KowTemplate("{{ hmac_sha1(K) }}", ["K"])
     with pytest.raises(UnsupportedTemplateError, match="takes 2 positional"):
-        AvpTemplate("{{ hmac_sha1(K, M, X) }}", ["K", "M", "X"])
+        KowTemplate("{{ hmac_sha1(K, M, X) }}", ["K", "M", "X"])
 
 
 def test_compose_var_named_totp_rejected() -> None:
     """Compose entry colliding with the ``totp`` function name is rejected at
-    AvpTemplate construction — same as the existing rule for hmac_sha256 etc.
+    KowTemplate construction — same as the existing rule for hmac_sha256 etc.
     Error message includes the offending name + a rename suggestion so an
     operator on upgrade gets a one-line remediation (review R-4)."""
     with pytest.raises(
         UnsupportedTemplateError, match="collides with reserved function 'totp'"
     ) as exc_info:
-        AvpTemplate("{{ totp }}", ["totp"])
+        KowTemplate("{{ totp }}", ["totp"])
     assert "rename" in str(exc_info.value)
 
 
@@ -477,14 +477,14 @@ def test_compose_var_named_hmac_sha1_rejected() -> None:
     with pytest.raises(
         UnsupportedTemplateError, match="collides with reserved function 'hmac_sha1'"
     ):
-        AvpTemplate("{{ hmac_sha1(X, Y) }}", ["hmac_sha1"])
+        KowTemplate("{{ hmac_sha1(X, Y) }}", ["hmac_sha1"])
 
 
 def test_compose_var_named_b64encode_rejected_with_filter_message() -> None:
     """Filter-name collisions get a distinct message than function-name
     collisions — review R-4 path; keep both error shapes covered."""
     with pytest.raises(UnsupportedTemplateError, match="collides with reserved filter 'b64encode'"):
-        AvpTemplate("{{ X | b64encode }}", ["b64encode"])
+        KowTemplate("{{ X | b64encode }}", ["b64encode"])
 
 
 def test_func_totp_base32_decode_failure_message_is_static() -> None:
@@ -515,71 +515,71 @@ def test_func_totp_base32_decode_failure_message_is_static() -> None:
 
 def test_source_length_cap_enforced() -> None:
     # pathological-size guard at config-load.
-    from agent_vault_proxy.template import MAX_TEMPLATE_SOURCE_LEN
+    from kow.template import MAX_TEMPLATE_SOURCE_LEN
 
     over = "X" * (MAX_TEMPLATE_SOURCE_LEN + 1)
     with pytest.raises(UnsupportedTemplateError, match="max allowed"):
-        AvpTemplate(over, ["X"])
+        KowTemplate(over, ["X"])
 
 
 def test_source_length_at_cap_accepted() -> None:
-    from agent_vault_proxy.template import MAX_TEMPLATE_SOURCE_LEN
+    from kow.template import MAX_TEMPLATE_SOURCE_LEN
 
     at_cap = "x" * MAX_TEMPLATE_SOURCE_LEN
-    tpl = AvpTemplate(at_cap, [])
+    tpl = KowTemplate(at_cap, [])
     assert tpl.render({}) == at_cap
 
 
 def test_filter_extra_positional_arg_rejected() -> None:
     # ``X | sha256(Y)`` must fail at config-load, not at render.
     with pytest.raises(UnsupportedTemplateError, match="filter 'sha256' takes 0"):
-        AvpTemplate("{{ X | sha256('extra') }}", ["X"])
+        KowTemplate("{{ X | sha256('extra') }}", ["X"])
 
 
 def test_function_wrong_arity_rejected_too_few() -> None:
     # ``hmac_sha256(K)`` is missing the message arg.
     with pytest.raises(UnsupportedTemplateError, match="function 'hmac_sha256' takes 2"):
-        AvpTemplate("{{ hmac_sha256(K) }}", ["K"])
+        KowTemplate("{{ hmac_sha256(K) }}", ["K"])
 
 
 def test_function_wrong_arity_rejected_too_many() -> None:
     with pytest.raises(UnsupportedTemplateError, match="function 'hmac_sha256' takes 2"):
-        AvpTemplate("{{ hmac_sha256(K, M, 'extra') }}", ["K", "M"])
+        KowTemplate("{{ hmac_sha256(K, M, 'extra') }}", ["K", "M"])
 
 
 def test_allowed_vars_as_bare_string_rejected() -> None:
     # prevent the silent character-split footgun.
     with pytest.raises(UnsupportedTemplateError, match="not a bare string"):
-        AvpTemplate("{{ X }}", "X")  # type: ignore[arg-type]
+        KowTemplate("{{ X }}", "X")  # type: ignore[arg-type]
 
 
 def test_allowed_vars_non_string_entry_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="expected str"):
-        AvpTemplate("{{ X }}", ["X", 42])  # type: ignore[list-item]
+        KowTemplate("{{ X }}", ["X", 42])  # type: ignore[list-item]
 
 
 def test_allowed_vars_empty_string_entry_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="non-empty strings"):
-        AvpTemplate("{{ X }}", ["X", ""])
+        KowTemplate("{{ X }}", ["X", ""])
 
 
 def test_compose_var_colliding_with_filter_name_rejected() -> None:
     # compose name `b64encode` would create ambiguous parse
     # behavior — reject at construction.
     with pytest.raises(UnsupportedTemplateError, match="reserved filter 'b64encode'"):
-        AvpTemplate("{{ b64encode }}", ["b64encode"])
+        KowTemplate("{{ b64encode }}", ["b64encode"])
 
 
 def test_compose_var_colliding_with_function_name_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="reserved function 'hmac_sha256'"):
-        AvpTemplate("{{ X }}", ["X", "hmac_sha256"])
+        KowTemplate("{{ X }}", ["X", "hmac_sha256"])
 
 
 def test_render_filter_runtime_error_becomes_render_error() -> None:
     # filter-raised UnsupportedTemplateError (e.g., b64decode
     # on non-ASCII) is wrapped as TemplateRenderError so the addon catches
     # exactly one type at the render boundary.
-    tpl = AvpTemplate("{{ X | b64decode }}", ["X"])
+    tpl = KowTemplate("{{ X | b64decode }}", ["X"])
     # b64decode on a bare value normally returns TemplateRenderError directly
     # (we raise it explicitly). For the conversion path test, give it
     # a value the type-check rejects via a different route — the
@@ -598,9 +598,9 @@ def test_render_filter_runtime_error_becomes_render_error() -> None:
 
 def test_non_string_source_rejected() -> None:
     with pytest.raises(UnsupportedTemplateError, match="must be str"):
-        AvpTemplate(42, [])  # type: ignore[arg-type]
+        KowTemplate(42, [])  # type: ignore[arg-type]
 
 
 def test_unbalanced_braces_parse_error() -> None:
     with pytest.raises(UnsupportedTemplateError, match="parse error"):
-        AvpTemplate("{{ X ", ["X"])
+        KowTemplate("{{ X ", ["X"])

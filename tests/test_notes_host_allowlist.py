@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.placeholders import derive_placeholder
+from kow.addon import AgentVaultProxyAddon
+from kow.placeholders import derive_placeholder
 
 _SALT = b"\x0b" * 32
 

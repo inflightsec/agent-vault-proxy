@@ -20,8 +20,8 @@ from urllib.error import HTTPError
 
 import pytest
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.caching import CachingSecretsClient
+from kow.addon import AgentVaultProxyAddon
+from kow.caching import CachingSecretsClient
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import PLACEHOLDER, FailingBackend, FakeBackend, FakeResp
 
@@ -51,7 +51,7 @@ def test_cache_miss_exchange_success_injects_and_audits(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_ok_response_body()),
     ):
         addon.requestheaders(flow)
@@ -80,7 +80,7 @@ def test_token_exchange_event_carries_expected_metadata(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_ok_response_body()),
     ):
         addon.requestheaders(flow)
@@ -117,9 +117,7 @@ def test_cache_hit_skips_exchange_and_token_exchange_audit(tmp_path: Path) -> No
         call_count += 1
         return FakeResp(_ok_response_body())
 
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         for _ in range(2):
             flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
             addon.http_connect(flow)
@@ -154,7 +152,7 @@ def test_invalid_grant_denies_and_audits(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     err = _http_err(400, json.dumps({"error": "invalid_grant"}).encode())
-    with patch("agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=err):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=err):
         addon.requestheaders(flow)
 
     assert flow.response is not None
@@ -176,7 +174,7 @@ def test_network_failure_denies_and_audits(tmp_path: Path) -> None:
     # urlopen retries once on URLError; mock sleeps.
     with (
         patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+            "kow.injectors.oauth2_refresh._transport_open",
             side_effect=URLError("refused"),
         ),
         patch("time.sleep"),
@@ -199,7 +197,7 @@ def test_ssrf_rebound_url_blocks_before_urlopen(
     addon, audit_path = _build_addon(tmp_path)
     # Now flip the resolver: same hostname now points loopback.
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         lambda *a, **kw: [
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 0)),
         ],
@@ -208,7 +206,7 @@ def test_ssrf_rebound_url_blocks_before_urlopen(
     addon.http_connect(flow)
     urlopen_called: list[bool] = []
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True),
     ):
         addon.requestheaders(flow)
@@ -228,7 +226,7 @@ def test_vault_input_unavailable_denies_before_exchange(tmp_path: Path) -> None:
     never gets to the token-exchange step. The audit must NOT contain
     a ``token_exchange`` event — only the ``inject_decision: denied``
     with the standard ``secret_unavailable:`` reason."""
-    from agent_vault_proxy.backends import BackendUnavailableError
+    from kow.backends import BackendUnavailableError
 
     addon, audit_path = _build_addon(tmp_path)
     addon.client = CachingSecretsClient(
@@ -241,7 +239,7 @@ def test_vault_input_unavailable_denies_before_exchange(tmp_path: Path) -> None:
     addon.http_connect(flow)
     urlopen_called: list[bool] = []
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         side_effect=lambda *a, **kw: urlopen_called.append(True),
     ):
         addon.requestheaders(flow)
@@ -269,7 +267,7 @@ def test_reload_resets_derived_token_cache(tmp_path: Path) -> None:
     flow = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow)
     with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open",
+        "kow.injectors.oauth2_refresh._transport_open",
         return_value=FakeResp(_ok_response_body()),
     ):
         addon.requestheaders(flow)
@@ -302,9 +300,7 @@ def test_reload_resets_derived_token_cache(tmp_path: Path) -> None:
 
     flow2 = oh.make_request("www.googleapis.com", {"Authorization": f"Bearer {PLACEHOLDER}"})
     addon.http_connect(flow2)
-    with patch(
-        "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=side_effect
-    ):
+    with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         addon.requestheaders(flow2)
     assert call_count == 1
     assert flow2.request.headers["Authorization"] == "Bearer at-AFTER-RELOAD"

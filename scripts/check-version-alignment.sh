@@ -11,7 +11,7 @@
 #   2. scripts/pre-release.sh section 3 calls this so there is ONE definition.
 #
 # The STRICT set (must equal pyproject) mirrors bump-version.sh's strict set:
-#   - src/agent_vault_proxy/__init__.py   __version__ = "X.Y.Z"
+#   - src/kow/__init__.py   __version__ = "X.Y.Z"
 #   - docker-compose.yml                  image: inflightsec/agent-vault-proxy:X.Y.Z
 # The OPTIONAL set (verified only if present — the README intentionally uses an
 # unpinned `pipx install agent-vault-proxy`, so absence is legitimate; a STALE
@@ -31,7 +31,7 @@ if [ -z "$TAG_VER" ]; then
     exit 1
 fi
 
-INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/agent_vault_proxy/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}' || true)
+INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/kow/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}' || true)
 README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}' || true)
 README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//' || true)
 COMPOSE_VER=$(grep -Eo 'inflightsec/agent-vault-proxy:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)
@@ -59,7 +59,7 @@ check_optional() {
     fi
 }
 
-check_required "src/agent_vault_proxy/__init__.py   __version__" "$INIT_VER"
+check_required "src/kow/__init__.py   __version__" "$INIT_VER"
 check_required "docker-compose.yml                  image tag"   "$COMPOSE_VER"
 check_optional "README.md                           install pin" "$README_INSTALL_VER"
 check_optional "README.md                           clone tag"   "$README_CLONE_VER"

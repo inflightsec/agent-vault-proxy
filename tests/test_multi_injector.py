@@ -32,11 +32,11 @@ import pytest
 from mitmproxy.test import tflow
 from pydantic import ValidationError
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import (
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import FetchContext
+from kow.caching import CachingSecretsClient
+from kow.config import (
     BodyInjector,
     Config,
     HeaderInjector,
@@ -559,7 +559,7 @@ def test_multi_unimplemented_child_type_gets_friendly_error(
     """A known-but-unimplemented child type gets the same operator-facing
     message as the top-level case. All shipped types are implemented, so mark
     one planned to exercise the guard (kept for future reserved types)."""
-    from agent_vault_proxy import config_models
+    from kow import config_models
 
     monkeypatch.setitem(config_models._INJECTOR_TYPES, "github_app", "planned: P9")
     with pytest.raises(ValidationError, match=r"injectors\[0\].type 'github_app'"):

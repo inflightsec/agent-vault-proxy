@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 
-from agent_vault_proxy.cli.doctor import (
+from kow.cli.doctor import (
     check_ca_key_perms,
     check_ca_not_in_trust_store,
     check_node_env_proxy,

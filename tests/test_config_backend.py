@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
-from agent_vault_proxy.config import Config, ConfigError, build_backend
+from kow.backends.bws import BitwardenBackend, BwsConfig
+from kow.config import Config, ConfigError, build_backend
 
 
 def _minimal_raw(extra: dict) -> dict:

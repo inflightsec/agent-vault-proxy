@@ -9,8 +9,8 @@ which is exactly what an LLM authoring the note free-hand gets wrong.
 
 from __future__ import annotations
 
-from agent_vault_proxy.cli.main import main
-from agent_vault_proxy.notes_binding import (
+from kow.cli.main import main
+from kow.notes_binding import (
     NOTES_MARKER,
     ParsedBinding,
     parse_notes_binding,

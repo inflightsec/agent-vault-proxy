@@ -155,7 +155,7 @@ repos:
         # pin) is caught at commit time — not at pre-release. v0.4.2 shipped and
         # 0.9.0 nearly shipped with exactly this skew. Shares one definition of
         # "aligned" with pre-release.sh (both call check-version-alignment.sh).
-        files: '^(pyproject\.toml|src/agent_vault_proxy/__init__\.py|README\.md|docker-compose\.yml|scripts/check-version-alignment\.sh)$'
+        files: '^(pyproject\.toml|src/kow/__init__\.py|README\.md|docker-compose\.yml|scripts/check-version-alignment\.sh)$'
 
       - id: token-egress-chokepoint
         name: token egress chokepoint (ADR-0035 — one SSRF-pinned transport)
@@ -167,7 +167,7 @@ repos:
         # transport (injectors/_token_transport.py) — which would reintroduce
         # the check→connect TOCTOU ADR-0035 closed. Scoped to the injectors dir
         # and the guard script itself.
-        files: '^(src/agent_vault_proxy/injectors/.*\.py|scripts/check-token-egress-chokepoint\.sh)$'
+        files: '^(src/kow/injectors/.*\.py|scripts/check-token-egress-chokepoint\.sh)$'
 
       # ─── Heavy security tools — mirror security.yml CI jobs ───────────
       # The Docker-based tools below gracefully skip if docker not on PATH;

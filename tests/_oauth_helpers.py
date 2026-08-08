@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BackendUnavailableError,
     FetchContext,
     SecretNotFoundError,
@@ -24,7 +24,7 @@ def apply_public_ssrf_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     """Resolve non-loopback hostnames to a public IP; pass-through loopback
     + IP literals so in-process mock servers stay reachable.
 
-    ``agent_vault_proxy._ssrf_guard.socket`` IS the global ``socket`` —
+    ``kow._ssrf_guard.socket`` IS the global ``socket`` —
     monkeypatching here changes name resolution for ALL code in the
     process, including ``http.client.HTTPConnection``'s
     ``create_connection``. A naive "everything → public IP" stub silently
@@ -39,7 +39,7 @@ def apply_public_ssrf_stub(monkeypatch: pytest.MonkeyPatch) -> None:
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0)),
         ]
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", stub)
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ class FakeBackend:
         # Mirror BitwardenBackend's value-precondition semantics (ADR-0017
         # hardening series) so conflict paths are testable against the fake.
         if expected_current_value is not None and self._values.get(name) != expected_current_value:
-            from agent_vault_proxy.backends import BackendWriteConflictError
+            from kow.backends import BackendWriteConflictError
 
             raise BackendWriteConflictError(
                 f"secret {name!r} changed since read; refusing to overwrite"
@@ -247,11 +247,11 @@ def build_oauth_addon(
 ) -> tuple[Any, Path, Any]:
     """Hand-build a ``GOOGLE_OAUTH`` oauth2_refresh addon; write_back=None
     omits the slice-7 knob (slice-6 tests predate it)."""
-    from agent_vault_proxy._derived_token_cache import DerivedTokenCache
-    from agent_vault_proxy.addon import AgentVaultProxyAddon
-    from agent_vault_proxy.audit import AuditWriter
-    from agent_vault_proxy.caching import CachingSecretsClient
-    from agent_vault_proxy.config import load_config
+    from kow._derived_token_cache import DerivedTokenCache
+    from kow.addon import AgentVaultProxyAddon
+    from kow.audit import AuditWriter
+    from kow.caching import CachingSecretsClient
+    from kow.config import load_config
 
     audit_path = tmp_path / "audit.jsonl"
     config_path = tmp_path / "bindings.yaml"

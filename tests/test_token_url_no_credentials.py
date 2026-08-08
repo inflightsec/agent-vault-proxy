@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.config_models import (
+from kow.config_models import (
     GithubAppInjector,
     Oauth2ClientCredentialsInjector,
     Oauth2RefreshInjector,

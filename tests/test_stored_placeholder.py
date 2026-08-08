@@ -18,21 +18,21 @@ from typing import Any
 
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.cli.env import build_export_lines
-from agent_vault_proxy.cli.main import main
-from agent_vault_proxy.notes_binding import (
+from kow.addon import AgentVaultProxyAddon
+from kow.cli.env import build_export_lines
+from kow.cli.main import main
+from kow.notes_binding import (
     InvalidBinding,
     ParsedBinding,
     parse_notes_binding,
     stored_placeholder_from_note,
 )
-from agent_vault_proxy.placeholders import (
+from kow.placeholders import (
     STORED_PLACEHOLDER_RE,
     derive_placeholder,
     mint_placeholder,
 )
-from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
+from kow.runtime_bindings import resolve_runtime_bindings
 
 _SALT = b"\x0b" * 32
 _DERIVED_FALLBACK = "avp-PLACEHOLDER-derivedfallbackaaaaaaaaaaa"
@@ -247,7 +247,7 @@ def test_stored_stored_overlap_drops_both():
 def test_stored_colliding_with_file_placeholder_drops_stored_only(tmp_path):
     # `both` mode: the file source (root-owned config) is a legitimate
     # claimant; a note storing the same placeholder drops alone.
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     file_ph = "avp-PLACEHOLDER-ffffffffffffffffffffffff"
     config_yaml = f"""
@@ -310,9 +310,9 @@ def test_env_derives_for_legacy_secrets():
 
 
 def test_env_degrades_to_derived_when_notes_unreadable(tmp_path, monkeypatch, capsys):
-    import agent_vault_proxy.backends as backends_mod
-    import agent_vault_proxy.config as config_mod
-    from agent_vault_proxy.cli.env import run_env
+    import kow.backends as backends_mod
+    import kow.config as config_mod
+    from kow.cli.env import run_env
 
     salt_path = tmp_path / "install-salt"
     salt_path.write_bytes(_SALT)

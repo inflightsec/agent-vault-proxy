@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy.template import AvpTemplate, UnsupportedTemplateError
+from kow.template import KowTemplate, UnsupportedTemplateError
 
 
 def _assert_rejected(source: str, allowed: list[str] | None = None) -> None:
     with pytest.raises(UnsupportedTemplateError):
-        AvpTemplate(source, allowed or ["X", "Y"])
+        KowTemplate(source, allowed or ["X", "Y"])
 
 
 # ---------------------------------------------------------------------------
@@ -310,13 +310,13 @@ def test_deeply_nested_addition_rejected_or_accepted_cleanly() -> None:
     # 100-deep nested Add chain — accept (it's structurally legal string
     # concatenation). The validator should not stack-overflow.
     deep = " + ".join(["X"] * 100)
-    tpl = AvpTemplate("{{ " + deep + " }}", ["X"])
+    tpl = KowTemplate("{{ " + deep + " }}", ["X"])
     assert tpl.render({"X": "a"}) == "a" * 100
 
 
 def test_template_with_jinja2_comment_accepted() -> None:
     # Comments are stripped by the parser, leave no AST artifact.
-    tpl = AvpTemplate("{# comment #}{{ X }}", ["X"])
+    tpl = KowTemplate("{# comment #}{{ X }}", ["X"])
     assert tpl.render({"X": "val"}) == "val"
 
 
@@ -327,7 +327,7 @@ def test_raw_block_emits_literal_text_no_escape() -> None:
     # streamed as bytes. The operator already controls bindings.yaml, so
     # putting raw text in the template is no worse than putting it in
     # ``inject.header``. Documented here to lock that intuition.
-    tpl = AvpTemplate("{% raw %}{{ X }}{% endraw %}", ["X"])
+    tpl = KowTemplate("{% raw %}{{ X }}{% endraw %}", ["X"])
     assert tpl.render({"X": "ignored"}) == "{{ X }}"
 
 
@@ -338,6 +338,6 @@ def test_raw_block_emits_literal_text_no_escape() -> None:
 
 
 def test_special_chars_not_html_escaped() -> None:
-    tpl = AvpTemplate("{{ X }}", ["X"])
+    tpl = KowTemplate("{{ X }}", ["X"])
     # If autoescape were True, `<` would become `&lt;`. Verify raw.
     assert tpl.render({"X": "<a&b>"}) == "<a&b>"

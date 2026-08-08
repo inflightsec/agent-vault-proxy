@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_vault_proxy.backends.static import (
+from kow.backends.static import (
     StaticSecretsBackend,
     StaticSecretsConfig,
     _file_is_safe,
@@ -51,7 +51,7 @@ def test_warn_downgraded_to_info_when_safe(
     tmp_path.chmod(0o700)
     path = _write_secrets(tmp_path / "secrets.yaml", "secrets:\n  K: v\n", mode=0o600)
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(path)))
-    caplog.set_level(logging.INFO, logger="agent_vault_proxy.backends.static")
+    caplog.set_level(logging.INFO, logger="kow.backends.static")
 
     assert backend.fetch("K") == "v"
 

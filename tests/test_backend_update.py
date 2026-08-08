@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BackendNotWritableError,
     BackendUnavailableError,
     BackendWriteConflictError,
@@ -25,8 +25,8 @@ from agent_vault_proxy.backends import (
     SecretNotFoundError,
     update_secret,
 )
-from agent_vault_proxy.backends.bws import BitwardenBackend
-from agent_vault_proxy.backends.static import StaticSecretsBackend
+from kow.backends.bws import BitwardenBackend
+from kow.backends.static import StaticSecretsBackend
 
 # ---------------------------------------------------------------------------
 # Dispatch helper — read-only fallback + writable forwarding

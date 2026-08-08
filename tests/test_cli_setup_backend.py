@@ -8,8 +8,8 @@ import builtins
 
 import pytest
 
-from agent_vault_proxy.cli.main import main
-from agent_vault_proxy.cli.setup import (
+from kow.cli.main import main
+from kow.cli.setup import (
     PromptStep,
     _execute_prompt_step,
     _prompt_backend,
@@ -77,7 +77,7 @@ def _token_step(tmp_path):
 
 def test_empty_token_writes_nothing_and_explains(tmp_path, monkeypatch, capsys):
     # both getpass prompts return empty
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.getpass", lambda _prompt: "")
+    monkeypatch.setattr("kow.cli.setup.getpass", lambda _prompt: "")
     step = _token_step(tmp_path)
     _execute_prompt_step(step, dry_run=False)
     assert not (tmp_path / "bws-token").exists()  # no 0-byte junk file
@@ -87,7 +87,7 @@ def test_empty_token_writes_nothing_and_explains(tmp_path, monkeypatch, capsys):
 
 
 def test_nonempty_token_is_written_stripped(tmp_path, monkeypatch):
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.getpass", lambda _prompt: "  0.abc.tok  ")
+    monkeypatch.setattr("kow.cli.setup.getpass", lambda _prompt: "  0.abc.tok  ")
     step = _token_step(tmp_path)
     _execute_prompt_step(step, dry_run=False)
     assert (tmp_path / "bws-token").read_text() == "0.abc.tok"
@@ -95,34 +95,34 @@ def test_nonempty_token_is_written_stripped(tmp_path, monkeypatch):
 
 # ── run_setup wiring: picker on no-flag, GSM hand-off ────────────────────────
 def _stub_run_setup_env(monkeypatch):
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.platform.system", lambda: "Linux")
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.os.geteuid", lambda: 0)
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.execute_plan", lambda steps, dry_run: None)
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.run_doctor", lambda **kwargs: 0)
+    monkeypatch.setattr("kow.cli.setup.platform.system", lambda: "Linux")
+    monkeypatch.setattr("kow.cli.setup.os.geteuid", lambda: 0)
+    monkeypatch.setattr("kow.cli.setup.execute_plan", lambda steps, dry_run: None)
+    monkeypatch.setattr("kow.cli.setup.run_doctor", lambda **kwargs: 0)
 
 
 def test_no_flag_on_tty_invokes_picker(monkeypatch):
     _stub_run_setup_env(monkeypatch)
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("kow.cli.setup.sys.stdin.isatty", lambda: True)
     called = {"picker": False}
 
     def _picker():
         called["picker"] = True
         return "static"
 
-    monkeypatch.setattr("agent_vault_proxy.cli.setup._prompt_backend", _picker)
+    monkeypatch.setattr("kow.cli.setup._prompt_backend", _picker)
     run_setup(user=None, dry_run=False, prefix=None)
     assert called["picker"] is True
 
 
 def test_no_flag_off_tty_defaults_bws_no_picker(monkeypatch):
     _stub_run_setup_env(monkeypatch)
-    monkeypatch.setattr("agent_vault_proxy.cli.setup.sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("kow.cli.setup.sys.stdin.isatty", lambda: False)
 
     def _boom():
         raise AssertionError("picker must not run off a TTY")
 
-    monkeypatch.setattr("agent_vault_proxy.cli.setup._prompt_backend", _boom)
+    monkeypatch.setattr("kow.cli.setup._prompt_backend", _boom)
     assert run_setup(user=None, dry_run=False, prefix=None) == 0
 
 

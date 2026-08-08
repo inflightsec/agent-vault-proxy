@@ -30,7 +30,7 @@ from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 from hypothesis.strategies import sampled_from
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
+from kow.addon import AgentVaultProxyAddon
 from tests import _oauth_helpers as oh
 from tests._oauth_helpers import PLACEHOLDER, FakeBackend, FakeResp
 
@@ -185,9 +185,7 @@ class OAuth2NoLeakMachine(RuleBasedStateMachine):
                 ).encode()
             return FakeResp(body, geturl_value="https://oauth2-noleak.example.com/token")
 
-        with patch(
-            "agent_vault_proxy.injectors.oauth2_refresh._transport_open", side_effect=fake_urlopen
-        ):
+        with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=fake_urlopen):
             self.addon.http_connect(flow)
             if flow.response is None:
                 self.addon.requestheaders(flow)

@@ -1,8 +1,8 @@
 """Entrypoint / packaging smoke tests.
 
 Regression guard for the 2026-08-03 incident: a wheel was installed WITHOUT
-``__main__.py`` (stale pip cache), so ``python -m agent_vault_proxy`` died with
-"No module named agent_vault_proxy.__main__; ... cannot be directly executed"
+``__main__.py`` (stale pip cache), so ``python -m kow`` died with
+"No module named kow.__main__; ... cannot be directly executed"
 and the systemd daemon crash-looped for days.
 
 These are cheap invariants on the package's own entrypoint — they do NOT boot
@@ -17,13 +17,13 @@ import sys
 
 
 def test_main_module_is_importable() -> None:
-    """`agent_vault_proxy.__main__` must resolve as a submodule.
+    """`kow.__main__` must resolve as a submodule.
 
     This is the exact condition that broke: find_spec() returns None iff
     __main__.py is absent from the installed/importable package.
     """
-    spec = importlib.util.find_spec("agent_vault_proxy.__main__")
-    assert spec is not None, "agent_vault_proxy.__main__ is missing from the package"
+    spec = importlib.util.find_spec("kow.__main__")
+    assert spec is not None, "kow.__main__ is missing from the package"
 
 
 def test_entrypoint_callable_imports() -> None:
@@ -32,7 +32,7 @@ def test_entrypoint_callable_imports() -> None:
     Import-only: defining main() has no side effects; mitmdump is imported lazily
     *inside* main(), so this never starts the proxy.
     """
-    from agent_vault_proxy.__main__ import main
+    from kow.__main__ import main
 
     assert callable(main)
 
@@ -47,13 +47,13 @@ def test_daemon_import_chain_loads() -> None:
     """
     from mitmproxy.tools.main import mitmdump  # noqa: F401
 
-    from agent_vault_proxy.__main__ import main
+    from kow.__main__ import main
 
     assert callable(main)
 
 
 def test_python_dash_m_resolves_the_package() -> None:
-    """`python -m agent_vault_proxy` must not fail with a module-resolution error.
+    """`python -m kow` must not fail with a module-resolution error.
 
     We pass a deliberately bogus flag so mitmdump's own argparse rejects it fast
     and we never open a listening socket. A missing __main__.py fails *earlier*,
@@ -61,11 +61,11 @@ def test_python_dash_m_resolves_the_package() -> None:
     is the failure this test exists to catch.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "agent_vault_proxy", "--__smoke_bogus_flag__"],
+        [sys.executable, "-m", "kow", "--__smoke_bogus_flag__"],
         capture_output=True,
         text=True,
         timeout=30,
     )
     combined = proc.stdout + proc.stderr
-    assert "No module named agent_vault_proxy.__main__" not in combined, combined
+    assert "No module named kow.__main__" not in combined, combined
     assert "cannot be directly executed" not in combined, combined

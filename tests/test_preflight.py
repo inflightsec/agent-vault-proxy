@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy._preflight import (
+from kow._preflight import (
     _in_container,
     check_audit_log_append_only,
     check_bws_token_via_env_in_container,
@@ -12,7 +12,7 @@ from agent_vault_proxy._preflight import (
     check_root_uid_in_container,
     run_preflight,
 )
-from agent_vault_proxy.config import (
+from kow.config import (
     BindingSpec,
     Config,
 )
@@ -159,20 +159,20 @@ def test_in_container_no_proc_returns_false(monkeypatch) -> None:
 
 def test_bws_env_token_in_container_emits_warning(monkeypatch) -> None:
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     msgs = check_bws_token_via_env_in_container()
     assert any("BWS_ACCESS_TOKEN" in m and "env" in m.lower() for m in msgs), msgs
 
 
 def test_bws_env_token_outside_container_is_silent(monkeypatch) -> None:
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: False)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: False)
     assert check_bws_token_via_env_in_container() == []
 
 
 def test_no_bws_env_token_is_silent_even_in_container(monkeypatch) -> None:
     monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     assert check_bws_token_via_env_in_container() == []
 
 
@@ -204,20 +204,20 @@ def test_audit_log_nonexistent_path_is_silent(tmp_path) -> None:
 
 
 def test_root_inside_container_emits_warning(monkeypatch) -> None:
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     monkeypatch.setattr("os.geteuid", lambda: 0)
     msgs = check_root_uid_in_container()
     assert any("root" in m.lower() and "container" in m.lower() for m in msgs), msgs
 
 
 def test_root_outside_container_is_silent(monkeypatch) -> None:
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: False)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: False)
     monkeypatch.setattr("os.geteuid", lambda: 0)
     assert check_root_uid_in_container() == []
 
 
 def test_nonroot_inside_container_is_silent(monkeypatch) -> None:
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     monkeypatch.setattr("os.geteuid", lambda: 65532)
     assert check_root_uid_in_container() == []
 
@@ -256,7 +256,7 @@ def test_loose_binding_on_unknown_host_is_silent() -> None:
 def test_run_preflight_returns_all_warnings(monkeypatch, tmp_path) -> None:
     """Confirm the aggregator combines warnings from all individual checks."""
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     monkeypatch.setattr("os.geteuid", lambda: 0)
 
     cfg = _make_minimal_config(
@@ -313,11 +313,11 @@ def test_emit_preflight_only_runs_once(monkeypatch, tmp_path, capsys) -> None:
     """mitmproxy may call running() multiple times. The
     banner should appear once per process to avoid burying real changes
     in log spam."""
-    from agent_vault_proxy._preflight import _reset_for_tests, emit_preflight
+    from kow._preflight import _reset_for_tests, emit_preflight
 
     _reset_for_tests()
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
 
     cfg = _make_minimal_config(audit_path=str(tmp_path / "x.jsonl"))
     emit_preflight(cfg)
@@ -331,11 +331,11 @@ def test_emit_preflight_only_runs_once(monkeypatch, tmp_path, capsys) -> None:
 
 def test_emit_preflight_force_overrides_once_flag(monkeypatch, tmp_path, capsys) -> None:
     """Tests need to re-trigger emission for fresh assertions."""
-    from agent_vault_proxy._preflight import _reset_for_tests, emit_preflight
+    from kow._preflight import _reset_for_tests, emit_preflight
 
     _reset_for_tests()
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
     cfg = _make_minimal_config(audit_path=str(tmp_path / "x.jsonl"))
 
     emit_preflight(cfg)
@@ -349,7 +349,7 @@ def test_strict_mode_aborts_on_warning(monkeypatch, tmp_path) -> None:
     """when preflight.fail_on_warning is true, any warning
     raises PreflightFailedError so mitmproxy aborts startup before
     serving traffic."""
-    from agent_vault_proxy._preflight import (
+    from kow._preflight import (
         PreflightFailedError,
         _reset_for_tests,
         emit_preflight,
@@ -357,7 +357,7 @@ def test_strict_mode_aborts_on_warning(monkeypatch, tmp_path) -> None:
 
     _reset_for_tests()
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "anything")
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: True)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: True)
 
     cfg = _make_minimal_config(audit_path=str(tmp_path / "x.jsonl"))
     cfg.preflight.fail_on_warning = True
@@ -369,11 +369,11 @@ def test_strict_mode_aborts_on_warning(monkeypatch, tmp_path) -> None:
 def test_strict_mode_is_silent_when_no_warnings(monkeypatch, tmp_path) -> None:
     """Strict mode doesn't abort when there's nothing to warn about
     (otherwise it'd be unusable on the happy path)."""
-    from agent_vault_proxy._preflight import _reset_for_tests, emit_preflight
+    from kow._preflight import _reset_for_tests, emit_preflight
 
     _reset_for_tests()
     monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: False)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: False)
     monkeypatch.setattr("os.geteuid", lambda: 65532)
 
     cfg = _make_minimal_config(
@@ -390,7 +390,7 @@ def test_run_preflight_on_documented_happy_path_is_quiet(monkeypatch, tmp_path) 
     no warnings (this is what we tell operators to do; surfacing nags here
     would train them to ignore the preflight)."""
     monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
-    monkeypatch.setattr("agent_vault_proxy._preflight._in_container", lambda: False)
+    monkeypatch.setattr("kow._preflight._in_container", lambda: False)
     monkeypatch.setattr("os.geteuid", lambda: 65532)
 
     cfg = _make_minimal_config(

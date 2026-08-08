@@ -92,7 +92,7 @@ The most important counter-intuitive choice is **G5 enforcement by omission**: r
 │   User=avp (fixed system user)           │
 │   Group=avp                              │
 │   HOME=/var/lib/agent-vault-proxy        │
-│   python -m agent_vault_proxy            │
+│   python -m kow            │
 │     → mitmproxy in-process addon         │
 │     → BWS Python SDK + cache             │
 │   Listens: 127.0.0.1:14322               │
@@ -566,7 +566,7 @@ Things that turned out non-obvious in real deploys. Recorded for whoever picks t
 
 7. **`NO_PROXY` semantics differ by tool.** Recent curl supports CIDR; some Node libraries match by hostname substring; Python's `requests` requires explicit hosts. A safe combo: `localhost,127.0.0.1,::1` plus your internal mesh's domains and CIDRs.
 
-8. **mitmproxy `-s` script loading uses a synthetic module name.** Relative imports (`from .audit import …`) in the addon fail with `ModuleNotFoundError: No module named '__mitmproxy_script__'`. Use absolute imports (`from agent_vault_proxy.audit import …`) throughout.
+8. **mitmproxy `-s` script loading uses a synthetic module name.** Relative imports (`from .audit import …`) in the addon fail with `ModuleNotFoundError: No module named '__mitmproxy_script__'`. Use absolute imports (`from kow.audit import …`) throughout.
 
 9. **`pip install $REPO` is a no-op when the version is unchanged.** Add `--force-reinstall --no-deps` to deploy scripts so code edits in the repo actually land in the installed venv on re-run.
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 from hypothesis import given
 from hypothesis import strategies as st
 
-from agent_vault_proxy.matching import host_matches_pattern, path_glob_matches
+from kow.matching import host_matches_pattern, path_glob_matches
 
 # A single DNS label: letters/digits/hyphen, no dot, no wildcard. Non-empty.
 dns_labels = st.text(alphabet="abcdeFGHIJ0129-", min_size=1, max_size=8)

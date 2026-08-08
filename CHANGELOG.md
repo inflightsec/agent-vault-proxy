@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `agent-vault-proxy` are documented here.
+All notable changes to `keys-on-the-wire` (formerly `agent-vault-proxy`) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Renamed `agent-vault-proxy` → `keys-on-the-wire`, CLI `avp` → `kow` (1.0.0, [ADR-0045](docs/adrs/ADR-0045-rename-keys-on-the-wire.md)).** Backward-compatible: an existing deployment upgrades with **no required changes**. The Python package/import module is now `kow`; the distribution is `keys-on-the-wire` on PyPI. `kow` is the canonical CLI, with `avp` (and `agent-vault-proxy`) kept as **deprecated console-script aliases** removed in 2.0.0. The minted placeholder prefix is **unchanged** (`avp-PLACEHOLDER-`) — the daemon matches it on the wire (`spec.placeholder in value`), so every existing agent keeps injecting with zero migration; the forward `kow-PLACEHOLDER-` prefix is additionally accepted on read (roll-forward/back). The mint flips to `kow-` in 2.0.0 with a migration. The `KOW_CONFDIR` env var is canonical; `AVP_CONFDIR` is still read as a **deprecated fallback** (emits a `DeprecationWarning`). **Kept unchanged this release for backward compatibility** — and moved to `kow` in 2.0.0 — the filesystem paths (`/etc/agent-vault-proxy`, `/var/lib/…`, `/var/log/…`, `~/.config/avp/`), the `agent-vault-proxy.service` unit, the `avp`/`_avp` system user, the `avp-binding` annotation key, the docker image name, and the bundled plugin/skill name (`avp`). The JWT `iss` claim is operator-declared and was never a product default, so it is untouched. 8 new backward-compat tests; full suite green. Owner-run release steps (register `keys-on-the-wire` on PyPI, rename the GitHub repo and re-point Trusted Publishing, publish the Homebrew formula with `oldname`, ship an `agent-vault-proxy` deprecation shim) are in ADR-0045.
 - **License changed from MIT to Apache-2.0 ([ADR-0037](docs/adrs/ADR-0037-relicense-apache-2.0.md)).** Apache-2.0 adds an explicit patent grant and patent-retaliation clause — the substantive gap MIT leaves open for a security tool aimed at enterprise environments. A `NOTICE` file is added; contributions now require a DCO `Signed-off-by` line (see `CONTRIBUTING.md`). Git history is untouched: every release up to and including 0.9.0 remains available under its original MIT terms (MIT grants are irrevocable); this change applies from the next release forward.
 
 ### Fixed
@@ -68,7 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Deprecated
 
-- **`agent_vault_proxy.bws_notes` module path.** The note/annotation parser was renamed to `agent_vault_proxy.notes_binding` — it is backend-agnostic (BWS `notes` *and* GSM `avp-binding` annotations), so the `bws_` prefix misled. The old path stays a re-export shim for back-compat but now emits a `DeprecationWarning`; import from `notes_binding` instead. Removal in a future release.
+- **`kow.bws_notes` module path.** The note/annotation parser was renamed to `kow.notes_binding` — it is backend-agnostic (BWS `notes` *and* GSM `avp-binding` annotations), so the `bws_` prefix misled. The old path stays a re-export shim for back-compat but now emits a `DeprecationWarning`; import from `notes_binding` instead. Removal in a future release.
 
 ## [0.7.0], 2026-07-03
 
@@ -144,8 +145,8 @@ Single-line follow-up to v0.4.2. **No proxy code changes** — v0.4.2's proxy ru
 
 ### Fixed
 
-- **`src/agent_vault_proxy/__init__.py` `__version__` now agrees with `pyproject.toml`.** The v0.4.2 release bumped `pyproject.toml` to `0.4.2` but left `__version__ = "0.4.1"` in `src/agent_vault_proxy/__init__.py`. The published v0.4.2 wheel installed correctly via `pip` (PyPI metadata = 0.4.2) but reported `agent_vault_proxy.__version__ == "0.4.1"` at runtime. The `wheel-smoke` job in `.github/workflows/test.yml` is designed to catch exactly this skew (its comment lists it as the canonical failure mode) and went red on `main` after the v0.4.2 push.
-- **`scripts/smoke-test-wheel.sh` entry-point check switched from `python -m agent_vault_proxy --help` to an import-only check** matching `.github/workflows/test.yml`'s `wheel-smoke` job. mitmdump's argparse behavior on `--help` with a `-s addon` flag is fragile across versions and returns exit 1 in some environments, masking real wheel issues as entry-point failures. The CI job already learned this lesson and switched to importing `agent_vault_proxy`, `agent_vault_proxy.__main__.main`, `agent_vault_proxy.addon`, `agent_vault_proxy.config`, and `agent_vault_proxy.backends.BACKEND_REGISTRY`; the local pre-release tool now does the same. Without this, `scripts/pre-release.sh` step 11 (which invokes `smoke-test-wheel.sh`) couldn't go green.
+- **`src/kow/__init__.py` `__version__` now agrees with `pyproject.toml`.** The v0.4.2 release bumped `pyproject.toml` to `0.4.2` but left `__version__ = "0.4.1"` in `src/kow/__init__.py`. The published v0.4.2 wheel installed correctly via `pip` (PyPI metadata = 0.4.2) but reported `kow.__version__ == "0.4.1"` at runtime. The `wheel-smoke` job in `.github/workflows/test.yml` is designed to catch exactly this skew (its comment lists it as the canonical failure mode) and went red on `main` after the v0.4.2 push.
+- **`scripts/smoke-test-wheel.sh` entry-point check switched from `python -m kow --help` to an import-only check** matching `.github/workflows/test.yml`'s `wheel-smoke` job. mitmdump's argparse behavior on `--help` with a `-s addon` flag is fragile across versions and returns exit 1 in some environments, masking real wheel issues as entry-point failures. The CI job already learned this lesson and switched to importing `kow`, `kow.__main__.main`, `kow.addon`, `kow.config`, and `kow.backends.BACKEND_REGISTRY`; the local pre-release tool now does the same. Without this, `scripts/pre-release.sh` step 11 (which invokes `smoke-test-wheel.sh`) couldn't go green.
 - **Release-tooling fixes from v0.4.2 are preserved unchanged in v0.4.3** (`tests/pypi-smoke/run.sh` NEGATIVE assertion accepting `"type":"deny"`, `tests/pypi-smoke/docker-compose.yml` empty-default for `TEST_SECRET`).
 - **Release handoff now gates on `scripts/pre-release.sh`** between commit and tag — that script's section 3 (Version constants agree?) does the exact pyproject vs `__init__.py` comparison that would have caught the v0.4.2 skew. Order matters: `pre-release.sh`'s first check is `git status --porcelain` for a clean working tree, so it runs AFTER `git commit`, not before. This is a process fix, not a code fix; recorded here for traceability.
 
@@ -230,7 +231,7 @@ The adapter refactor (originally proposed for v0.3.0 in `docs/adapter-architectu
 - `CachingSecretsClient.composite_fetch(names)`: atomically fetches multiple secrets under a single generation snapshot; empty BWS values raise `BackendUnavailableError` (never compose partial credentials); flush during assembly raises `_StaleAfterFlushError` so the caller restarts.
 - Same-UUID heuristic: when two distinctly-named compose entries resolve to the same value (suggesting an operator typo pointing both names at one BWS secret), the addon logs a one-shot WARNING to its own logger. The warning never includes the actual secret value.
 - `jinja2 >= 3.1` is now a declared direct dependency (previously transitive via mitmproxy).
-- **`SecretsBackend` protocol + adapter architecture.** `bindings.yaml` uses a discriminated `backend: {type: bws, config: {...}}` block. `agent_vault_proxy.backends.bws.BitwardenBackend` is the reference implementation; new backends (1Password Service Accounts, HashiCorp Vault, Doppler, etc.) plug in by registering a `type` discriminator. `agent_vault_proxy.caching.CachingSecretsClient` provides generic TTL+jitter+LRU+singleflight caching on top of any backend. Protocol design in [`docs/adapter-architecture.md`](docs/adapter-architecture.md).
+- **`SecretsBackend` protocol + adapter architecture.** `bindings.yaml` uses a discriminated `backend: {type: bws, config: {...}}` block. `kow.backends.bws.BitwardenBackend` is the reference implementation; new backends (1Password Service Accounts, HashiCorp Vault, Doppler, etc.) plug in by registering a `type` discriminator. `kow.caching.CachingSecretsClient` provides generic TTL+jitter+LRU+singleflight caching on top of any backend. Protocol design in [`docs/adapter-architecture.md`](docs/adapter-architecture.md).
 - **mypy in CI + pre-commit.** Strict-ish config (`warn_return_any`, `warn_unused_ignores`, `no_implicit_optional`, `check_untyped_defs`); third-party libs without stubs (`mitmproxy`, `bitwarden_sdk`, `yaml`) explicitly silenced.
 - **Ruff C90 cyclomatic-complexity gate** (`max-complexity = 10`). Three pre-existing functions carry `# noqa: C901` with one-line provenance justifications.
 - **Hash-pinned dev dependencies.** `requirements-dev.lock` is now hash-pinned alongside `requirements.lock`. New helper scripts: `scripts/check-lockfile-hashes.py` (zero-dep structural check - every pinned package must carry a `--hash=sha256:` continuation) and `scripts/check-lockfile-drift.sh` (re-runs `uv pip compile` with the 7-day cooldown and diffs against committed). Both wired into pre-commit; the CI `verify-lockfile` job runs the same hash check before the drift diff.
@@ -244,7 +245,7 @@ The adapter refactor (originally proposed for v0.3.0 in `docs/adapter-architectu
 
 ### Removed
 
-- `agent_vault_proxy.bws` module (the `BwsClient` facade) and the top-level `bws:` config block deprecation shim in `config.py`. v0.4.0 is the first public release; there are no public v0.2.0 users to migrate. New `bindings.yaml` files must use the `backend: {type: bws, config: {...}}` form (shown in `bindings.example.yaml`).
+- `kow.bws` module (the `BwsClient` facade) and the top-level `bws:` config block deprecation shim in `config.py`. v0.4.0 is the first public release; there are no public v0.2.0 users to migrate. New `bindings.yaml` files must use the `backend: {type: bws, config: {...}}` form (shown in `bindings.example.yaml`).
 - CodeQL job from `.github/workflows/security.yml` (replaced by Bandit + Semgrep: see above).
 - Gitleaks pre-commit hook + CI job (replaced by TruffleHog - see above).
 

@@ -20,9 +20,9 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.backends import BackendCannotListError
-from agent_vault_proxy.placeholders import derive_placeholder
+from kow.addon import AgentVaultProxyAddon
+from kow.backends import BackendCannotListError
+from kow.placeholders import derive_placeholder
 
 _SALT = b"\x09" * 32
 
@@ -339,7 +339,7 @@ def test_both_mode_degrades_to_file_bindings_when_salt_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    import agent_vault_proxy.placeholders as placeholders
+    import kow.placeholders as placeholders
 
     audit_path = tmp_path / "audit.jsonl"
     placeholder = "file-PLACEHOLDER-01HXY1234567890SALT1"
@@ -355,7 +355,7 @@ def test_both_mode_degrades_to_file_bindings_when_salt_is_unavailable(
         "load_or_create_install_salt",
         lambda salt_path: (_ for _ in ()).throw(OSError("salt unavailable")),
     )
-    caplog.set_level("WARNING", logger="agent_vault_proxy.addon")
+    caplog.set_level("WARNING", logger="kow.addon")
 
     addon = AgentVaultProxyAddon()
     addon.configure_from_path(
@@ -395,7 +395,7 @@ def test_both_mode_degrades_to_file_bindings_when_backend_cannot_list(
         placeholder=placeholder,
         host="file.example.com",
     )
-    caplog.set_level("WARNING", logger="agent_vault_proxy.addon")
+    caplog.set_level("WARNING", logger="kow.addon")
 
     addon = AgentVaultProxyAddon()
     addon.configure_from_path(str(config_path), backend_override=_CannotListBackend())
@@ -416,7 +416,7 @@ def test_bws_notes_mode_degrades_to_no_bindings_without_crashing(
     caplog: pytest.LogCaptureFixture,
     failure_kind: str,
 ) -> None:
-    import agent_vault_proxy.placeholders as placeholders
+    import kow.placeholders as placeholders
 
     class _CannotListBackend:
         def list_secret_names(self) -> list[str]:
@@ -435,7 +435,7 @@ def test_bws_notes_mode_degrades_to_no_bindings_without_crashing(
     else:
         backend = _CannotListBackend()
 
-    caplog.set_level("WARNING", logger="agent_vault_proxy.addon")
+    caplog.set_level("WARNING", logger="kow.addon")
     addon = AgentVaultProxyAddon()
     config_path = _bws_notes_config(tmp_path, tmp_path / "audit.jsonl")
     addon.configure_from_path(str(config_path), backend_override=backend)

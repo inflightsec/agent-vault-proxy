@@ -56,3 +56,16 @@ reason = "cryptography X.509 path-building DoS (duplicate self-signed intermedia
 [[IgnoredVulns]]
 id = "PYSEC-2026-3554"
 reason = "cryptography X.509 name-constraint wildcard bypass; N/A (AVP never verifies cert chains); fix (49.0) blocked by mitmproxy's cryptography<=48.1 pin"
+
+# --- h2: pinned by mitmproxy at h2==4.3.0 (EXACT) ---------------------------
+# h2 is transitive via mitmproxy's HTTP/2 stack. mitmproxy 12.2.3 pins it
+# exactly (Requires-Dist: h2<=4.3.0,>=4.3.0), so the 4.4.1 fix cannot be
+# installed until a mitmproxy release relaxes the pin. The smuggling vector
+# (CWE-444) needs an UNTRUSTED HTTP/2 client sending duplicate Host headers
+# across an HTTP/2->HTTP/1.1 downgrade; AVP's client is the local trusted agent,
+# not an internet peer. RADEK: confirm/refine this exposure note against
+# architecture.md (request path) before committing. Drop when a mitmproxy
+# release allows h2>=4.4.1 and a regen pulls it.
+[[IgnoredVulns]]
+id = "GHSA-6hr6-w5qg-qmwg"
+reason = "h2 HTTP request smuggling (duplicate Host on HTTP/2->1.1 downgrade), CVSS 5.3, transitive via mitmproxy; needs an untrusted HTTP/2 client (AVP's client is the local trusted agent); fix (4.4.1) blocked by mitmproxy 12.2.3's exact h2==4.3.0 pin"

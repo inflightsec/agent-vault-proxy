@@ -4,7 +4,7 @@ End-to-end smoke for the **published PyPI wheel** of `agent-vault-proxy`. Differ
 
 ## What it does
 
-1. Builds a minimal `python:3.12-slim-bookworm` image that runs `pip install --only-binary :all: agent-vault-proxy==<version>` from PyPI (or any `--index-url` you point at).
+1. Builds a minimal `python:3.12-slim-bookworm` image that runs `pip install --only-binary :all: keys-on-the-wire==<version>` from PyPI (or any `--index-url` you point at).
 2. Stands up the proxy + a `mendhak/http-https-echo` upstream on an isolated bridge network, with the same hardening (`read_only`, `cap_drop: [ALL]`, `no-new-privileges`) as the docker-e2e stack.
 3. Runs the same positive (placeholder → real secret on the wire, audit recorded) + negative (unbound destination denied, audit recorded) assertions as `docker-e2e/`.
 
@@ -36,7 +36,7 @@ Before tagging a release, you can run the same harness against a wheel you've ju
 rm -rf dist && python -m build
 
 # 2. Smoke it through the same harness CI will run
-bash tests/pypi-smoke/run.sh --local-wheel dist/agent_vault_proxy-0.9.0-py3-none-any.whl
+bash tests/pypi-smoke/run.sh --local-wheel dist/keys_on_the_wire-0.9.0-py3-none-any.whl
 
 # 3. If green, push the tag — CI runs the same harness against the
 #    published PyPI artifact, which exercises the identical code path.

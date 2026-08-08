@@ -13,7 +13,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from agent_vault_proxy._ssrf_guard import SsrfBlockedError, check_url_not_internal
+from kow._ssrf_guard import SsrfBlockedError, check_url_not_internal
 
 # ---------------------------------------------------------------------------
 # Direct-IP blocklist — each address range gets its own pin so a regression
@@ -156,7 +156,7 @@ def patched_getaddrinfo(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 def test_hostname_resolving_to_public_ip_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         _stub_getaddrinfo(["93.184.216.34"]),  # example.com's known IP
     )
     check_url_not_internal("https://example.com/token")
@@ -166,7 +166,7 @@ def test_hostname_resolving_to_loopback_blocked(monkeypatch: pytest.MonkeyPatch)
     """DNS rebinding defense: a public-looking hostname that resolves to
     127.0.0.1 must be blocked."""
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         _stub_getaddrinfo(["127.0.0.1"]),
     )
     with pytest.raises(SsrfBlockedError, match=r"loopback"):
@@ -178,7 +178,7 @@ def test_hostname_resolving_to_mixed_blocked(monkeypatch: pytest.MonkeyPatch) ->
     attacker controlling the resolver picks the private one at connect
     time; the guard must block on ANY private hit, not just all-private."""
     monkeypatch.setattr(
-        "agent_vault_proxy._ssrf_guard.socket.getaddrinfo",
+        "kow._ssrf_guard.socket.getaddrinfo",
         _stub_getaddrinfo(["8.8.8.8", "10.0.0.1"]),
     )
     with pytest.raises(SsrfBlockedError, match=r"private|rfc1918"):
@@ -192,7 +192,7 @@ def test_dns_resolution_failure_denies(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_args: object, **_kw: object) -> list:
         raise socket.gaierror("name resolution failed")
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", boom)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", boom)
     with pytest.raises(SsrfBlockedError, match=r"resolution|gaierror"):
         check_url_not_internal("https://nowhere.example.com/token")
 
@@ -230,7 +230,7 @@ def test_oauth_token_url_loopback_blocked_at_config_load() -> None:
     Loopback token_url is the canonical operator paste-error case."""
     from pydantic import ValidationError
 
-    from agent_vault_proxy.config import Config
+    from kow.config import Config
 
     with pytest.raises(ValidationError, match=r"loopback|ssrf"):
         Config.model_validate(_wrap_oauth("https://127.0.0.1/token"))
@@ -242,7 +242,7 @@ def test_oauth_token_url_imds_blocked_at_config_load() -> None:
     surfaces with this exact name."""
     from pydantic import ValidationError
 
-    from agent_vault_proxy.config import Config
+    from kow.config import Config
 
     with pytest.raises(ValidationError, match=r"link-local|169\.254|imds|ssrf"):
         Config.model_validate(_wrap_oauth("https://169.254.169.254/token"))
@@ -254,7 +254,7 @@ def test_oauth_provider_preset_skips_ssrf_check_for_known_urls() -> None:
     operator's host to have live DNS at startup. Provider-preset path
     skips the runtime DNS check; the request-time check (slice 5) still
     runs before every exchange."""
-    from agent_vault_proxy.config import Config
+    from kow.config import Config
 
     Config.model_validate(
         {
@@ -293,7 +293,7 @@ def test_blocked_ip_literal_short_circuits_without_dns(
     def dns_must_not_be_called(*_args: object, **_kw: object) -> list:
         raise AssertionError("getaddrinfo consulted for an IP-literal URL")
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
     with pytest.raises(SsrfBlockedError, match=r"169\.254\.169\.254"):
         check_url_not_internal("https://169.254.169.254/latest/meta-data/")
 
@@ -306,5 +306,5 @@ def test_public_ip_literal_short_circuits_without_dns(
     def dns_must_not_be_called(*_args: object, **_kw: object) -> list:
         raise AssertionError("getaddrinfo consulted for an IP-literal URL")
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", dns_must_not_be_called)
     check_url_not_internal("https://8.8.8.8/token")  # must not raise

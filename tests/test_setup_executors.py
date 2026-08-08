@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_vault_proxy.cli import setup as setup_mod
-from agent_vault_proxy.cli.setup import CommandStep, PromptStep
+from kow.cli import setup as setup_mod
+from kow.cli.setup import CommandStep, PromptStep
 
 # --------------------------------------------------------------------------
 # _execute_command_step

@@ -13,7 +13,7 @@
 #
 # The point is to exercise the actual PyPI artifact (not a wheel built
 # fresh from this commit). If something silently drifts between
-# `python -m build` and `pip install agent-vault-proxy==X` from PyPI,
+# `python -m build` and `pip install keys-on-the-wire==X` from PyPI,
 # this harness catches it.
 
 # syntax=docker/dockerfile:1.7
@@ -67,18 +67,18 @@ COPY wheels/ /wheels/
 #   local → install the single .whl staged into /wheels/
 RUN set -eu; \
     if [ "${INSTALL_SOURCE}" = "local" ]; then \
-        WHEEL=$(ls /wheels/agent_vault_proxy-*.whl 2>/dev/null | head -1); \
+        WHEEL=$(ls /wheels/keys_on_the_wire-*.whl 2>/dev/null | head -1); \
         if [ -z "$WHEEL" ]; then \
-            echo "ERROR: INSTALL_SOURCE=local but no agent_vault_proxy-*.whl in /wheels/" >&2; \
+            echo "ERROR: INSTALL_SOURCE=local but no keys_on_the_wire-*.whl in /wheels/" >&2; \
             exit 1; \
         fi; \
         echo "Installing from local wheel: $WHEEL"; \
         pip install --no-cache-dir --only-binary :all: "$WHEEL"; \
     else \
-        echo "Installing from index ${PACKAGE_INDEX_URL}: agent-vault-proxy==${PACKAGE_VERSION}"; \
+        echo "Installing from index ${PACKAGE_INDEX_URL}: keys-on-the-wire==${PACKAGE_VERSION}"; \
         pip install --no-cache-dir --only-binary :all: \
             --index-url "${PACKAGE_INDEX_URL}" \
-            "agent-vault-proxy==${PACKAGE_VERSION}"; \
+            "keys-on-the-wire==${PACKAGE_VERSION}"; \
     fi
 
 # Bake the installed version into an image label for diagnostics on
@@ -109,7 +109,7 @@ EXPOSE 14322
 # Identical CLI to the production Dockerfile. If this diverges, the
 # smoke is testing something other than what ships, which defeats the
 # point of the exercise.
-CMD ["python", "-m", "agent_vault_proxy", \
+CMD ["python", "-m", "kow", \
      "--listen-host", "0.0.0.0", \
      "--set", "avp_config=/etc/agent-vault-proxy/bindings.yaml"]
 

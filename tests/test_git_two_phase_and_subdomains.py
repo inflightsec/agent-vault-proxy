@@ -22,10 +22,10 @@ from typing import Any
 
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import FetchContext
+from kow.caching import CachingSecretsClient
 
 GITHUB_PLACEHOLDER = "ghp-PLACEHOLDER-01HXY1234567890AB"
 JFROG_PLACEHOLDER = "jfrog-PLACEHOLDER-01HXY1234567890AB"
@@ -42,7 +42,7 @@ def _client() -> CachingSecretsClient:
 
 
 def _addon(tmp_path: Path, config_yaml: str) -> tuple[AgentVaultProxyAddon, Path]:
-    from agent_vault_proxy.config import load_config
+    from kow.config import load_config
 
     audit_path = tmp_path / "audit.jsonl"
     config_path = tmp_path / "bindings.yaml"

@@ -12,14 +12,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BACKEND_REGISTRY,
     BackendAuthLostError,
     BackendUnavailableError,
     SecretNotFoundError,
 )
-from agent_vault_proxy.backends.gsm import GsmBackend, GsmConfig, _is_service_account_key
-from agent_vault_proxy.runtime_bindings import resolve_runtime_bindings
+from kow.backends.gsm import GsmBackend, GsmConfig, _is_service_account_key
+from kow.runtime_bindings import resolve_runtime_bindings
 from tests.backends.test_protocol_contract import ProtocolContract
 
 

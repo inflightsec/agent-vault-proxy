@@ -18,7 +18,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-INJECTORS="src/agent_vault_proxy/injectors"
+INJECTORS="src/kow/injectors"
 
 # Connection-OPENING primitives only, matched as CALLS (trailing "(") so a
 # prose mention in a comment/docstring doesn't false-positive. The single

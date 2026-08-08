@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 from mitmproxy.test import tflow
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.audit import AuditWriter
-from agent_vault_proxy.backends import BackendUnavailableError, FetchContext
-from agent_vault_proxy.caching import CachingSecretsClient
-from agent_vault_proxy.config import load_config
+from kow.addon import AgentVaultProxyAddon
+from kow.audit import AuditWriter
+from kow.backends import BackendUnavailableError, FetchContext
+from kow.caching import CachingSecretsClient
+from kow.config import load_config
 
 PLACEHOLDER = "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
 OPENAI_PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
@@ -593,7 +593,7 @@ def test_composite_same_uuid_warning_logged_once(
         tmp_path,
         {"JIRA_EMAIL": leaked_value, "JIRA_API_TOKEN": leaked_value},
     )
-    caplog.set_level("WARNING", logger="agent_vault_proxy.addon")
+    caplog.set_level("WARNING", logger="kow.addon")
 
     for _ in range(3):
         flow = _make_composite_request(
@@ -615,7 +615,7 @@ def test_composite_no_warning_when_values_distinct(
         tmp_path,
         {"JIRA_EMAIL": "alice", "JIRA_API_TOKEN": "bob-token"},
     )
-    caplog.set_level("WARNING", logger="agent_vault_proxy.addon")
+    caplog.set_level("WARNING", logger="kow.addon")
     flow = _make_composite_request("your-tenant.atlassian.net", f"Basic {COMPOSITE_PLACEHOLDER}")
     addon.requestheaders(flow)
     warnings = [r for r in caplog.records if "resolved to the same value" in r.message]

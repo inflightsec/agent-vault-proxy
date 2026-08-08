@@ -11,7 +11,7 @@ Apply via **Settings → Branches → Branch protection rules** and **Settings �
 | Require a pull request before merging | ✓ | No direct pushes to main, even from maintainers. |
 | Require approvals | 1 | One reviewer minimum. For a solo project, this means the maintainer's own PRs need their own self-approval before merge: slight friction is the point. |
 | Dismiss stale approvals when new commits are pushed | ✓ | Force re-review after rebase/fixup. |
-| Require review from Code Owners | ✓ (when `CODEOWNERS` is added) | Routes security-sensitive areas (`src/agent_vault_proxy/`, `.github/workflows/`) to the right reviewer. |
+| Require review from Code Owners | ✓ (when `CODEOWNERS` is added) | Routes security-sensitive areas (`src/kow/`, `.github/workflows/`) to the right reviewer. |
 | Require status checks to pass before merging | ✓ | The CI must be green; see "Required checks" below. |
 | Require branches to be up to date before merging | ✓ | Forces rebase against the latest `main` so the checks ran against the actual merge state. |
 | Require conversation resolution before merging | ✓ | No unresolved review comments. |

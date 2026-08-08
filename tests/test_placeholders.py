@@ -24,12 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_vault_proxy.config import (
+from kow.config import (
     _PLACEHOLDER_MIN_LEN,
     Config,
     validate_placeholder_invariants,
 )
-from agent_vault_proxy.placeholders import (
+from kow.placeholders import (
     PLACEHOLDER_PREFIX,
     InstallSaltError,
     PlaceholderCollisionError,
@@ -145,7 +145,7 @@ def test_derive_placeholder_map_raises_on_collision(monkeypatch) -> None:
     """If two distinct names derive the same placeholder (forced here by
     stubbing the digest), the map builder raises a hard error naming BOTH
     conflicting secrets — never silently coalesces."""
-    import agent_vault_proxy.placeholders as mod
+    import kow.placeholders as mod
 
     # Force a constant tail so every name collides.
     monkeypatch.setattr(mod, "_derive_tail", lambda name, salt: "a" * 21)
@@ -249,7 +249,7 @@ def test_resolve_install_salt_path_prefers_explicit_then_confdir_then_home(
 
 
 def test_resolve_install_salt_path_raises_when_home_is_unavailable(monkeypatch) -> None:
-    import agent_vault_proxy.placeholders as mod
+    import kow.placeholders as mod
 
     monkeypatch.delenv("AVP_CONFDIR", raising=False)
 

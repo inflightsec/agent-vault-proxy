@@ -50,7 +50,7 @@ intrinsic to the *service* rather than the operator's token:
   (`_INJECTOR_TYPES`). No new injector machinery.
 - `default_scope:` — the tightest `methods` + `paths` that is still useful (least privilege).
 
-Ships in-package (`agent_vault_proxy/service_templates/…`) under the same **backfill
+Ships in-package (`kow/service_templates/…`) under the same **backfill
 discipline** as the OAuth presets (ADR-0017 §9): an entry lands when a concrete operator
 binding needs it, never on speculation. The catalog is the open-source credentialing
 surface (S8) — a well-curated set of "here is how to safely scope GitHub / Stripe / Slack"

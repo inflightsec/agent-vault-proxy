@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_vault_proxy.audit import (
+from kow.audit import (
     AUDIT_EVENT_TYPES,
     EVENT_HONEYTOKEN_TRIGGERED,
     AuditWriter,
@@ -35,7 +35,7 @@ from agent_vault_proxy.audit import (
 # Modules that call AuditWriter.emit. A new emit site in a NEW module is caught
 # at runtime by the emit() guard; this static freeze is the friendly early
 # warning for the common case (a new type at an existing site).
-_SRC = Path(__file__).resolve().parent.parent / "src" / "agent_vault_proxy"
+_SRC = Path(__file__).resolve().parent.parent / "src" / "kow"
 _EMIT_SITE_MODULES = [
     _SRC / "addon.py",
     _SRC / "handlers.py",

@@ -14,7 +14,7 @@ from collections.abc import Iterator
 import pytest
 from pydantic import ValidationError
 
-from agent_vault_proxy.config import Config
+from kow.config import Config
 from tests._oauth_helpers import apply_public_ssrf_stub
 
 _FOO_PH = "foo_PLACEHOLDER_01HXY1234567890"
@@ -218,7 +218,7 @@ def test_missing_required_secret_refs_rejected() -> None:
 def test_discriminator_dispatches_to_oauth_class() -> None:
     """``type: oauth2_refresh`` must hit the new class, not get caught
     by the prior 'planned' fail-closed path."""
-    from agent_vault_proxy.config import Oauth2RefreshInjector
+    from kow.config import Oauth2RefreshInjector
 
     inject = {
         "type": "oauth2_refresh",
@@ -281,7 +281,7 @@ def test_tenant_specific_provider_with_explicit_token_url_loads() -> None:
     """``provider: auth0`` (or okta) WITH explicit ``token_url`` is the
     valid shape for tenant deployments. The preset contributes the
     auth method only."""
-    from agent_vault_proxy.oauth_providers import PROVIDER_PRESETS
+    from kow.oauth_providers import PROVIDER_PRESETS
 
     inject = {
         "type": "oauth2_refresh",
@@ -345,7 +345,7 @@ def test_tenant_provider_token_url_runs_ssrf_check(monkeypatch: pytest.MonkeyPat
         # Tenant URL resolves to a loopback — must be blocked.
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 0))]
 
-    monkeypatch.setattr("agent_vault_proxy._ssrf_guard.socket.getaddrinfo", stub)
+    monkeypatch.setattr("kow._ssrf_guard.socket.getaddrinfo", stub)
     inject = {
         "type": "oauth2_refresh",
         "provider": "auth0",

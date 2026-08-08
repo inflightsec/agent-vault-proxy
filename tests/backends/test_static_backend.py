@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_vault_proxy.backends import SecretNotFoundError
-from agent_vault_proxy.backends.static import StaticSecretsBackend, StaticSecretsConfig
+from kow.backends import SecretNotFoundError
+from kow.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
 
 def _write_secrets(tmp_path: Path, body: str, *, mode: int = 0o600) -> Path:
@@ -115,7 +115,7 @@ def test_unreadable_file_raises_backend_unavailable(tmp_path: Path) -> None:
     Wrapping the read in BackendUnavailableError closes that path."""
     import os
 
-    from agent_vault_proxy.backends import BackendUnavailableError
+    from kow.backends import BackendUnavailableError
 
     p = _write_secrets(tmp_path, "secrets:\n  K: v\n", mode=0o600)
     # Make the file unreadable by the current process. stat() will still

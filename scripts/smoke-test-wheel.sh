@@ -10,8 +10,8 @@
 #
 #   1. The wheel builds without errors.
 #   2. The wheel installs into a fresh interpreter.
-#   3. `import agent_vault_proxy` succeeds.
-#   4. `agent_vault_proxy.__version__` matches what pyproject.toml says.
+#   3. `import kow` succeeds.
+#   4. `kow.__version__` matches what pyproject.toml says.
 #   5. Entry-point + addon imports succeed (proves __main__.main and
 #      every runtime-required module load against the installed wheel).
 #
@@ -81,7 +81,7 @@ if [ "$MODE" = "local" ]; then
             # .git) is irrelevant to wheel content and just slows the cp.
             mkdir -p /tmp/scratch/src /tmp/dist
             cp /src/pyproject.toml /src/README.md /src/LICENSE /tmp/scratch/
-            cp -r /src/src/agent_vault_proxy /tmp/scratch/src/
+            cp -r /src/src/kow /tmp/scratch/src/
             cd /tmp/scratch
 
             # 1. Build wheel.
@@ -89,7 +89,7 @@ if [ "$MODE" = "local" ]; then
             python -m build --wheel --outdir /tmp/dist .
 
             # 2. Find the produced wheel.
-            WHEEL=$(ls /tmp/dist/agent_vault_proxy-*.whl | head -1)
+            WHEEL=$(ls /tmp/dist/keys_on_the_wire-*.whl | head -1)
             echo "built: $WHEEL"
 
             # 3. Install it into a fresh venv (NOT the build venv —
@@ -99,10 +99,10 @@ if [ "$MODE" = "local" ]; then
             /tmp/testvenv/bin/pip install --quiet --no-cache-dir --only-binary :all: "$WHEEL"
 
             # 4. Import — proves no missing-dep at runtime.
-            /tmp/testvenv/bin/python -c "import agent_vault_proxy; print(\"import OK\")"
+            /tmp/testvenv/bin/python -c "import kow; print(\"import OK\")"
 
             # 5. Version — proves the wheel and pyproject agree.
-            ACTUAL=$(/tmp/testvenv/bin/python -c "import agent_vault_proxy; print(agent_vault_proxy.__version__)")
+            ACTUAL=$(/tmp/testvenv/bin/python -c "import kow; print(kow.__version__)")
             if [ "$ACTUAL" != "$EXPECTED_VERSION" ]; then
                 echo "version mismatch: wheel says $ACTUAL, pyproject says $EXPECTED_VERSION" >&2
                 exit 1
@@ -110,7 +110,7 @@ if [ "$MODE" = "local" ]; then
             echo "version OK: $ACTUAL"
 
             # 6. Entry point + addon module imports. Originally this
-            # ran `python -m agent_vault_proxy --help`, which delegates
+            # ran `python -m kow --help`, which delegates
             # to the mitmdump argparse layer; mitmdump --help with a
             # -s addon flag is fragile across versions and returns
             # exit 1 on the runner. The test.yml wheel-smoke job
@@ -124,10 +124,10 @@ if [ "$MODE" = "local" ]; then
             # shell parse with: unexpected EOF while looking for
             # matching quote.
             /tmp/testvenv/bin/python -c "
-import agent_vault_proxy
-from agent_vault_proxy.__main__ import main
-from agent_vault_proxy import addon, config
-from agent_vault_proxy.backends import BACKEND_REGISTRY
+import kow
+from kow.__main__ import main
+from kow import addon, config
+from kow.backends import BACKEND_REGISTRY
 print(\"entry point OK\")
 "
         '
@@ -143,16 +143,16 @@ else
             /tmp/testvenv/bin/pip install --quiet --no-cache-dir --only-binary :all: \
                 "agent-vault-proxy==${PYPI_VERSION}"
 
-            /tmp/testvenv/bin/python -c "import agent_vault_proxy; print(\"import OK\")"
+            /tmp/testvenv/bin/python -c "import kow; print(\"import OK\")"
 
-            ACTUAL=$(/tmp/testvenv/bin/python -c "import agent_vault_proxy; print(agent_vault_proxy.__version__)")
+            ACTUAL=$(/tmp/testvenv/bin/python -c "import kow; print(kow.__version__)")
             if [ "$ACTUAL" != "$PYPI_VERSION" ]; then
                 echo "PyPI wheel reports version $ACTUAL, expected $PYPI_VERSION" >&2
                 exit 1
             fi
             echo "version OK: $ACTUAL"
 
-            /tmp/testvenv/bin/python -m agent_vault_proxy --help >/dev/null
+            /tmp/testvenv/bin/python -m kow --help >/dev/null
             echo "entry point OK"
         '
 fi

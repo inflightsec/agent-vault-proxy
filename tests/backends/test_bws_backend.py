@@ -12,11 +12,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_vault_proxy.backends import (
+from kow.backends import (
     BackendUnavailableError,
     SecretNotFoundError,
 )
-from agent_vault_proxy.backends.bws import BitwardenBackend, BwsConfig
+from kow.backends.bws import BitwardenBackend, BwsConfig
 from tests.backends.test_protocol_contract import ProtocolContract
 
 

@@ -19,7 +19,7 @@ import stat
 
 import pytest
 
-from agent_vault_proxy.cli.env import (
+from kow.cli.env import (
     VALID_SECRET_NAME_RE,
     build_export_lines,
     list_secret_names,

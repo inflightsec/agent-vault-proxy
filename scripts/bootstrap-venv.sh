@@ -67,5 +67,5 @@ UV_REQUIRE_HASHES=false uv pip install --no-deps -e .
 
 echo
 echo "✓ .venv ready. Verify:"
-echo "    .venv/bin/python -c 'import agent_vault_proxy; print(agent_vault_proxy.__version__)'"
+echo "    .venv/bin/python -c 'import kow; print(kow.__version__)'"
 echo "    .venv/bin/pytest -q"

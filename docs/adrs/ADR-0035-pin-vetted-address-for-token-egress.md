@@ -151,7 +151,7 @@ soak together as one reviewable unit.
 ## References
 
 - ADR-0017 §5 — the original `token_url` SSRF guard this hardens.
-- `src/agent_vault_proxy/_ssrf_guard.py`, `injectors/_token_transport.py`,
+- `src/kow/_ssrf_guard.py`, `injectors/_token_transport.py`,
   `injectors/oauth2_refresh.py`, `config_models.py`.
 - Resolve-and-pin is the standard SSRF-safe fetch pattern: vet the resolved
   address set, then connect to a vetted member rather than re-resolving the

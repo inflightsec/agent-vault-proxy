@@ -15,8 +15,8 @@ import hmac
 import json
 from pathlib import Path
 
-from agent_vault_proxy.addon import AgentVaultProxyAddon
-from agent_vault_proxy.injectors.hmac_signer import hmac_sign
+from kow.addon import AgentVaultProxyAddon
+from kow.injectors.hmac_signer import hmac_sign
 from tests._oauth_helpers import FakeBackend, make_request
 
 _HOST = "api.example.com"

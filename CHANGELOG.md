@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0], 2026-08-08
+
 ### Added
 
 - **`avp mcp install` — broker an MCP server's upstream credential ([ADR-0040](docs/adrs/ADR-0040-mcp-server-credential-broker.md)).** A new operator verb that onboards an MCP server (Claude Code / Codex) so its upstream secret (a GitHub PAT, a Slack/Brave/Perplexity key) never sits in cleartext in the client config. It composes the vault binding note through the same `parse_notes_binding`-validated path as `avp binding new` (ADR-0029 stored placeholder) and emits the per-server `env` block — `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` (both upper- and lower-case), the per-runtime CA-trust var (`NODE_EXTRA_CA_CERTS` / `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE`) and `NODE_USE_ENV_PROXY=1` for the undici bypass, plus the placeholder — rendered as the client's native `claude/codex mcp add --env` command. **Propose-only for the vault**: the secret value is never emitted, only the non-secret placeholder sentinel; `--apply` runs the client CLI (argv list, `shell=False`) and exits non-zero if it fails or the binary is missing. Security posture: every note-bound field (`--header`/`--format`/`--methods`/`--paths`/`--host`) rejects the full Unicode control/format/separator space (categories Cc/Cf/Zl/Zp) so no YAML line break — ASCII `\n` or Unicode NEL/U+2028/U+2029 — can inject a second `host:` line (credential redirect) or `methods:`/`paths:` line (silent scope widening); a post-parse **host-intent assertion** re-checks the bound host equals the operator-confirmed `--host`; the server-name and env-var grammars block argv flag-smuggling; printed commands and the `--smoke` command are `shlex`-quoted. CA trust is per-server env only, never a system trust store; `--apply` requires `--server-cmd` and refuses `--no-placeholder`; defaults reuse `avp run`'s canonical proxy URL (`:14322`) and CA path; a non-loopback `--proxy-url` warns. 40 tests (injection rejects incl. Unicode breaks, host-intent, multi-host, per-runtime env block, `--apply` failure/missing-binary/dedup, shell-quoting). The bundled `avp` skill gains an `InstallMcp` workflow that derives host/header/format from the server's README + the upstream's docs (treated as untrusted, facts-not-instructions) with a mandatory human host-confirm.
@@ -298,7 +300,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...v0.7.0

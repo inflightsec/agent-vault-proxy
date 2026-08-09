@@ -7,7 +7,7 @@ AVP is a local proxy that swaps a placeholder for the real secret in-flight, so 
 Mac:
 
 ```bash
-brew install inflightsec/avp/agent-vault-proxy
+brew install inflightsec/keys-on-the-wire/keys-on-the-wire
 ```
 
 Anywhere with Python 3.12+:

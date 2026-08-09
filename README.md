@@ -28,7 +28,7 @@ The goal is fewer real keys inside AI agents everywhere, not lock-in. If Keys on
 
 ```bash
 pipx install 'keys-on-the-wire[bitwarden]'   # [bitwarden] adds the Bitwarden backend SDK; drop it for AWS/GSM/env only
-# macOS: brew install inflightsec/kow/keys-on-the-wire
+# macOS: brew install inflightsec/keys-on-the-wire/keys-on-the-wire
 sudo kow setup --bws        # paste your Bitwarden token — generates the CA, starts the daemon
 ```
 
@@ -102,7 +102,7 @@ It prints the vault note to paste **and** the exact `claude mcp add --env` / `co
 - **[Quickstart](docs/quickstart.md)** - 10-minute first run ending in a visible substitution
 - **[Concepts](docs/concepts.md)** - placeholder, binding, the CA, fail-closed, in plain terms
 - **[Prerequisites](docs/prerequisites.md)** - Bitwarden Secrets Manager setup (do this first)
-- **[Linux install](docs/install-systemd.md)** · **[Docker](docs/docker.md)** · **[macOS](https://github.com/inflightsec/homebrew-kow)**
+- **[Linux install](docs/install-systemd.md)** · **[Docker](docs/docker.md)** · **[macOS](https://github.com/inflightsec/homebrew-keys-on-the-wire)**
 - **[Usage](docs/usage.md)** - pointing your agent at the proxy
 - **[Linux isolation](docs/linux-isolation.md)** - composing Keys on the Wire with `bubblewrap` for filesystem sandboxing
 - **[bindings.example.yaml](bindings.example.yaml)** - full config schema

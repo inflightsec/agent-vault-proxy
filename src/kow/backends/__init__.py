@@ -71,8 +71,8 @@ def require(backend: str, package: str, extra: str, *, note: str = "") -> Iterat
         raise BackendUnavailableError(
             f"the {backend} backend needs the '{package}' package, which is not "
             f"installed.{note}\n"
-            f"  pip install 'agent-vault-proxy[{extra}]'\n"
-            f"  pipx inject agent-vault-proxy {package}   # if AVP was installed with pipx"
+            f"  pip install 'keys-on-the-wire[{extra}]'\n"
+            f"  pipx inject keys-on-the-wire {package}   # if kow was installed with pipx"
         ) from e
 
 
@@ -150,7 +150,7 @@ def fetch_with_meta(
 
 class BackendCannotListError(Exception):
     """Raised by :func:`list_secret_names` when the backend has no way to
-    enumerate secret names. ``avp env`` and the daemon's BWS-notes placeholder
+    enumerate secret names. ``kow env`` and the daemon's BWS-notes placeholder
     map both REQUIRE enumeration; a backend that can't list can't drive either,
     and we fail loud rather than silently producing an empty env file (which
     would look like "no secrets" instead of "this backend can't list")."""
@@ -224,7 +224,7 @@ def list_secret_names(backend: SecretsBackend) -> list[str]:
     Like :func:`fetch_with_meta`, this dispatches to the backend's own
     ``list_secret_names`` when present (bws + static implement it) and
     raises :class:`BackendCannotListError` otherwise. Kept as a single
-    helper so the ``avp env`` projection and the daemon's placeholder-map
+    helper so the ``kow env`` projection and the daemon's placeholder-map
     builder share one enumeration contract — adding a listable backend never
     requires touching either caller.
     """
@@ -234,7 +234,7 @@ def list_secret_names(backend: SecretsBackend) -> list[str]:
         return result
     raise BackendCannotListError(
         f"backend {type(backend).__name__} cannot enumerate secret names; "
-        "`avp env` and BWS-notes binding mode require a listable backend "
+        "`kow env` and BWS-notes binding mode require a listable backend "
         "(bws, static)."
     )
 

@@ -1,4 +1,4 @@
-"""``avp gcp-setup`` — grant a service account PER-SECRET Secret Manager access.
+"""``kow gcp-setup`` — grant a service account PER-SECRET Secret Manager access.
 
 The secure-by-default install helper for the `gsm` backend (ADR-0018 §6). It
 grants `roles/secretmanager.secretAccessor` on each named secret **individually**
@@ -6,7 +6,7 @@ and **REFUSES** to bind at project / folder / org scope — a broad bind would l
 the proxy's identity read every secret in the project, exactly the blast radius
 the backend's `self_check` exists to prevent.
 
-Shells out to `gcloud` (the operator's authenticated admin session); AVP's own
+Shells out to `gcloud` (the operator's authenticated admin session); kow's own
 low-privilege runtime identity never runs this.
 """
 
@@ -33,7 +33,7 @@ def run_gcp_setup(
     """
     if scope != "secret":
         print(
-            f"avp gcp-setup: refusing scope={scope!r}. This helper ONLY grants per-secret "
+            f"kow gcp-setup: refusing scope={scope!r}. This helper ONLY grants per-secret "
             f"{_ROLE}; a project/folder/org-level bind would give the proxy read access to "
             "EVERY secret in scope — the exact blast radius self_check guards against. Grant "
             "per-secret, or use gcloud directly if you truly intend a broad bind.",
@@ -41,7 +41,7 @@ def run_gcp_setup(
         )
         return 2
     if not secrets:
-        print("avp gcp-setup: no secrets given (use --secret NAME, repeatable).", file=sys.stderr)
+        print("kow gcp-setup: no secrets given (use --secret NAME, repeatable).", file=sys.stderr)
         return 2
 
     rc = 0

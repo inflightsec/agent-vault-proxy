@@ -4,7 +4,7 @@ Each check returns a list of warning strings (possibly empty). The addon
 runs `run_preflight(config)` from `running()` — once, before serving
 traffic and BEFORE writing the proxy_restart audit event — and emits any
 warnings to stderr + logger.warning so they appear in `docker compose
-logs` AND `journalctl -u agent-vault-proxy`.
+logs` AND `journalctl -u keys-on-the-wire`.
 
 By default these are NON-FATAL nags. The proxy still starts. The goal is
 to surface "you're running in a way the docs flagged as a footgun" so

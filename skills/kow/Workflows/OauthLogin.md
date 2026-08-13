@@ -1,6 +1,6 @@
 # Workflow: OauthLogin
 
-Guide a non-engineer through connecting an **OAuth** service through AVP end to end. The agent
+Guide a non-engineer through connecting an **OAuth** service through kow end to end. The agent
 **never sees the client secret or the refresh token** — the secret goes into the vault by the
 user's own paste, and the refresh token is minted by the browser/phone consent and written
 straight to the vault by `avp oauth login`.
@@ -73,9 +73,9 @@ State plainly: "I never see these — you paste them into your vault, same as an
 
 ## 4. Add the OAuth binding (the one config exception — flag it)
 
-A note can't express `oauth2_refresh` yet, so this binding lives in the AVP **config file** and
+A note can't express `oauth2_refresh` yet, so this binding lives in the kow **config file** and
 needs a daemon reload. Emit this block for the operator to add under `secrets:` in
-`bindings.yaml`, then have them reload AVP:
+`bindings.yaml`, then have them reload kow:
 
 ```yaml
 secrets:
@@ -122,13 +122,13 @@ it; nothing sensitive is in the message.
 ## 6. Wire the consumer + reload (BLOCKING — same as AddSecret §5)
 
 The binding injects nothing until the consuming app **emits `GCAL_API`'s placeholder**. Get the
-placeholder (`avp env --print | grep GCAL_API` on the AVP host), put that `export GCAL_API='…'`
+placeholder (`kow env --print | grep GCAL_API` on the kow host), put that `export GCAL_API='…'`
 line into the app's `.env`, and reload the daemon. A binding whose placeholder never reaches the
-consumer is the #1 "AVP isn't working" cause.
+consumer is the #1 "kow isn't working" cause.
 
 ## 7. Verify (user runs)
 
-- `avp doctor --binding GCAL_API --probe-oauth` — resolves the three secrets and checks the SSRF
+- `kow doctor --binding GCAL_API --probe-oauth` — resolves the three secrets and checks the SSRF
   guard, read-only. Add `--exchange` to do one live refresh (it reports whether the provider
   **rotated** the refresh token — if it did, note that write-back must be enabled/working).
 - Confirm the consumer emits the exact `GCAL_API` placeholder and the daemon was reloaded.
@@ -140,6 +140,6 @@ consumer is the #1 "AVP isn't working" cause.
 - **One refresh secret per host.** Don't point two machines at the same `*_REFRESH_TOKEN` — if the
   provider rotates, the second machine gets locked out.
 - Scope tightly (read-only, narrow host/methods) — it caps what a compromised binding can do.
-- Rotating providers (Microsoft, Slack, Atlassian, Auth0) need AVP **write** on the refresh
+- Rotating providers (Microsoft, Slack, Atlassian, Auth0) need kow **write** on the refresh
   secret; non-rotating (Google) can run read-only if you seed the token by hand and set
   `refresh_token_write_back: false`.

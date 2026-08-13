@@ -1,4 +1,4 @@
-"""``avp doctor --probe-oauth`` — operator self-service for OAuth2 bindings (ADR-0017 slice 8).
+"""``kow doctor --probe-oauth`` — operator self-service for OAuth2 bindings (ADR-0017 slice 8).
 
 Answers "is this binding wired correctly?" without driving a proxied
 request through an agent. Each probe is READ-ONLY by default — the

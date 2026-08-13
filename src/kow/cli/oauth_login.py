@@ -412,7 +412,7 @@ def _device_flow(  # noqa: C901 — RFC 8628 poll states (pending/slow_down/deni
 
 
 def _looks_live(value: str) -> bool:
-    """True if the secret already holds SOMETHING real — any non-empty value that isn't an AVP
+    """True if the secret already holds SOMETHING real — any non-empty value that isn't an kow
     placeholder. Deliberately NOT shape-gated: an opaque or non-conforming existing token must
     still block a silent overwrite (Oracle C3 / Silas L6). ``--force`` is the explicit override."""
     return bool(value) and not value.startswith(PLACEHOLDER_PREFIX)

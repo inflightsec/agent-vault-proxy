@@ -72,7 +72,7 @@ class StaticSecretsBackend:
         return secrets[name]
 
     def list_secret_names(self) -> list[str]:
-        """Return every secret name in the static file (drives ``avp env``
+        """Return every secret name in the static file (drives ``kow env``
         in dev/e2e). Reuses the same load+validate path as fetch()."""
         return list(self._load_secrets().keys())
 
@@ -96,7 +96,7 @@ class StaticSecretsBackend:
             "Use a vault-backed backend (bws, …) for production."
         )
         _log.warning(msg)
-        print(f"[agent-vault-proxy] WARNING: {msg}", file=sys.stderr)
+        print(f"[keys-on-the-wire] WARNING: {msg}", file=sys.stderr)
 
     def _load_secrets(self) -> dict[str, str]:
         if self._secrets is not None:

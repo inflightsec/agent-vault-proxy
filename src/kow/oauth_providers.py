@@ -35,7 +35,7 @@ class ProviderPreset:
 
     token_url: str | None
     client_auth_method: Literal["body_post", "basic"]
-    # ``rotates_refresh_token`` is consulted by ``avp doctor --probe-oauth``
+    # ``rotates_refresh_token`` is consulted by ``kow doctor --probe-oauth``
     # to set operator expectations. False = the provider re-issues the
     # same refresh token on each grant by default; True = a new one each
     # time and the write-back path is the load-bearing surface.

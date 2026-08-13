@@ -60,7 +60,7 @@ _RETRY_BACKOFF_SECONDS = 1.0
 
 # Refresh-token shape guard (slice 7 hardening — Oracle F1 / Silas #2).
 # An upstream returning a junk ``refresh_token`` field (single byte,
-# all-zero, 10 MB blob, control chars) can otherwise drive AVP into
+# all-zero, 10 MB blob, control chars) can otherwise drive kow into
 # PUTing that value to BWS and permanently bricking the binding — the
 # prior value is overwritten with no live backup. Bounds are RFC 6749
 # §A.17 (vschar = %x20-7E) plus a generous length envelope.
@@ -188,9 +188,9 @@ def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent t
     # (Pydantic ``HttpUrl`` + explicit https assertion) and the URL is then
     # re-checked at request time against the SSRF guard. file://, gopher://,
     # data://, etc. cannot reach this code path.
-    # User-Agent: identify AVP rather than ship the default
+    # User-Agent: identify kow rather than ship the default
     # ``Python-urllib/3.X`` (some providers block stock urllib UA outright,
-    # producing confusing 4xx; identifying AVP also helps providers
+    # producing confusing 4xx; identifying kow also helps providers
     # whitelist explicitly when needed).
     headers["User-Agent"] = "agent-vault-proxy/oauth2-refresh"
     req = urllib.request.Request(  # noqa: S310  # nosec
@@ -276,7 +276,7 @@ def _parse_success(
         return ExchangeResult(outcome="response_parse_failed")
 
     # RFC 6749 §5.1 says ``token_type`` is REQUIRED in the response.
-    # RFC 6750 §1.2 says the "Bearer" scheme is case-insensitive. AVP
+    # RFC 6750 §1.2 says the "Bearer" scheme is case-insensitive. kow
     # only knows how to inject a Bearer token (its ``access_token_format``
     # default is ``"Bearer {access_token}"``); if the upstream returned
     # a different scheme — legacy MAC tokens, vendor extensions like
@@ -291,7 +291,7 @@ def _parse_success(
     if token_type is not None:
         if not isinstance(token_type, str) or token_type.lower() != "bearer":
             _log.warning(
-                "token endpoint returned unsupported token_type=%r; AVP only injects Bearer",
+                "token endpoint returned unsupported token_type=%r; kow only injects Bearer",
                 token_type,
             )
             return ExchangeResult(outcome="unsupported_token_type")

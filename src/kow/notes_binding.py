@@ -63,7 +63,11 @@ _log = logging.getLogger(__name__)
 # LOUD as InvalidBinding); marker absent = description (NoBinding, file
 # bindings stand untouched). Uniform across sources (BWS notes AND the GSM
 # `avp-binding` annotation) — one contract, no source-plumbing.
-NOTES_MARKER = "# avp-binding"
+NOTES_MARKER = "# kow-binding"  # canonical marker: emitted by tooling, shown in docs.
+# `# avp-binding` is accepted as a backward-compat alias (the ADR-0045 rename):
+# both markers select a binding identically, so existing avp-binding notes keep
+# working while kow-binding is the default going forward. Alias drops in 2.0.0.
+_ACCEPTED_MARKERS: tuple[str, ...] = (NOTES_MARKER, "# avp-binding")
 
 # Generic substitution token in a note (vs the file path's {SECRET_NAME}).
 # Not a credential — it's the literal placeholder marker the operator types.
@@ -261,7 +265,7 @@ def _strip_binding_marker(secret_name: str, note: str) -> str | NoBinding | Inva
     body) outcome. Split from parse_notes_binding to hold the complexity gate."""
     lines = note.splitlines()
     first_idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
-    if first_idx is None or lines[first_idx].strip() != NOTES_MARKER:
+    if first_idx is None or lines[first_idx].strip() not in _ACCEPTED_MARKERS:
         # Migration aid: an unmarked note that LOOKS like a binding (bare
         # hostname, or a host:/hosts: line) is silently inert — name it at
         # load so a forgotten marker is self-diagnosing, not a mystery.
@@ -514,7 +518,7 @@ def _parse_multihost_note(
 
 
 def _resolve_stored_placeholder(secret_name: str, raw: dict, fallback: str) -> str | InvalidBinding:
-    """ADR-0029: a note may PIN its placeholder (minted by `avp binding new`)
+    """ADR-0029: a note may PIN its placeholder (minted by `kow binding new`)
     instead of relying on the salt derivation the caller passed in. The
     stored value is format-gated hard: prefix + lowercase-base32 tail of
     >=21 chars, so a hand-typed weak string ("token") cannot parse and can
@@ -528,7 +532,7 @@ def _resolve_stored_placeholder(secret_name: str, raw: dict, fallback: str) -> s
             secret_name,
             "`placeholder` must be a string matching "
             "`avp-PLACEHOLDER-<21-64 lowercase base32 chars>` "
-            f"(mint one with `avp binding new`); got {stored!r}.",
+            f"(mint one with `kow binding new`); got {stored!r}.",
         )
     return stored
 
@@ -537,7 +541,7 @@ def stored_placeholder_from_note(note: str | None) -> str | None:
     """Extract a note's valid stored placeholder, or None (ADR-0029).
 
     Read-side helper for surfaces that need the placeholder WITHOUT running a
-    full binding parse (``avp env`` projecting consumer export lines). Any
+    full binding parse (``kow env`` projecting consumer export lines). Any
     note that is unmarked, malformed, or carries an invalid/missing
     ``placeholder`` yields None — such a secret either has no binding or will
     fail loud through the real parser; the caller falls back to derivation.

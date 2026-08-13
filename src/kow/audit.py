@@ -38,7 +38,7 @@ REASON_HOST_NOT_IN_ALLOWLIST = "host_not_in_allowlist"
 # contract (no secret material, no header/body/query).
 EVENT_HONEYTOKEN_TRIGGERED = "honeytoken_triggered"
 
-# ADR-0023: the CLOSED set of audit event types AVP may ever write. `emit()`
+# ADR-0023: the CLOSED set of audit event types kow may ever write. `emit()`
 # refuses any type outside this set, so a NEW event type cannot be shipped
 # without being added here CONSCIOUSLY — and that is the point where PR review
 # forces it to (a) carry no secret material and (b) gain stateful no-leak
@@ -109,7 +109,7 @@ class AuditWriter:
         # records: every permitted type is covered by a stateful no-leak test
         # that scans the whole stream for secret bytes, so a type that reaches
         # this writer is guaranteed to be one that has been vetted to carry no
-        # secret material. Fail-closed and consistent with AVP's posture — an
+        # secret material. Fail-closed and consistent with kow's posture — an
         # unrecognised type is a programming error (a new emit site that skipped
         # the contract), and surfacing it loudly at the choke point is strictly
         # safer than silently writing a record whose minimization nobody vetted.

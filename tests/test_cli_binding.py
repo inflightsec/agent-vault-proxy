@@ -135,7 +135,7 @@ def test_gsm_backend_emits_gcloud_command_with_marker(capsys):
     )
     assert code == 0
     assert "gcloud secrets update X_KEY" in out
-    assert "avp-binding=" in out
+    assert "kow-binding=" in out
     assert NOTES_MARKER in out
 
 

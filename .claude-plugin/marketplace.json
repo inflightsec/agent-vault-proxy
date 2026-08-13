@@ -1,11 +1,11 @@
 {
-  "name": "agent-vault-proxy",
+  "name": "keys-on-the-wire",
   "owner": { "name": "Radek Maciaszek" },
   "plugins": [
     {
-      "name": "avp",
+      "name": "kow",
       "source": "./",
-      "description": "Broker API credentials through agent-vault-proxy (bundles the avp skill)."
+      "description": "Broker API credentials through keys-on-the-wire (bundles the kow skill)."
     }
   ]
 }

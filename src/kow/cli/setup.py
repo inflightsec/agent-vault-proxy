@@ -1,4 +1,4 @@
-"""``avp setup`` installer planner/executor.
+"""``kow setup`` installer planner/executor.
 
 This module is intentionally split into a pure planner and a thin executor.
 ``plan_setup`` only renders an ordered list of immutable steps from explicit
@@ -137,7 +137,7 @@ def plan_setup(
     static: bool = False,
     gsm: bool = False,
 ) -> list[Step]:
-    """Render the ``avp setup`` install plan without touching the host."""
+    """Render the ``kow setup`` install plan without touching the host."""
     if os_name not in {"linux", "macos"}:
         raise ValueError(f"unsupported os_name {os_name!r}")
     # Single internal backend selector derived from the mutually-exclusive flags.
@@ -150,21 +150,21 @@ def plan_setup(
     steps.extend(
         [
             _mkdir_step(
-                description="Create AVP config directory.",
+                description="Create kow config directory.",
                 path=paths.confdir,
                 owner="root",
                 group=group,
                 mode=0o750,
             ),
             _mkdir_step(
-                description="Create AVP state directory.",
+                description="Create kow state directory.",
                 path=paths.statedir,
                 owner=user,
                 group=group,
                 mode=0o750,
             ),
             _mkdir_step(
-                description="Create AVP log directory.",
+                description="Create kow log directory.",
                 path=paths.logdir,
                 owner=user,
                 group=group,
@@ -266,7 +266,7 @@ def plan_setup(
             ),
         )
     # backend == "gsm": keyless — no local secret material to provision. Access
-    # is granted out-of-band via `avp gcp-setup` (hand-off printed after setup).
+    # is granted out-of-band via `kow gcp-setup` (hand-off printed after setup).
 
     if os_name == "linux":
         steps.append(
@@ -338,7 +338,7 @@ def run_setup(
     gsm: bool = False,
     bws: bool = False,
 ) -> int:
-    """CLI entry point for ``avp setup``.
+    """CLI entry point for ``kow setup``.
 
     Backend selection: exactly one of ``--bws`` / ``--gsm`` / ``--static`` may be
     passed. When none is (all three False), an interactive picker runs on a TTY;
@@ -352,7 +352,7 @@ def run_setup(
         os_name = "macos"
         resolved_user = user or "_avp"
     else:
-        print(f"avp setup: unsupported OS {system_name!r}", file=sys.stderr)
+        print(f"kow setup: unsupported OS {system_name!r}", file=sys.stderr)
         return 1
 
     if not dry_run and os.geteuid() != 0:
@@ -389,7 +389,7 @@ def run_setup(
         if os_name == "linux":
             print(
                 "Service was not activated; run `systemctl enable --now "
-                "agent-vault-proxy` when ready."
+                "keys-on-the-wire` when ready."
             )
         else:
             print(
@@ -408,7 +408,7 @@ def run_setup(
             "This gives you isolated-user privilege separation + launchd supervision, "
             "but NOT kernel confinement — there is no equivalent to systemd's "
             "ProtectSystem, RestrictAddressFamilies, or syscall filter. If this host "
-            "is a credible target, run agent-vault-proxy inside Docker or a Linux VM."
+            "is a credible target, run keys-on-the-wire inside Docker or a Linux VM."
         )
     if gsm:
         print(_render_gsm_handoff(paths))
@@ -419,7 +419,7 @@ def run_setup(
 def _prompt_backend() -> str:
     """Interactive backend picker (TTY only). Returns 'bws' | 'gsm' | 'static'.
     Loops until a valid 1/2/3 choice is entered — never guesses a default."""
-    print("Which secret backend should agent-vault-proxy use?")
+    print("Which secret backend should keys-on-the-wire use?")
     print("  [1] Bitwarden Secrets Manager (BWS) — paste a machine-account token")
     print("  [2] Google Secret Manager (GSM)     — keyless (gcloud ADC), nothing to paste")
     print("  [3] Local static file               — no vault, 0600 file (dev/testing)")
@@ -432,7 +432,7 @@ def _prompt_backend() -> str:
 
 
 def _render_gsm_handoff(paths: SetupPaths) -> str:
-    """DRY hand-off to `avp gcp-setup` — setup selects the backend; the separate,
+    """DRY hand-off to `kow gcp-setup` — setup selects the backend; the separate,
     privileged IAM helper grants per-secret read access. GSM is keyless, so
     nothing was pasted here."""
     return (
@@ -442,19 +442,19 @@ def _render_gsm_handoff(paths: SetupPaths) -> str:
         f"  1. Set your project number in {paths.bindings_path}\n"
         "     (field `project_id`; optionally `impersonate_service_account`).\n"
         "\n"
-        "  2. Grant AVP read access PER SECRET (least privilege) with the IAM helper:\n"
-        "       sudo avp gcp-setup --project <PROJECT> \\\n"
+        "  2. Grant kow read access PER SECRET (least privilege) with the IAM helper:\n"
+        "       sudo kow gcp-setup --project <PROJECT> \\\n"
         "         --member serviceAccount:<AVP_SERVICE_ACCOUNT> --secret <SECRET_NAME>\n"
         "\n"
-        "  AVP authenticates via gcloud ADC and refuses a downloaded key file\n"
+        "  kow authenticates via gcloud ADC and refuses a downloaded key file\n"
         "  (reject_ambient_key: true); self_check: deny stops it starting under a\n"
-        "  broad identity. Verify anytime with: avp doctor --probe-gcp\n"
+        "  broad identity. Verify anytime with: kow doctor --probe-gcp\n"
     )
 
 
 def _render_next_steps() -> str:
     """Post-setup guidance: how to add the first binding. Points at the
-    deterministic `avp binding new` tool first, then the optional skill for a
+    deterministic `kow binding new` tool first, then the optional skill for a
     conversational flow — never auto-installs anything."""
     return (
         "\n"
@@ -463,14 +463,14 @@ def _render_next_steps() -> str:
         "  Works in ANY agent (or none): run the generator, paste what it prints into\n"
         "  your vault. It validates the binding, so it can't be silently wrong:\n"
         "\n"
-        "    avp binding new --host api.stripe.com --name STRIPE_API_KEY\n"
+        "    kow binding new --host api.stripe.com --name STRIPE_API_KEY\n"
         "\n"
         '  In Claude Code, skip the flags and just say: "route my Stripe key through avp".\n'
         "  Install the skill ONCE by typing these as slash-commands in the Claude Code\n"
         "  chat (they are NOT terminal commands):\n"
         "\n"
-        "    /plugin marketplace add inflightsec/agent-vault-proxy\n"
-        "    /plugin install avp@agent-vault-proxy\n"
+        "    /plugin marketplace add inflightsec/keys-on-the-wire\n"
+        "    /plugin install kow@keys-on-the-wire\n"
         "\n"
         "  Codex or another agent? There's no plugin store — just run the command above,\n"
         "  or tell the agent to. Same tool everywhere.\n"
@@ -548,7 +548,7 @@ def _macos_service_user_steps(
                 "-create",
                 f"/Users/{user}",
                 "RealName",
-                "agent-vault-proxy service user",
+                "keys-on-the-wire service user",
             ),
             skip_if_user_exists=skip_user,
         ),
@@ -623,7 +623,7 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
         file_bindings_comment = "# bindings come from BWS notes; add file bindings here if needed"
         return textwrap.dedent(
             f"""\
-            # agent-vault-proxy starter config written by `avp setup`.
+            # keys-on-the-wire starter config written by `kow setup`.
             # Edit your real bindings in Bitwarden secret notes (binding_source: both);
             # this file only configures the backend + audit sink.
             version: 1
@@ -646,14 +646,14 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
         )
 
     if backend == "gsm":
-        # Keyless by design (ADR-0018): NO key-file field. AVP authenticates via
+        # Keyless by design (ADR-0018): NO key-file field. kow authenticates via
         # gcloud ADC / SA impersonation and refuses a downloaded key
         # (reject_ambient_key). self_check: deny refuses to start under a broad
         # identity. project_id is a placeholder — set it, then grant per-secret
-        # read with `avp gcp-setup` (see the hand-off printed after setup).
+        # read with `kow gcp-setup` (see the hand-off printed after setup).
         return textwrap.dedent(
             f"""\
-            # agent-vault-proxy starter config written by `avp setup --gsm`.
+            # keys-on-the-wire starter config written by `kow setup --gsm`.
             # Host bindings live in each GSM secret's `avp-binding` annotation
             # (binding_source: notes); no `secrets:` block is needed here.
             version: 1
@@ -676,7 +676,7 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
 
     content = textwrap.dedent(
         f"""\
-        # agent-vault-proxy starter config written by `avp setup`.
+        # keys-on-the-wire starter config written by `kow setup`.
         # Static backend for development/testing only; replace this example before real use.
         version: 1
         binding_source: file
@@ -705,7 +705,7 @@ def _render_systemd_unit(*, user: str, group: str, paths: SetupPaths) -> str:
     return textwrap.dedent(
         f"""\
         [Unit]
-        Description=agent-vault-proxy — BWS-backed egress credential injector
+        Description=keys-on-the-wire — BWS-backed egress credential injector
         After=network-online.target
         Wants=network-online.target
 
@@ -843,9 +843,9 @@ def _execute_prompt_step(step: PromptStep, *, dry_run: bool) -> None:
         # Never write a 0-byte token file — that only produces confusing daemon
         # errors later. Skip cleanly and tell the user how to finish or switch.
         print(
-            "avp setup: no BWS token provided — skipping (nothing written). The proxy "
+            "kow setup: no BWS token provided — skipping (nothing written). The proxy "
             f"will not start until you write the token to {step.dest_path}, or re-run "
-            "`sudo avp setup --static` (local file) or `sudo avp setup --gsm` "
+            "`sudo kow setup --static` (local file) or `sudo kow setup --gsm` "
             "(Google Secret Manager).",
             file=sys.stderr,
         )
@@ -1035,7 +1035,7 @@ def _render_env_block(ca_pem: str) -> str:
         export SSL_CERT_FILE="{ca_pem}"
         export REQUESTS_CA_BUNDLE="{ca_pem}"
         export CURL_CA_BUNDLE="{ca_pem}"
-        avp env
+        kow env
         set -a; . ~/.config/avp/env; set +a
         """
     ).rstrip()

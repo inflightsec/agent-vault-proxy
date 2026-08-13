@@ -5,12 +5,12 @@
     to the first frame in renderers without SMIL support.
 
     Phases (cycle position):
-      ①  0.000 → 0.125  Agent → AVP (placeholder)
-      ②  0.125 → 0.250  AVP → BWS (fetch)
-      ③  0.250 → 0.375  BWS → AVP (real value cached)
-      ④  0.375 → 0.500  AVP → Upstream (real secret on the wire)
-      ⑤  0.500 → 0.625  Upstream → AVP (response)
-      ⑥  0.625 → 0.750  AVP → Agent (response delivered)
+      ①  0.000 → 0.125  Agent → kow (placeholder)
+      ②  0.125 → 0.250  kow → BWS (fetch)
+      ③  0.250 → 0.375  BWS → kow (real value cached)
+      ④  0.375 → 0.500  kow → Upstream (real secret on the wire)
+      ⑤  0.500 → 0.625  Upstream → kow (response)
+      ⑥  0.625 → 0.750  kow → Agent (response delivered)
        rest 0.750 → 1.000
   -->
   <defs>
@@ -35,10 +35,10 @@
 
   <!-- Title -->
   <text x="480" y="44" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">
-    How agent-vault-proxy substitutes secrets on the wire
+    How keys-on-the-wire substitutes secrets on the wire
   </text>
   <text x="480" y="70" text-anchor="middle" font-size="13" fill="#64748b">
-    The real secret never enters your agent's process. It exists only on the AVP → upstream segment.
+    The real secret never enters your agent's process. It exists only on the kow → upstream segment.
   </text>
 
   <!-- ────── Agent card ────── -->
@@ -49,12 +49,12 @@
   <text x="160" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Agent</text>
   <text x="160" y="270" text-anchor="middle" font-size="12" fill="#64748b">env holds placeholder only</text>
 
-  <!-- ────── AVP card (highlighted) ────── -->
+  <!-- ────── kow card (highlighted) ────── -->
   <g filter="url(#card-shadow)">
     <rect x="380" y="180" width="200" height="120" rx="14" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
   </g>
   <text x="480" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#6366f1" letter-spacing="1.2">LOCAL PROXY · UID avp</text>
-  <text x="480" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">agent-vault-proxy</text>
+  <text x="480" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">keys-on-the-wire</text>
   <text x="480" y="270" text-anchor="middle" font-size="12" fill="#64748b">substitutes on the wire</text>
 
   <!-- ────── Upstream card ────── -->
@@ -65,7 +65,7 @@
   <text x="800" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">Upstream</text>
   <text x="800" y="270" text-anchor="middle" font-size="12" fill="#64748b">api.stripe.com, etc.</text>
 
-  <!-- ────── BWS card (below AVP) ────── -->
+  <!-- ────── BWS card (below kow) ────── -->
   <g filter="url(#card-shadow)">
     <rect x="370" y="420" width="220" height="74" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
   </g>
@@ -73,16 +73,16 @@
   <text x="480" y="474" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Bitwarden · Vault · 1Password</text>
 
   <!-- ────── Static arrows (always visible, motion happens on top via dots) ────── -->
-  <!-- Agent → AVP (amber) -->
+  <!-- Agent → kow (amber) -->
   <line x1="260" y1="216" x2="375" y2="216" stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
   <text x="317" y="206" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b45309">placeholder</text>
-  <!-- AVP → Upstream (red) -->
+  <!-- kow → Upstream (red) -->
   <line x1="585" y1="216" x2="697" y2="216" stroke="#dc2626" stroke-width="2.5" marker-end="url(#arrow-red)"/>
   <text x="641" y="206" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b91c1c">real secret</text>
-  <!-- Upstream → AVP (slate) -->
+  <!-- Upstream → kow (slate) -->
   <line x1="697" y1="264" x2="585" y2="264" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow-slate)"/>
   <text x="641" y="285" text-anchor="middle" font-size="12.5" font-weight="500" fill="#64748b">response</text>
-  <!-- AVP → Agent (slate) -->
+  <!-- kow → Agent (slate) -->
   <line x1="375" y1="264" x2="263" y2="264" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow-slate)"/>
   <text x="319" y="285" text-anchor="middle" font-size="12.5" font-weight="500" fill="#64748b">response</text>
   <!-- BWS link (dashed indigo) -->
@@ -93,39 +93,39 @@
   <!-- ────── ANIMATED packets ────── -->
   <!-- All animations are 8s indefinite. Phases align to 1/8 cycle boundaries. -->
 
-  <!-- ① Amber packet: Agent → AVP, cx 260→375 at cy=216, 0.000–0.125 -->
+  <!-- ① Amber packet: Agent → kow, cx 260→375 at cy=216, 0.000–0.125 -->
   <circle cx="260" cy="216" r="7" fill="#f59e0b" opacity="0">
     <animate attributeName="cx"      values="260;260;375;375" keyTimes="0;0;0.125;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;1;1;0;0"        keyTimes="0;0;0.125;0.13;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="r"       values="7;9;7"             keyTimes="0;0.0625;0.125" dur="8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- ② Indigo packet: AVP → BWS, cy 302→418 at cx=480, 0.125–0.250 -->
+  <!-- ② Indigo packet: kow → BWS, cy 302→418 at cx=480, 0.125–0.250 -->
   <circle cx="480" cy="302" r="6" fill="#6366f1" opacity="0">
     <animate attributeName="cy"      values="302;302;418;418" keyTimes="0;0.125;0.250;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0;1;1;0;0"      keyTimes="0;0.12;0.125;0.250;0.255;1" dur="8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- ③ Indigo packet returning: BWS → AVP, cy 418→302 at cx=480, 0.250–0.375 -->
+  <!-- ③ Indigo packet returning: BWS → kow, cy 418→302 at cx=480, 0.250–0.375 -->
   <circle cx="480" cy="418" r="6" fill="#6366f1" opacity="0">
     <animate attributeName="cy"      values="418;418;302;302" keyTimes="0;0.250;0.375;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0;1;1;0;0"      keyTimes="0;0.245;0.250;0.375;0.380;1" dur="8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- ④ Red packet: AVP → Upstream (REAL SECRET), cx 585→697 at cy=216, 0.375–0.500 -->
+  <!-- ④ Red packet: kow → Upstream (REAL SECRET), cx 585→697 at cy=216, 0.375–0.500 -->
   <circle cx="585" cy="216" r="7" fill="#dc2626" opacity="0">
     <animate attributeName="cx"      values="585;585;697;697" keyTimes="0;0.375;0.500;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0;1;1;0;0"      keyTimes="0;0.370;0.375;0.500;0.505;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="r"       values="7;7;10;7;7"       keyTimes="0;0.375;0.4375;0.500;1" dur="8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- ⑤ Slate packet: Upstream → AVP (response), cx 697→585 at cy=264, 0.500–0.625 -->
+  <!-- ⑤ Slate packet: Upstream → kow (response), cx 697→585 at cy=264, 0.500–0.625 -->
   <circle cx="697" cy="264" r="6" fill="#94a3b8" opacity="0">
     <animate attributeName="cx"      values="697;697;585;585" keyTimes="0;0.500;0.625;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0;1;1;0;0"      keyTimes="0;0.495;0.500;0.625;0.630;1" dur="8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- ⑥ Slate packet: AVP → Agent (response), cx 375→263 at cy=264, 0.625–0.750 -->
+  <!-- ⑥ Slate packet: kow → Agent (response), cx 375→263 at cy=264, 0.625–0.750 -->
   <circle cx="375" cy="264" r="6" fill="#94a3b8" opacity="0">
     <animate attributeName="cx"      values="375;375;263;263" keyTimes="0;0.625;0.750;1" dur="8s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0;1;1;0;0"      keyTimes="0;0.620;0.625;0.750;0.755;1" dur="8s" repeatCount="indefinite"/>
@@ -138,11 +138,11 @@
       <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0;0.125;0.13;1" dur="8s" repeatCount="indefinite"/>
     </text>
     <text x="480" y="345" opacity="0">
-      <tspan font-weight="600" fill="#0f172a">② AVP fetches real value</tspan> — one BWS call per secret per 5-min window
+      <tspan font-weight="600" fill="#0f172a">② kow fetches real value</tspan> — one BWS call per secret per 5-min window
       <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.12;0.125;0.250;0.255;1" dur="8s" repeatCount="indefinite"/>
     </text>
     <text x="480" y="345" opacity="0">
-      <tspan font-weight="600" fill="#0f172a">③ Real value returned</tspan> — kept in AVP memory, never on disk
+      <tspan font-weight="600" fill="#0f172a">③ Real value returned</tspan> — kept in kow memory, never on disk
       <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.245;0.250;0.375;0.380;1" dur="8s" repeatCount="indefinite"/>
     </text>
     <text x="480" y="345" opacity="0">
@@ -154,7 +154,7 @@
       <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.495;0.500;0.625;0.630;1" dur="8s" repeatCount="indefinite"/>
     </text>
     <text x="480" y="345" opacity="0">
-      <tspan font-weight="600" fill="#0f172a">⑥ AVP returns the response</tspan> — delivered to the agent unchanged
+      <tspan font-weight="600" fill="#0f172a">⑥ kow returns the response</tspan> — delivered to the agent unchanged
       <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.620;0.625;0.750;0.755;1" dur="8s" repeatCount="indefinite"/>
     </text>
   </g>

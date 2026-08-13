@@ -209,13 +209,13 @@ def _exact_collision_drops(
                     to_drop[name] = (
                         f"stored placeholder {ph!r} on secret {name!r} collides "
                         f"with the placeholder of secret {legitimate[0]!r}. Mint "
-                        "a fresh placeholder (`avp binding new`) for it."
+                        "a fresh placeholder (`kow binding new`) for it."
                     )
             else:
                 diagnostic = (
                     f"placeholder {ph!r} is claimed by multiple secrets "
                     f"{sorted(names)}; injection would be ambiguous. Mint a "
-                    "fresh placeholder (`avp binding new`) for all but one."
+                    "fresh placeholder (`kow binding new`) for all but one."
                 )
                 for name in names:
                     to_drop[name] = diagnostic
@@ -223,7 +223,7 @@ def _exact_collision_drops(
             to_drop[names[0]] = (
                 f"stored placeholder {ph!r} on secret {names[0]!r} collides "
                 f"with the derived placeholder of secret {owner!r}. Mint a "
-                "fresh placeholder (`avp binding new`) for it."
+                "fresh placeholder (`kow binding new`) for it."
             )
     return to_drop
 
@@ -254,6 +254,6 @@ def _overlap_drops(specs: dict[str, ResolvedSpec], derived: dict[str, str]) -> d
                         f"stored placeholder {ph!r} on secret {name!r} is a "
                         f"substring/superstring of the placeholder of secret "
                         f"{other!r}; `in`-matching would be ambiguous. Mint a "
-                        "fresh placeholder (`avp binding new`)."
+                        "fresh placeholder (`kow binding new`)."
                     )
     return to_drop

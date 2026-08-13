@@ -137,7 +137,7 @@ def sign(
     - ``signed_headers_extra`` folds in any ``x-amz-*`` header the client already
       set. AWS rejects a request that carries an *unsigned* ``x-amz-*`` header,
       so the resolver passes through whatever the agent's SDK added (e.g.
-      ``x-amz-acl``, ``x-amz-storage-class``). AVP's computed headers take
+      ``x-amz-acl``, ``x-amz-storage-class``). kow's computed headers take
       precedence over anything passed here.
 
     Returns the header values to set."""
@@ -153,7 +153,7 @@ def sign(
     if signed_headers_extra:
         for name, value in signed_headers_extra.items():
             signed_headers[name.lower()] = value
-    # AVP-computed headers overwrite any client-supplied collision.
+    # kow-computed headers overwrite any client-supplied collision.
     signed_headers["host"] = host
     signed_headers["x-amz-date"] = amz_date
     if sign_content_sha256:
@@ -204,13 +204,13 @@ def _is_default_port(scheme: str, port: int) -> bool:
     return (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
 
 
-# x-amz-* headers AVP computes and sets itself; never folded in from the client
+# x-amz-* headers kow computes and sets itself; never folded in from the client
 # (we overwrite them with freshly computed values).
 _MANAGED_AMZ_HEADERS = frozenset({"x-amz-date", "x-amz-content-sha256", "x-amz-security-token"})
 
 
 def _client_amz_headers(headers: http.Headers) -> dict[str, str]:
-    """The ``x-amz-*`` headers the client already set, minus the ones AVP
+    """The ``x-amz-*`` headers the client already set, minus the ones kow
     computes. These MUST be signed (AWS rejects an unsigned ``x-amz-*`` header),
     and are left on the outbound request verbatim so the signed value matches
     the value on the wire."""
@@ -289,7 +289,7 @@ class Sigv4Resolver:
         amz_date = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         # Hash the RAW bytes that go on the wire (what the service receives and
         # hashes), not the content-decoded view — SigV4 signs the payload as
-        # sent. AVP does not mutate a sigv4 request's body, so raw_content is
+        # sent. kow does not mutate a sigv4 request's body, so raw_content is
         # forwarded verbatim.
         result = sign(
             method=flow.request.method,

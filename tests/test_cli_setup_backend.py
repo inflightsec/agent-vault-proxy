@@ -131,7 +131,7 @@ def test_gsm_prints_gcp_setup_handoff(monkeypatch, capsys):
     run_setup(user=None, dry_run=False, prefix=None, gsm=True)
     out = capsys.readouterr().out
     assert "GSM backend selected" in out
-    assert "avp gcp-setup" in out
+    assert "kow gcp-setup" in out
 
 
 # ── CLI mutual exclusion ────────────────────────────────────────────────────

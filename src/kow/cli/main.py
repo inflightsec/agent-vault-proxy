@@ -1,9 +1,9 @@
 """``avp`` operator CLI entry point.
 
-Separate from the daemon entry point (``agent-vault-proxy`` ->
+Separate from the daemon entry point (``keys-on-the-wire`` ->
 ``__main__:main``, which launches mitmdump). ``avp`` hosts the operator
-verbs that manage the install: today ``avp env`` (project BWS secrets to a
-placeholder env file) and ``avp doctor`` (CA regression checks). Wired into
+verbs that manage the install: today ``kow env`` (project BWS secrets to a
+placeholder env file) and ``kow doctor`` (CA regression checks). Wired into
 ``[project.scripts]`` as ``avp``.
 
 Kept deliberately thin: argument parsing + dispatch only. Each subcommand's
@@ -21,6 +21,7 @@ from kow.cli.doctor import run_doctor
 from kow.cli.env import default_env_path, run_env
 from kow.cli.gcp_setup import run_gcp_setup
 from kow.cli.mcp import register_mcp_subparser, run_mcp
+from kow.cli.moo import run_moo
 from kow.cli.oauth_login import register_oauth_subparser, run_oauth
 from kow.cli.run import register_run_subparser, run_run
 from kow.cli.secret import register_secret_subparser, run_secret
@@ -33,7 +34,7 @@ _DEFAULT_CONFIG = "/etc/agent-vault-proxy/bindings.yaml"
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="avp",
-        description="agent-vault-proxy operator CLI (env projection, health checks).",
+        description="keys-on-the-wire operator CLI (env projection, health checks).",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -73,7 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="Read-only health checks (CA not in OS trust store; CA key perms).",
         description=(
-            "Verify the narrow-trust CA invariants (ADR-0012): the AVP CA must not be "
+            "Verify the narrow-trust CA invariants (ADR-0012): the kow CA must not be "
             "in any OS/browser trust store, and the CA private key must be 0600 in a "
             "0700 confdir. Read-only."
         ),
@@ -81,12 +82,12 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_p.add_argument(
         "--ca-cert",
         default=None,
-        help="Path to the AVP CA cert (default: confdir mitmproxy-ca-cert.pem).",
+        help="Path to the kow CA cert (default: confdir mitmproxy-ca-cert.pem).",
     )
     doctor_p.add_argument(
         "--ca-key",
         default=None,
-        help="Path to the AVP CA private key (default: confdir mitmproxy-ca.pem).",
+        help="Path to the kow CA private key (default: confdir mitmproxy-ca.pem).",
     )
     doctor_p.add_argument(
         "--config",
@@ -129,7 +130,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     setup_p = sub.add_parser(
         "setup",
-        help="Install the AVP service user, config, CA, and service definition.",
+        help="Install the kow service user, config, CA, and service definition.",
         description=(
             "Perform the primary manual install for agent-vault-proxy: create the "
             "service user, lay out directories, prompt for the BWS token, write the "
@@ -178,7 +179,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backend_group.add_argument(
         "--gsm",
         action="store_true",
-        help="Backend: Google Secret Manager — keyless; hands off to `avp gcp-setup`.",
+        help="Backend: Google Secret Manager — keyless; hands off to `kow gcp-setup`.",
     )
     backend_group.add_argument(
         "--static",
@@ -231,6 +232,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Undocumented easter egg: `kow moo`. Intercepted before argparse so it
+    # never surfaces in --help (not even in the subcommand choices metavar).
+    if (sys.argv[1:] if argv is None else argv) == ["moo"]:
+        return run_moo()
+
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:

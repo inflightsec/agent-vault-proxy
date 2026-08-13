@@ -55,8 +55,26 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 _log = logging.getLogger("kow.backends.gsm")
 
 _API_ROOT = "https://secretmanager.googleapis.com/v1"
-# Annotation key that carries the AVP binding (bare host or flat-YAML blob).
-_BINDING_ANNOTATION = "avp-binding"
+# Annotation key that carries the kow binding (bare host or flat-YAML blob).
+# `kow-binding` is canonical (emitted by the tooling); `avp-binding` is accepted
+# as a backward-compat alias for the ADR-0045 rename (read both, kow-binding
+# winning). The alias drops in 2.0.0.
+_BINDING_ANNOTATION = "kow-binding"
+_BINDING_ANNOTATION_ALIASES = (_BINDING_ANNOTATION, "avp-binding")
+
+
+def _read_binding_annotation(annotations: dict[str, str] | None) -> str | None:
+    """Binding annotation value: prefer the canonical ``kow-binding`` key, fall
+    back to the deprecated ``avp-binding`` alias (ADR-0045; alias drops 2.0.0)."""
+    if not annotations:
+        return None
+    for _key in _BINDING_ANNOTATION_ALIASES:
+        _val = annotations.get(_key)
+        if _val is not None:
+            return _val
+    return None
+
+
 # cloud-platform is the scope AccessSecretVersion + ListSecrets require; the
 # IAM role bounds the ACTUAL reach, the scope only gates which APIs the token
 # may address.
@@ -65,7 +83,7 @@ _LIST_PAGE_SIZE = 500
 # Cloud Resource Manager — used by the self_check project-level access probe.
 _RESOURCEMANAGER_ROOT = "https://cloudresourcemanager.googleapis.com/v1"
 _ACCESS_PERM = "secretmanager.versions.access"
-# Write/admin perms AVP must never hold — it only ever reads. A keyless read
+# Write/admin perms kow must never hold — it only ever reads. A keyless read
 # broker granted any of these is over-privileged: a compromised proxy could
 # tamper with, add, or destroy vault contents (and rewrite the very
 # `avp-binding` annotations that drive routing). self_check refuses to start
@@ -118,7 +136,7 @@ class GsmConfig(BaseModel):
     # secrets outside the prefix; (2) access — does it hold project-wide
     # versions.access (a project-level testIamPermissions probe, caught even when
     # list is denied). A per-secret foreign grant still evades detection.
-    # Org service-account-key policy is checked by `avp doctor` / the installer.
+    # Org service-account-key policy is checked by `kow doctor` / the installer.
     self_check: Literal["deny", "warn", "off"] = "deny"
     # Refuse if ADC resolves to a downloaded service-account key file.
     reject_ambient_key: bool = True
@@ -253,7 +271,7 @@ class GsmBackend:
         return value, note
 
     def list_secret_names(self) -> list[str]:
-        """Every in-scope secret id (drives ``avp env`` + notes activation).
+        """Every in-scope secret id (drives ``kow env`` + notes activation).
         Filtered client-side to ``secret_prefix``; caches each secret's
         annotation map so ``fetch_with_meta`` needs no second call."""
         self._ensure_ready()
@@ -270,7 +288,7 @@ class GsmBackend:
         ids = self._list_ids(scope_to_prefix=True)  # populates self._annotations
         out: dict[str, str | None] = {}
         for sid in ids:
-            raw = (self._annotations.get(sid) or {}).get(_BINDING_ANNOTATION)
+            raw = _read_binding_annotation(self._annotations.get(sid))
             out[sid] = None if raw is None or not str(raw).strip() else str(raw)
         return out
 
@@ -436,7 +454,7 @@ class GsmBackend:
                 "EVERY secret in the project; scope to per-secret secretAccessor",
             )
 
-        # 3. WRITE breadth — AVP only reads; any write/admin grant is
+        # 3. WRITE breadth — kow only reads; any write/admin grant is
         # over-privileged (a compromised proxy could tamper with the vault or
         # rewrite the annotations that drive routing). Best-effort, same
         # inconclusive-is-not-a-block posture as the access probe.
@@ -444,7 +462,7 @@ class GsmBackend:
         if held_write:
             self._refuse_or_warn(
                 mode,
-                f"gsm self_check: identity holds write/admin permission(s) {held_write} — AVP "
+                f"gsm self_check: identity holds write/admin permission(s) {held_write} — kow "
                 "is a read-only broker; scope to secretAccessor so a compromised proxy cannot "
                 "tamper with the vault",
             )
@@ -484,7 +502,7 @@ class GsmBackend:
     def _project_has_write_access(self) -> list[str]:
         """The subset of ``_WRITE_PERMS`` the identity holds at PROJECT level,
         via the same self-testable ``testIamPermissions`` probe (a caller may
-        always test its OWN permissions). AVP only ever reads; any write/admin
+        always test its OWN permissions). kow only ever reads; any write/admin
         grant is over-privileged. Probe failure — API disabled, denied,
         transient — is inconclusive and returns ``[]``: defence-in-depth, never
         a hard block on an unrelated error (mirrors ``_project_has_broad_access``)."""
@@ -506,7 +524,7 @@ class GsmBackend:
         return [p for p in _WRITE_PERMS if p in granted]
 
     def diagnose(self) -> list[tuple[str, str, str]]:  # noqa: C901 — linear report, many branches
-        """Read-only scope report for ``avp doctor --probe-gcp`` — a list of
+        """Read-only scope report for ``kow doctor --probe-gcp`` — a list of
         ``(status, check, message)`` rows. NEVER raises: every probe failure
         becomes a row so the operator always gets a report. Makes only
         read / list / testIamPermissions calls, never a write."""
@@ -573,7 +591,7 @@ class GsmBackend:
         held_write = self._project_has_write_access()
         if held_write:
             rows.append(
-                ("WARN", "write", f"holds write/admin {held_write} — AVP should be read-only")
+                ("WARN", "write", f"holds write/admin {held_write} — kow should be read-only")
             )
         else:
             rows.append(("OK", "write", "no project-wide write/admin (or probe inconclusive)"))
@@ -604,7 +622,7 @@ class GsmBackend:
             raw_ann = (body or {}).get("annotations")
             annotations = raw_ann if isinstance(raw_ann, dict) else {}
             self._annotations[name] = annotations
-        raw = annotations.get(_BINDING_ANNOTATION)
+        raw = _read_binding_annotation(annotations)
         return None if raw is None or not str(raw).strip() else str(raw)
 
     def _list_ids(self, *, scope_to_prefix: bool) -> list[str]:

@@ -438,7 +438,7 @@ def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
 def test_render_env_block_sources_file() -> None:
     block = setup_mod._render_env_block("/tmp/ca.pem")
     assert "eval" not in block
-    assert "avp env\nset -a; . ~/.config/avp/env; set +a" in block
+    assert "kow env\nset -a; . ~/.config/avp/env; set +a" in block
 
 
 # --- Finding 1: atomic, correct-owner token/file writes ---------------------

@@ -1,9 +1,9 @@
 # Related Work (annotated, draft)
 
-> Draft related-work section for the AVP paper. Every arXiv ID below was resolved
+> Draft related-work section for the kow paper. Every arXiv ID below was resolved
 > against arxiv.org before inclusion; industry URLs were fetched. The one-line
-> **How AVP differs** under each entry is the sentence that should survive into the
-> final paper's prose. Positioning thesis in one line: *AVP is the only member of
+> **How kow differs** under each entry is the sentence that should survive into the
+> final paper's prose. Positioning thesis in one line: *kow is the only member of
 > this space that is simultaneously (i) transparent to the upstream, (ii) sources
 > just-in-time from an existing vault without becoming a second store, (iii) keeps
 > the real secret out of the agent's address space as a physical invariant, and
@@ -11,7 +11,7 @@
 
 ## 1. The threat: credential exfiltration from untrusted agents
 
-The problem AVP addresses is empirically established, so the paper argues from
+The problem kow addresses is empirically established, so the paper argues from
 evidence rather than assertion.
 
 - **Prompt-injection data leakage during task execution** — Simple injection
@@ -28,7 +28,7 @@ evidence rather than assertion.
   command injection). These are the "this already happened in production" hooks for
   the introduction.
 
-**How AVP relates:** this cluster is motivation, not competition. AVP's contract
+**How kow relates:** this cluster is motivation, not competition. kow's contract
 begins exactly where these attacks succeed — the moment a secret would otherwise be
 readable inside the agent — and removes the secret from that location entirely.
 
@@ -49,7 +49,7 @@ claim, so the paper must name it plainly and compete on rigor, not novelty.
   onboarding by changing the base URL.
 - **Riptides** (https://riptides.io/blog/vault-credentials-on-the-wire-riptides/) —
   the sharp one: injects **in kernel space**, so no user-space proxy process exists
-  to attach a debugger to. Directly attacks AVP's residual risk R1 (proxy-UID
+  to attach a debugger to. Directly attacks kow's residual risk R1 (proxy-UID
   compromise = all bound secrets). Must be addressed head-on, not sidestepped.
 - **Envoy `credential_injector` filter** — the same wire-injection built into a
   general L7 proxy, but for **workload** auth (one workload behind the sidecar),
@@ -58,7 +58,7 @@ claim, so the paper must name it plainly and compete on rigor, not novelty.
   DaemonSet), AGPL-3.0. **OneCLI / Deno Claw Patrol** — fuller products that ship
   their **own** secret store and return an explicit error on a blocked destination.
 
-**How AVP differs:** it is the single-host layer that (a) *terminates TLS for a local
+**How kow differs:** it is the single-host layer that (a) *terminates TLS for a local
 agent* (unlike tokenizer), (b) *sources just-in-time from an existing vault instead of
 introducing a second store* (unlike nono/OneCLI/Claw Patrol), and (c) refuses to be a
 destination oracle — on a policy miss it forwards the placeholder verbatim rather than
@@ -81,15 +81,15 @@ building" citation.
   **Biscuit** tokens (arXiv:2603.24775) add an offline-verifiable logic language;
   older capability-based distributed authorization, arXiv:2211.04980.
 
-**How AVP differs (the key wedge):** every scheme here **requires the upstream to
+**How kow differs (the key wedge):** every scheme here **requires the upstream to
 cooperate** — the resource server must accept and validate a new grant/token format,
 and SUDP explicitly is *not transparent to the upstream* and adds a custodian round
-trip (and latency) per access. AVP is **transparent to the upstream**: it protects the
+trip (and latency) per access. kow is **transparent to the upstream**: it protects the
 overwhelming majority of real APIs that only speak a plain bearer token or API key and
-will never adopt a capability format. AVP and SUDP are complementary — where an upstream
-*does* speak grants, use SUDP; for everything else, AVP keeps the static key out of the
+will never adopt a capability format. kow and SUDP are complementary — where an upstream
+*does* speak grants, use SUDP; for everything else, kow keeps the static key out of the
 agent. Note also the naming collision to avoid: Narajala & Narayan (below) also use a
-"nine risks" framing; AVP's G1–G9 are *guarantees*, not risks — rename if it reads
+"nine risks" framing; kow's G1–G9 are *guarantees*, not risks — rename if it reads
 ambiguously.
 
 ## 3b. Object-capability systems and the powerbox — the architectural ancestor
@@ -97,7 +97,7 @@ ambiguously.
 Distinct from the bearer/token capability work above is the *object-capability* (ocap)
 systems tradition, where authority is an unforgeable, non-transferable **reference** a
 program holds but cannot forge or name out of thin air, and every access is mediated by a
-reference monitor. This lineage is arguably AVP's closest *architectural* ancestor, even
+reference monitor. This lineage is arguably kow's closest *architectural* ancestor, even
 though it predates the agent framing and is largely systems-and-industry rather than
 recent arXiv.
 
@@ -114,21 +114,21 @@ recent arXiv.
   permission to each connected resource. Evidence the ocap model is moving from research
   into mainstream agent infrastructure.
 
-**How AVP relates (kinship, not difference):** AVP *is* an object-capability treatment of
+**How kow relates (kinship, not difference):** kow *is* an object-capability treatment of
 credentials. The placeholder is an unforgeable, non-dereferenceable reference the agent
 holds but cannot redeem; only the reference monitor (the proxy) exchanges it for the real
 secret, and only toward a bound destination. This is the ocap discipline applied to the
 one resource the token, information-flow, and TEE lines all leave in the agent's hands:
-the secret bytes. Where AVP advances past the classical ocap platforms is transparency and
+the secret bytes. Where kow advances past the classical ocap platforms is transparency and
 reach — Sandstorm and Cloudflare OS require apps to be *written for* the platform's
-capability API, whereas AVP retrofits the discipline onto unmodified agents talking plain
+capability API, whereas kow retrofits the discipline onto unmodified agents talking plain
 HTTP to unmodified upstreams. ADR-0024's "annotations may only narrow, never add a host"
 is the powerbox instinct in miniature: the note-writer can attenuate authority but never
 widen it.
 
 ## 4. Information-flow and privilege control — orthogonal, composable
 
-These gate *what an agent may do or where data may flow*; AVP gates *what an agent may
+These gate *what an agent may do or where data may flow*; kow gates *what an agent may
 hold*. The paper should frame them as complements it stacks under, not rivals.
 
 - **Fides — Securing AI Agents with Information-Flow Control** (Costa, Köpf, Paverd,
@@ -141,11 +141,11 @@ hold*. The paper should frame them as complements it stacks under, not rivals.
   Song), arXiv:2504.11703. SMT-checked symbolic policies that restrict which tools an
   agent may invoke, auto-updated during execution.
 
-**How AVP differs:** AVP occupies the exact layer Fides punts on — the physical location
+**How kow differs:** kow occupies the exact layer Fides punts on — the physical location
 of the secret bytes. A Fides deployment still needs the real credential to reach the
-upstream; AVP is what keeps that credential out of the labeled computation in the first
+upstream; kow is what keeps that credential out of the labeled computation in the first
 place. The natural composite (worth one sentence in the paper): Progent decides *whether*
-a tool call is allowed, Fides tracks *whether data may flow* to it, AVP guarantees the
+a tool call is allowed, Fides tracks *whether data may flow* to it, kow guarantees the
 *credential never enters the agent* to be flowed in the first place.
 
 ## 5. Systematizations and the confidential-computing frame
@@ -158,17 +158,17 @@ a tool call is allowed, Fides tracks *whether data may flow* to it, AVP guarante
   not secret-substitution infrastructure; and (ii) its **Gap 1** is that "isolation
   architectures and capability models are never evaluated against each other on shared
   benchmarks," and **Gap 2** is that defenses are not re-evaluated against measured
-  real-world failure rates. Gaps 1–2 are precisely the hole AVP's empirical
+  real-world failure rates. Gaps 1–2 are precisely the hole kow's empirical
   test-battery (companion section) fills.
 - **Securing Agentic AI: a comprehensive threat model** (Narajala & Narayan),
   arXiv:2504.19956 — nine risks across five domains (ATFAA/SHIELD); a threat-model
   citation, and the naming-collision note above.
 - **When Agents Handle Secrets: a survey of confidential computing for agentic AI**
   (Forough, Kogias, Haddadi), arXiv:2605.03213 — maps TEEs against agent threats and
-  concludes no unified production framework exists. Positions AVP as the pragmatic,
+  concludes no unified production framework exists. Positions kow as the pragmatic,
   no-special-hardware point on the same spectrum whose ceiling is R1.
 
-**How AVP differs:** it is not another survey. AVP contributes the artifact plus the
+**How kow differs:** it is not another survey. kow contributes the artifact plus the
 falsifiable-invariant methodology these SoKs call for — and, if we run §b, the first
 cross-tool empirical evaluation of the substitution-proxy class against a shared battery,
 answering the Balkanization SoK's Gap 1 for at least this sub-field.
@@ -184,12 +184,12 @@ that issue bounded, non-reusable authority but **require the upstream to accept 
 token format** (SUDP, macaroons/DCT, Biscuit); confidential-computing approaches that
 lean on special hardware (TEE survey); and a nascent, largely non-peer-reviewed class of
 substitution proxies that swap a placeholder for the real secret on the wire (tokenizer,
-nono, Riptides, Envoy's filter, Kloak). AVP sits in the last line but is distinguished by
+nono, Riptides, Envoy's filter, Kloak). kow sits in the last line but is distinguished by
 being transparent to the upstream, sourcing just-in-time from an existing vault without
 becoming a second store, keeping the secret out of the agent's address space as a tested
 physical invariant, and — uniquely — declining to act as a destination oracle on a policy
 miss. Architecturally it is best read as an *object-capability* treatment of the credential
 itself — the placeholder is an unforgeable reference redeemed only by the proxy — a
-discipline the Sandstorm and Cloudflare OS lineage applies to whole applications and AVP
+discipline the Sandstorm and Cloudflare OS lineage applies to whole applications and kow
 narrows to the secret bytes, retrofitted onto unmodified agents and upstreams. No existing
 systematization evaluates this class against a shared, falsifiable battery; we do.

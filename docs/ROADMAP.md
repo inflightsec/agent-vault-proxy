@@ -21,7 +21,7 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
   off-box shipping half (Fluent Bit sidecar → central collector) lives in
   separate repos, not here.
 - Google Secret Manager backend (`backend.type: gsm`) — keyless auth,
-  per-secret least privilege, `avp-binding` annotation bindings
+  per-secret least privilege, `kow-binding` annotation bindings
   ([ADR-0018](adrs/ADR-0018-gcp-secret-manager-backend.md), shipped 0.8.0).
 - TLS termination scoped to bound hosts — `tls_termination: bound` (default)
   MITM-terminates + injects only bound hosts; every other CONNECT tunnels
@@ -42,7 +42,7 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
 ### Observability
 - **Metrics endpoint** — the `/healthz` liveness/readiness probe has shipped
   (a request through the proxy to the reserved
-  `healthz.agent-vault-proxy.invalid/healthz` sentinel returns `200` once AVP
+  `healthz.agent-vault-proxy.invalid/healthz` sentinel returns `200` once kow
   is fully configured, `503` while starting; the Docker healthcheck uses it).
   Still missing a Prometheus-style metrics surface (exchange counts, cache hit
   rate, deny reasons).

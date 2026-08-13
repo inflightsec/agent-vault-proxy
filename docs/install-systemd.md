@@ -55,7 +55,7 @@ The append-only flag (`chattr +a` on Linux, `chflags sappnd` on macOS) makes the
 
 ```bash
 sudo python -m venv /opt/agent-vault-proxy/.venv
-sudo /opt/agent-vault-proxy/.venv/bin/pip install --only-binary :all: agent-vault-proxy
+sudo /opt/agent-vault-proxy/.venv/bin/pip install --only-binary :all: keys-on-the-wire
 ```
 
 `--only-binary :all:` refuses source distributions. Wheels can't run scripts at install time by format spec, so this is the strongest install-time defense against a compromised transitive dependency.
@@ -68,7 +68,7 @@ sudo install -o root -g avp -m 0440 your-bws-token /etc/agent-vault-proxy/bws-to
 
 # Fetch the example config and edit for your secrets
 sudo curl -fsSL -o /etc/agent-vault-proxy/bindings.yaml \
-  https://raw.githubusercontent.com/inflightsec/agent-vault-proxy/main/bindings.example.yaml
+  https://raw.githubusercontent.com/inflightsec/keys-on-the-wire/main/bindings.example.yaml
 sudo chown root:avp /etc/agent-vault-proxy/bindings.yaml
 sudo chmod 0640     /etc/agent-vault-proxy/bindings.yaml
 sudoedit /etc/agent-vault-proxy/bindings.yaml
@@ -80,8 +80,8 @@ Copy the hardened unit from [systemd-unit.md](systemd-unit.md) to `/etc/systemd/
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now agent-vault-proxy
-systemctl is-active agent-vault-proxy          # expect: active
+sudo systemctl enable --now keys-on-the-wire
+systemctl is-active keys-on-the-wire          # expect: active
 ss -tln | grep 127.0.0.1:14322                 # expect: LISTEN
 ```
 

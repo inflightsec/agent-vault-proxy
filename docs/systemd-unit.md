@@ -4,14 +4,14 @@ Drop the unit below at `/etc/systemd/system/agent-vault-proxy.service`, then:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now agent-vault-proxy
+sudo systemctl enable --now keys-on-the-wire
 ```
 
 The rationale for each directive is in [`architecture.md`](./architecture.md) §5 (Hardening checklist).
 
 ```ini
 [Unit]
-Description=agent-vault-proxy — BWS-backed egress credential injector
+Description=keys-on-the-wire — BWS-backed egress credential injector
 After=network-online.target
 Wants=network-online.target
 
@@ -70,14 +70,14 @@ Plan for a CA rotation every 6–12 months, or immediately if you suspect the pr
 
 ```bash
 # 1. Stop the proxy and back up the old CA dir + installed cert.
-sudo systemctl stop agent-vault-proxy
+sudo systemctl stop keys-on-the-wire
 sudo cp -a /var/lib/agent-vault-proxy/.mitmproxy /var/lib/agent-vault-proxy/.mitmproxy.bak.$(date +%Y%m%d)
 sudo cp -a /etc/agent-vault-proxy/ca.pem /etc/agent-vault-proxy/ca.pem.bak.$(date +%Y%m%d)
 
 # 2. Remove the old CA material so mitmproxy regenerates on next start.
 sudo rm /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem \
         /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca.pem
-sudo systemctl start agent-vault-proxy
+sudo systemctl start keys-on-the-wire
 
 # 3. Make any request through the proxy to trigger CA generation, then install
 #    the new cert in place. Callers will fail TLS verification until they're
@@ -97,7 +97,7 @@ Created during install: see [install-systemd.md](install-systemd.md#1-create-the
 
 ```bash
 # Service running?
-systemctl is-active agent-vault-proxy
+systemctl is-active keys-on-the-wire
 
 # Listening on loopback?
 ss -tln | grep 127.0.0.1:14322

@@ -1,11 +1,11 @@
-"""``avp doctor`` CA regression checks (ADR-0012 delta).
+"""``kow doctor`` CA regression checks (ADR-0012 delta).
 
-These are READ-ONLY health checks. ``avp doctor`` never mutates the trust
+These are READ-ONLY health checks. ``kow doctor`` never mutates the trust
 store, never touches the CA key — it only reports. Two checks ship here:
 
-* :func:`check_ca_not_in_trust_store` — WARN if the AVP CA cert appears in
+* :func:`check_ca_not_in_trust_store` — WARN if the kow CA cert appears in
   any known OS/browser trust-store location. ADR-0012 makes "never add the
-  AVP CA to the system store" a hard invariant; this is the regression
+  kow CA to the system store" a hard invariant; this is the regression
   guard. Matching is by the cert's base64 DER body (not filename), so a
   copy under any name is caught and an unrelated cert never false-positives.
 
@@ -66,7 +66,7 @@ def _normalized_der_bodies(text: str) -> set[str]:
 
 
 def _ca_cert_body(ca_cert_path: str) -> str | None:
-    """The AVP CA cert's normalized DER body, or None if the cert file is
+    """The kow CA cert's normalized DER body, or None if the cert file is
     absent/unreadable/not a PEM cert. A missing CA cert means the CA hasn't
     been generated yet — nothing to look for."""
     path = Path(ca_cert_path)
@@ -75,12 +75,12 @@ def _ca_cert_body(ca_cert_path: str) -> str | None:
     except FileNotFoundError:
         return None
     except OSError:
-        # PermissionError (e.g. running `avp doctor` as a non-service user
+        # PermissionError (e.g. running `kow doctor` as a non-service user
         # against the 0700 confdir), unreadable path, etc. Can't read the
         # CA -> can't compare it; skip rather than traceback.
         return None
     bodies = _normalized_der_bodies(text)
-    # The AVP CA cert file holds exactly one certificate.
+    # The kow CA cert file holds exactly one certificate.
     return next(iter(bodies), None)
 
 
@@ -89,10 +89,10 @@ def check_ca_not_in_trust_store(
     *,
     trust_store_paths: list[str] | None = None,
 ) -> list[str]:
-    """WARN if the AVP CA cert appears in any scanned trust-store location.
+    """WARN if the kow CA cert appears in any scanned trust-store location.
 
     Read-only. Scans each path (file or directory, recursively) for a
-    certificate whose DER body matches the AVP CA. Unreadable files are
+    certificate whose DER body matches the kow CA. Unreadable files are
     skipped silently (a permission error scanning a system dir isn't a CA
     regression). Returns one warning per location the CA was found in.
     """
@@ -116,8 +116,8 @@ def check_ca_not_in_trust_store(
                 continue
             if target in _normalized_der_bodies(text):
                 warnings.append(
-                    f"INSECURE: the agent-vault-proxy CA cert appears in the trust "
-                    f"store at {f}. ADR-0012 forbids adding the AVP CA to any OS/browser "
+                    f"INSECURE: the keys-on-the-wire CA cert appears in the trust "
+                    f"store at {f}. ADR-0012 forbids adding the kow CA to any OS/browser "
                     "trust store — same-UID malware could then mint certs for ANY host. "
                     "Remove it from the system store; trust the CA per-client via "
                     "NODE_EXTRA_CA_CERTS / SSL_CERT_FILE instead."
@@ -139,7 +139,7 @@ def _iter_files(directory: Path) -> list[Path]:
     return out
 
 
-# Proxy-pointer env vars. HTTP(S)_PROXY aims a client at AVP; NODE_USE_ENV_PROXY
+# Proxy-pointer env vars. HTTP(S)_PROXY aims a client at kow; NODE_USE_ENV_PROXY
 # is what makes Node's global fetch/undici actually USE it.
 _PROXY_ENV_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
 
@@ -149,7 +149,7 @@ def check_node_env_proxy(env: dict[str, str] | None = None) -> list[str]:
     honor it (``NODE_USE_ENV_PROXY``).
 
     Node/undici's global ``fetch`` ignores ``HTTP(S)_PROXY`` by default, so Node
-    CLIs (eas-cli, etc.) egress DIRECT — bypassing AVP entirely: placeholders are
+    CLIs (eas-cli, etc.) egress DIRECT — bypassing kow entirely: placeholders are
     never substituted AND no egress policy is applied (silent, and a real security
     gap; observed 2026-07-23 with eas-cli). Meaningful when run in the CONSUMER
     environment (the shell where the agent's Node tooling runs); a clean daemon-host
@@ -163,7 +163,7 @@ def check_node_env_proxy(env: dict[str, str] | None = None) -> list[str]:
     return [
         "INSECURE: a proxy is set here (HTTP(S)_PROXY) but NODE_USE_ENV_PROXY is not. "
         "Node's global fetch/undici ignores the proxy env, so Node CLIs (eas-cli, npm, "
-        "etc.) egress DIRECT, bypassing agent-vault-proxy entirely — no credential "
+        "etc.) egress DIRECT, bypassing keys-on-the-wire entirely — no credential "
         "injection AND no egress policy. Export NODE_USE_ENV_PROXY=1 so Node tooling "
         "routes through the proxy like curl already does. For hard enforcement, lock "
         "egress at the network layer (e.g. an nftables redirect) so bypass is impossible."
@@ -193,7 +193,7 @@ def check_ca_key_perms(ca_key_path: str | None = None) -> list[str]:
         # confdir). Report informationally; this is not itself a finding.
         return [
             f"NOTE: could not read CA key perms at {key_path} (permission denied). "
-            "Run `avp doctor` as the agent-vault-proxy service user to check key perms."
+            "Run `kow doctor` as the keys-on-the-wire service user to check key perms."
         ]
     except OSError as e:
         return [f"could not stat CA key {key_path}: {type(e).__name__}"]
@@ -230,7 +230,7 @@ def check_ca_key_perms(ca_key_path: str | None = None) -> list[str]:
     if euid != 0 and st.st_uid != euid:
         warnings.append(
             f"WARNING: CA private key {key_path} is owned by uid {st.st_uid}, not the "
-            f"current user (uid {euid}). Confirm it is owned by the agent-vault-proxy "
+            f"current user (uid {euid}). Confirm it is owned by the keys-on-the-wire "
             "service user and not readable by the agent's UID."
         )
     return warnings
@@ -246,7 +246,7 @@ def run_doctor(
     do_exchange: bool = False,
     probe_gcp: bool = False,
 ) -> int:
-    """Execute the ``avp doctor`` checks.
+    """Execute the ``kow doctor`` checks.
 
     Always runs the CA regression checks (ADR-0012). When ``probe_oauth``
     is set, ALSO runs the per-binding OAuth2 probes (ADR-0017 slice 8) —
@@ -278,11 +278,11 @@ def run_doctor(
 
     if not all_warnings:
         print(
-            "avp doctor: health checks passed (CA not in any OS trust store; key perms OK; "
+            "kow doctor: health checks passed (CA not in any OS trust store; key perms OK; "
             "Node honors the proxy)."
         )
     else:
-        print(f"avp doctor: {len(all_warnings)} warning(s):", file=sys.stderr)
+        print(f"kow doctor: {len(all_warnings)} warning(s):", file=sys.stderr)
         for w in all_warnings:
             print(f"  - {w}", file=sys.stderr)
 
@@ -305,12 +305,12 @@ def _run_oauth_probes(
     silently.
     """
     # Defer import so loading the OAuth probe surface (urllib, the
-    # injector) doesn't happen on a plain `avp doctor` invocation.
+    # injector) doesn't happen on a plain `kow doctor` invocation.
     from kow.cli.doctor_oauth import probe_all_oauth_bindings
 
     if config_path is None:
         print(
-            "avp doctor --probe-oauth: --config <path> is required to load bindings.",
+            "kow doctor --probe-oauth: --config <path> is required to load bindings.",
             file=sys.stderr,
         )
         return True
@@ -318,7 +318,7 @@ def _run_oauth_probes(
         config = load_config(config_path)
     except Exception as e:  # noqa: BLE001 - operator-facing CLI surface
         print(
-            f"avp doctor --probe-oauth: cannot load config {config_path}: {type(e).__name__}: {e}",
+            f"kow doctor --probe-oauth: cannot load config {config_path}: {type(e).__name__}: {e}",
             file=sys.stderr,
         )
         return True
@@ -326,7 +326,7 @@ def _run_oauth_probes(
         backend, _ = build_backend(config)
     except Exception as e:  # noqa: BLE001 - operator-facing CLI surface
         print(
-            f"avp doctor --probe-oauth: cannot build backend: {type(e).__name__}: {e}",
+            f"kow doctor --probe-oauth: cannot build backend: {type(e).__name__}: {e}",
             file=sys.stderr,
         )
         return True
@@ -344,14 +344,14 @@ def _run_oauth_probes(
         by_binding.setdefault(r.binding_name, []).append(r)
 
     print()
-    print("avp doctor --probe-oauth: results")
+    print("kow doctor --probe-oauth: results")
     for name, items in by_binding.items():
         print(f"  [{name}]")
         for r in items:
             print(f"    {r.status:5s} {r.check:24s} {r.message}")
     print()
     if any_fail:
-        print("avp doctor --probe-oauth: one or more FAIL results", file=sys.stderr)
+        print("kow doctor --probe-oauth: one or more FAIL results", file=sys.stderr)
     else:
-        print("avp doctor --probe-oauth: all probes OK or WARN")
+        print("kow doctor --probe-oauth: all probes OK or WARN")
     return any_fail

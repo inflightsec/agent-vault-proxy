@@ -35,7 +35,7 @@ The proxy records every substitution decision in an append-only JSONL audit log 
 
 Crucially, this does **not** turn the proxy off for the agent's children. A script the agent spawns inherits `HTTPS_PROXY`/`NO_PROXY`, so any call it makes to a *brokered* host (your GitHub, cloud, or SaaS credentials) still routes through the proxy and is injected on the wire — only the excluded hosts go direct. Exclude the narrowest set that works; list the exact host, and add a leading-dot form (`.example.com`) if the client must also bypass subdomains. `NO_PROXY` matching differs by client (curl supports CIDR; Node/undici and Python `requests` match by host/suffix), so verify with the stack your agent actually uses.
 
-> Caveat: if you launch the agent via `avp run`, it **strips** `NO_PROXY` (and `no_proxy`) from the child environment on purpose — otherwise an injected agent could set `NO_PROXY=*` to escape the proxy. To exclude a host under `avp run`, set the exclusion in the agent's own launch environment (the wrapper/service that starts it), not inside the `avp run` child.
+> Caveat: if you launch the agent via `kow run`, it **strips** `NO_PROXY` (and `no_proxy`) from the child environment on purpose — otherwise an injected agent could set `NO_PROXY=*` to escape the proxy. To exclude a host under `kow run`, set the exclusion in the agent's own launch environment (the wrapper/service that starts it), not inside the `kow run` child.
 
 ## Configuration
 
@@ -116,7 +116,7 @@ kow_shipper_extra_outputs: |
       compress    gzip
       apikey      YOUR_DATADOG_API_KEY        # from vault
       dd_source   avp-audit
-      dd_service  agent-vault-proxy
+      dd_service  keys-on-the-wire
 
   [OUTPUT]
       Name          splunk
@@ -137,8 +137,8 @@ After install, every new credential is "add to BWS + a few lines of YAML + resta
 
 The repo itself is operational hygiene: version history, multi-host scale-out, a place for `git diff` to live. **It is not a security control.** The security control is (a) the operator reading the diff before restart and (b) only the operator being able to restart. The private-repo recommendation just makes both of those easier.
 
-- **One repo, separate from this one.** Do not fork the AVP source repo for your config - your bindings have nothing to do with the upstream code and you'd inherit fork-maintenance for no benefit.
-- **Path matters.** Put the repo where `npm` / `pip` / build tools don't traverse - typically not `~/projects/` and not the agent's CWD. Something like `~/.config/avp-bindings/` is fine. `chmod 0700` the directory so non-AVP-UID processes (like a postinstall hook from an unrelated `npm install`) can't read it.
+- **One repo, separate from this one.** Do not fork the kow source repo for your config - your bindings have nothing to do with the upstream code and you'd inherit fork-maintenance for no benefit.
+- **Path matters.** Put the repo where `npm` / `pip` / build tools don't traverse - typically not `~/projects/` and not the agent's CWD. Something like `~/.config/kow-bindings/` is fine. `chmod 0700` the directory so non-kow-UID processes (like a postinstall hook from an unrelated `npm install`) can't read it.
 - **Diff review is mandatory.** The agent edits `bindings.yaml` in your repo; you read the diff before restarting. Restart is your job, never the agent's. Treat `.gitignore`, any deploy script, and any `bindings.*` file as part of the diff review surface, the daemon reads exactly one file (`bindings.yaml`), so if your deploy script reads more than that, you've widened the gate.
 - **No auto-restart.** Don't reach for `fswatch`, `inotify`, a `Makefile restart` target Claude can shell into, a post-commit hook, or a CI auto-deploy. All of them collapse the diff-review window to zero - exactly what the credential-isolation model relies on. If diff review feels tedious, the fix is better diff tooling, not automation around the restart.
 - **`.gitignore` always:** `secrets/bws-token`, `ca.pem`, anything containing real values. Real values stay in the configured backend (Bitwarden or Google Secret Manager): the whole point of this proxy.

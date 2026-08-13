@@ -1,6 +1,6 @@
 # Branch protection: recommended GitHub settings
 
-The CI workflows are only one half of the supply-chain story. The other half is making sure nothing reaches `main` (or a release tag) without passing them. The settings below are what we use on `inflightsec/agent-vault-proxy`; treat them as a defensible baseline rather than a fixed policy.
+The CI workflows are only one half of the supply-chain story. The other half is making sure nothing reaches `main` (or a release tag) without passing them. The settings below are what we use on `inflightsec/keys-on-the-wire`; treat them as a defensible baseline rather than a fixed policy.
 
 Apply via **Settings → Branches → Branch protection rules** and **Settings → Tags → Tag protection rules**.
 
@@ -54,9 +54,9 @@ The release workflow uses PyPI's OIDC trusted-publishing flow. There is no long-
 
 | Field | Value |
 |---|---|
-| PyPI project name | `agent-vault-proxy` |
+| PyPI project name | `keys-on-the-wire` |
 | Owner | `inflightsec` |
-| Repository | `agent-vault-proxy` |
+| Repository | `keys-on-the-wire` |
 | Workflow | `release.yml` |
 | Environment | `pypi` |
 

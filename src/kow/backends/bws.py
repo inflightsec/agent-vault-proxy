@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 # not decorative.
 _BWS_LICENSE_NOTE = (
     " It ships separately because it is under Bitwarden's proprietary SDK "
-    "license, not the Apache-2.0 license the rest of AVP uses; the default "
+    "license, not the Apache-2.0 license the rest of kow uses; the default "
     "install stays fully open source. (The AWS and GSM backends use "
     "open-source SDKs via their own extras.)"
 )
@@ -167,14 +167,14 @@ class BitwardenBackend:
 
         * **No true conditional PUT.** The precondition is enforced at
           the GET; a concurrent edit inside the GET→PUT gap is still
-          silently overwritten. Single-host single-instance AVP keeps
+          silently overwritten. Single-host single-instance kow keeps
           this rare; multi-instance coordination is its own ADR.
         * **No retry on stale name→id map.** ``_ensure_name_map`` is
           populated lazily and only refreshed via ``flush_name_map``;
           a secret deleted and re-created with the same key between
           map populations will fail with ``BackendUnavailableError``
           via the SDK's not-found path. Operator action: invoke
-          ``avp doctor`` (which flushes) and retry.
+          ``kow doctor`` (which flushes) and retry.
         """
         from kow.backends import (
             BackendUnavailableError,
@@ -215,7 +215,7 @@ class BitwardenBackend:
 
     def list_secret_names(self) -> list[str]:
         """Return every secret NAME (BWS ``.key``) in the configured org/project
-        (ADR-0011 amendment — drives ``avp env`` and the daemon's BWS-notes
+        (ADR-0011 amendment — drives ``kow env`` and the daemon's BWS-notes
         placeholder map). Triggers auth + the list call on first use, reusing
         the cached name→id map thereafter. Returns names only — no values, no
         ids — so the projection that builds the env file never pulls secret

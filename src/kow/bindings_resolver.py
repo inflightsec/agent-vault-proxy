@@ -76,7 +76,7 @@ class NotesSource:
     invalid: dict[str, str] = field(default_factory=dict)
     # names whose note carried no binding (audit `no_binding_in_notes`). A
     # normal state, tracked separately from `invalid` so a diagnostic surface
-    # (e.g. `avp doctor`) can report the two distinctly.
+    # (e.g. `kow doctor`) can report the two distinctly.
     no_binding: set[str] = field(default_factory=set)
 
     def resolve(self) -> dict[str, ResolvedSpec]:

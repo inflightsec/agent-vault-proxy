@@ -108,7 +108,7 @@ def _check_ip_string(ip_str: str) -> None:
     if label is not None:
         raise SsrfBlockedError(
             f"token_url resolves to a blocked address: {ip_str} ({label}). "
-            "AVP refuses to contact reserved / private / loopback / link-"
+            "kow refuses to contact reserved / private / loopback / link-"
             "local / CGNAT ranges. If this is a deliberate on-host token "
             "endpoint, raise an issue."
         )

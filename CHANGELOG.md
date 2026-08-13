@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Bundled Claude Code plugin/skill renamed `avp` → `kow`** — plugin `kow@keys-on-the-wire`, invoke `/kow:kow`, skill dir `skills/kow/`. Completes the marketplace-migration piece [ADR-0045](docs/adrs/ADR-0045-rename-keys-on-the-wire.md) deferred (safe now: no existing installs). The `avp-binding` note marker, the `avp-PLACEHOLDER-` prefix, and the on-disk paths still keep their names until 2.0.0.
+
 ## [1.0.0], 2026-08-08
 
 ### Added

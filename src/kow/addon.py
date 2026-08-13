@@ -136,7 +136,7 @@ class AgentVaultProxyAddon:
             name="avp_config",
             typespec=str,
             default="/etc/agent-vault-proxy/bindings.yaml",
-            help="Path to agent-vault-proxy bindings.yaml",
+            help="Path to keys-on-the-wire bindings.yaml",
         )
 
     def configure(self, updated: set[str]) -> None:
@@ -375,8 +375,8 @@ class AgentVaultProxyAddon:
 
         For a destination the live config has no binding for, tunnel the
         connection opaquely (``ignore_connection``) instead of MITM-terminating
-        it — so AVP never holds plaintext for traffic it does not broker, and a
-        stolen AVP CA cannot decrypt it (the client validates the upstream's
+        it — so kow never holds plaintext for traffic it does not broker, and a
+        stolen kow CA cannot decrypt it (the client validates the upstream's
         real certificate end-to-end). The tunnel is logged (``tls_passthrough``,
         destination host only) so exfil *visibility* survives without
         interception. ``tls_termination: all`` restores full termination. Runs
@@ -442,7 +442,7 @@ class AgentVaultProxyAddon:
         # 3. Body injection streaming setup — for hosts with body bindings,
         #    attach a streaming replacer to ``flow.request.stream`` so the
         #    body never buffers in memory. Chunked transfer encoding lets
-        #    AVP emit modified bytes as they arrive without knowing the
+        #    kow emit modified bytes as they arrive without knowing the
         #    final body length in advance.
         #
         # Stages 2 and 3 can fire in the same request when different
@@ -634,7 +634,7 @@ class AgentVaultProxyAddon:
             # verdict, but the runtime state needed to sign vanished before the
             # body arrived. Fail closed — never forward the placeholder-bearing
             # request unsigned. The header still carries the (non-secret)
-            # placeholder, so nothing leaks, but AVP must not emit a
+            # placeholder, so nothing leaks, but kow must not emit a
             # half-processed request; deny with 503 like the signer key-missing
             # path does.
             if audit is not None:

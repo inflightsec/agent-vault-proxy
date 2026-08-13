@@ -66,7 +66,7 @@ def test_no_placeholder_omits_it(capsys):
     code, out, err = _run([*_GH, "--no-placeholder"], capsys)
     assert code == 0
     assert "placeholder:" not in out
-    assert "avp env" in err  # tells the operator how to resolve the derived placeholder
+    assert "kow env" in err  # tells the operator how to resolve the derived placeholder
 
 
 # --- ISC-5: --format must contain {secret} ---

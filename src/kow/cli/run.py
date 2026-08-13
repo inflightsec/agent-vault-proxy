@@ -1,9 +1,9 @@
-"""``avp run`` / ``avp sandvault`` — launch a command with AVP env routing.
+"""``kow run`` / ``avp sandvault`` — launch a command with kow env routing.
 
-Sets the four AVP env vars (HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE,
+Sets the four kow env vars (HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE,
 NODE_USE_ENV_PROXY) in the spawned process only — the host shell never
 inherits them. Also auto-loads placeholder exports from ``~/.config/avp/env``
-(written by ``avp env``) so the host shell can stay free of placeholder env
+(written by ``kow env``) so the host shell can stay free of placeholder env
 vars too. Optional ``--sandvault`` (or the ``avp sandvault`` alias)
 additionally wraps the launch in the SandVault macOS sandbox tool.
 """
@@ -23,7 +23,7 @@ _DEFAULT_PROXY = "http://127.0.0.1:14322"
 _LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
 _DEFAULT_ENV_FILE = "~/.config/avp/env"
 
-# Matches lines emitted by ``avp env``: ``export NAME='value'`` with a
+# Matches lines emitted by ``kow env``: ``export NAME='value'`` with a
 # single-quoted, metachar-free value. We do not run the file through a shell.
 _EXPORT_RE = re.compile(r"^export ([A-Za-z_][A-Za-z0-9_]*)='([^']*)'$")
 
@@ -34,7 +34,7 @@ def _default_ca_path() -> Path:
 
 def _proxy_is_loopback(proxy_url: str) -> bool:
     """True if the proxy URL points at a loopback host. Used to warn the
-    operator when they aim AVP env at a non-local proxy (typo or attack)."""
+    operator when they aim kow env at a non-local proxy (typo or attack)."""
     from urllib.parse import urlparse
 
     try:
@@ -55,13 +55,13 @@ def _warn_env_file_perms(path: Path) -> None:
         return
     if (st.st_mode & 0o777) != 0o600:
         print(
-            f"[avp run] WARNING: {path} mode {oct(st.st_mode & 0o777)} "
-            "(expected 0o600). Re-run `avp env` to rewrite.",
+            f"[kow run] WARNING: {path} mode {oct(st.st_mode & 0o777)} "
+            "(expected 0o600). Re-run `kow env` to rewrite.",
             file=sys.stderr,
         )
     if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
         print(
-            f"[avp run] WARNING: {path} not owned by current user.",
+            f"[kow run] WARNING: {path} not owned by current user.",
             file=sys.stderr,
         )
 
@@ -74,7 +74,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
     returns empty so launches don't break, but the operator sees the warning.
 
     Lines that don't match the strict format are skipped with a one-line
-    warning each so a regex/grammar drift between ``avp env`` and this parser
+    warning each so a regex/grammar drift between ``kow env`` and this parser
     surfaces immediately instead of producing a silently-empty environment.
     We never pass the file through a shell."""
     try:
@@ -83,7 +83,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
         return {}
     except OSError as exc:
         print(
-            f"[avp run] WARNING: could not read {path}: {type(exc).__name__}.",
+            f"[kow run] WARNING: could not read {path}: {type(exc).__name__}.",
             file=sys.stderr,
         )
         return {}
@@ -98,7 +98,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
             out[m.group(1)] = m.group(2)
         else:
             print(
-                f"[avp run] WARNING: skipping {path}:{lineno} — does not "
+                f"[kow run] WARNING: skipping {path}:{lineno} — does not "
                 "match `export NAME='value'` grammar.",
                 file=sys.stderr,
             )
@@ -107,7 +107,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
 
 # Lowercase proxy variants and bypass lists that some clients prefer over the
 # uppercase forms (curl, requests, some Go binaries). Without overriding these
-# the host shell can divert traffic away from AVP — e.g. `NO_PROXY=*` or a
+# the host shell can divert traffic away from kow — e.g. `NO_PROXY=*` or a
 # stale `https_proxy=http://other:3128` shadowing our routing.
 _PROXY_OVERRIDE_KEYS = (
     "https_proxy",
@@ -131,7 +131,7 @@ def _build_avp_env(
     env["SSL_CERT_FILE"] = str(ca_path)
     env["NODE_USE_ENV_PROXY"] = "1"
     # Defense in depth: override every proxy variant + clear bypass lists so
-    # an inherited host-shell value cannot route around AVP.
+    # an inherited host-shell value cannot route around kow.
     for key in _PROXY_OVERRIDE_KEYS:
         env[key] = proxy_url
     for key in _PROXY_BYPASS_KEYS:
@@ -150,16 +150,16 @@ def _resolve_sandvault() -> str:
 
 
 def run_run(args: argparse.Namespace) -> int:
-    """Set AVP env and exec the requested command. Replaces this process."""
+    """Set kow env and exec the requested command. Replaces this process."""
     command = list(args.argv or [])
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        raise SystemExit("usage: avp run [--sandvault] [--] CMD [ARGS...]")
+        raise SystemExit("usage: kow run [--sandvault] [--] CMD [ARGS...]")
 
     ca_path = Path(args.ca_cert) if args.ca_cert else _default_ca_path()
     if not ca_path.exists():
-        raise SystemExit(f"AVP CA not found at {ca_path}: run `sudo avp setup` first")
+        raise SystemExit(f"kow CA not found at {ca_path}: run `sudo kow setup` first")
 
     if args.no_env_file:
         placeholder_env: dict[str, str] = {}
@@ -171,7 +171,7 @@ def run_run(args: argparse.Namespace) -> int:
 
     if not _proxy_is_loopback(args.proxy):
         print(
-            f"[avp run] WARNING: --proxy {args.proxy!r} is not loopback; "
+            f"[kow run] WARNING: --proxy {args.proxy!r} is not loopback; "
             "this routes credentials through a remote host. Use 127.0.0.1 "
             "unless you've intentionally chosen another endpoint.",
             file=sys.stderr,
@@ -193,7 +193,7 @@ def register_run_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
     common.add_argument(
         "--ca-cert",
         default=None,
-        help="Path to AVP CA cert (default: platform confdir ca.pem).",
+        help="Path to kow CA cert (default: platform confdir ca.pem).",
     )
     common.add_argument(
         "--proxy",
@@ -205,7 +205,7 @@ def register_run_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
         default=_DEFAULT_ENV_FILE,
         help=(
             f"Placeholder env file to load (default {_DEFAULT_ENV_FILE}, "
-            "written by `avp env`). Missing file is a no-op."
+            "written by `kow env`). Missing file is a no-op."
         ),
     )
     common.add_argument(
@@ -217,12 +217,12 @@ def register_run_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
     run_p = parent_subparsers.add_parser(
         "run",
         parents=[common],
-        help="Launch CMD with AVP env routing scoped to its process tree.",
+        help="Launch CMD with kow env routing scoped to its process tree.",
         description=(
             "Set HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, and "
             "NODE_USE_ENV_PROXY for CMD only — the host shell never inherits "
             "them. Also load placeholder exports from ~/.config/avp/env "
-            "(written by `avp env`) so the host shell can stay free of "
+            "(written by `kow env`) so the host shell can stay free of "
             "placeholder vars too. Use `--` before CMD to disambiguate flags."
         ),
     )
@@ -241,10 +241,10 @@ def register_run_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
     sv_p = parent_subparsers.add_parser(
         "sandvault",
         parents=[common],
-        help="Alias for `avp run --sandvault`.",
+        help="Alias for `kow run --sandvault`.",
         description=(
-            "Wrap CMD with SandVault and AVP env routing. Equivalent to "
-            "`avp run --sandvault -- CMD`."
+            "Wrap CMD with SandVault and kow env routing. Equivalent to "
+            "`kow run --sandvault -- CMD`."
         ),
     )
     sv_p.add_argument(

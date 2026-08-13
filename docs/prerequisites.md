@@ -14,10 +14,10 @@ The proxy needs a Bitwarden Secrets Manager project and a machine-account access
 
 **Project and machine-account scoping (please read this).** The blast radius of a compromised BWS token is exactly the secrets in the projects that machine account can read. Two rules:
 
-- **One BWS project per AVP instance.** Don't pool unrelated services into one shared project so they can all reach each other's secrets - that turns one bad binding into a multi-service leak.
-- **Separate machine accounts per environment.** Staging laptop's AVP, CI runner's AVP, and prod host's AVP each get their own machine account with read access to a single project scoped to that environment. Don't reuse one token across hosts; if one leaks, you only burn one environment.
+- **One BWS project per kow instance.** Don't pool unrelated services into one shared project so they can all reach each other's secrets - that turns one bad binding into a multi-service leak.
+- **Separate machine accounts per environment.** Staging laptop's kow, CI runner's kow, and prod host's kow each get their own machine account with read access to a single project scoped to that environment. Don't reuse one token across hosts; if one leaks, you only burn one environment.
 
-If you already keep, say, Stripe + AWS + Datadog in one combined "production" project for human use, create *separate* BWS projects for AVP brokerage and put only the per-environment subset in each.
+If you already keep, say, Stripe + AWS + Datadog in one combined "production" project for human use, create *separate* BWS projects for kow brokerage and put only the per-environment subset in each.
 
 The proxy needs nothing else from Bitwarden, no master key, no user account, no API beyond the read-scoped machine token.
 

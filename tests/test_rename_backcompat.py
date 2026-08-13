@@ -1,9 +1,10 @@
 """Backward-compat guarantees for the agent-vault-proxy -> keys-on-the-wire rename.
 
 The rename is deliberately byte-identical on the wire and on disk in 1.0.0
-(ADR-0045): the minted placeholder prefix, config paths, systemd unit, and
-`avp-binding` annotation are UNCHANGED, so every existing deployment keeps
-injecting with zero migration. What these lock:
+(ADR-0045): the minted placeholder prefix, config paths, and systemd unit are
+UNCHANGED, so every existing deployment keeps injecting with zero migration. The
+note/annotation marker now DEFAULTS to `# kow-binding` but still accepts the old
+`# avp-binding` (both parse identically). What these lock:
 
   * minting/derivation still emit the `avp-PLACEHOLDER-` prefix — the on-wire
     contract the daemon matches by `spec.placeholder in value` (unchanged);
@@ -94,3 +95,37 @@ def test_deprecated_cli_aliases_still_wired() -> None:
     # deprecated aliases (removed in 2.0.0)
     assert scripts["avp"] == "kow.cli.main:main"
     assert scripts["agent-vault-proxy"] == "kow.__main__:main"
+
+
+def test_kow_binding_marker_parses_as_binding() -> None:
+    """`# kow-binding` (the new default marker) selects a binding."""
+    from kow.notes_binding import ParsedBinding, parse_notes_binding
+
+    result = parse_notes_binding(
+        secret_name="SOME_KEY",
+        placeholder="avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m6n7p",
+        note="# kow-binding\nhost: api.example.com\n",
+    )
+    assert isinstance(result, ParsedBinding)
+
+
+def test_avp_binding_marker_still_parses_as_binding() -> None:
+    """`# avp-binding` (the deprecated alias) still selects a binding (back-compat)."""
+    from kow.notes_binding import ParsedBinding, parse_notes_binding
+
+    result = parse_notes_binding(
+        secret_name="SOME_KEY",
+        placeholder="avp-PLACEHOLDER-a2b3c4d5e6f7g2h3j4k5m6n7p",
+        note="# avp-binding\nhost: api.example.com\n",
+    )
+    assert isinstance(result, ParsedBinding)
+
+
+def test_gsm_reads_both_binding_annotation_keys() -> None:
+    """GSM reads the canonical `kow-binding` annotation and the `avp-binding` alias."""
+    from kow.backends.gsm import _read_binding_annotation
+
+    assert _read_binding_annotation({"kow-binding": "api.example.com"}) == "api.example.com"
+    assert _read_binding_annotation({"avp-binding": "api.example.com"}) == "api.example.com"
+    assert _read_binding_annotation({"other": "x"}) is None
+    assert _read_binding_annotation(None) is None

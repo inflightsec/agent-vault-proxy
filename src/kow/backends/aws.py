@@ -66,7 +66,7 @@ _JSON_CONTENT_TYPE = "application/x-amz-json-1.1"
 _TARGET_GET = "secretsmanager.GetSecretValue"
 _TARGET_LIST = "secretsmanager.ListSecrets"
 _TARGET_DESCRIBE = "secretsmanager.DescribeSecret"
-# Tag key that carries the AVP binding (bare host; same key name as the GSM
+# Tag key that carries the kow binding (bare host; same key name as the GSM
 # annotation for cross-backend least-surprise). Richer flat-YAML bindings live
 # in the secret Description as a `# avp-binding` marker block (a tag value's
 # character set — alnum + space + `+ - = . _ : / @` — can't hold YAML).
@@ -511,7 +511,7 @@ class AwsSecretsManagerBackend:
         _log.warning("%s [self_check=warn → continuing]", msg)
 
     def diagnose(self) -> list[tuple[str, str, str]]:
-        """Read-only scope report for ``avp doctor --probe-aws`` — a list of
+        """Read-only scope report for ``kow doctor --probe-aws`` — a list of
         ``(status, check, message)`` rows. NEVER raises: every probe failure
         becomes a row. Makes only credential-resolve + ListSecrets calls."""
         from kow.backends import BackendAuthLostError, BackendUnavailableError
@@ -573,10 +573,10 @@ class AwsSecretsManagerBackend:
         if isinstance(desc, str) and desc.strip():
             # Only treat a Description as a binding when it opts in with the
             # marker (ADR-0025); ordinary human descriptions are not bindings.
-            from kow.notes_binding import NOTES_MARKER
+            from kow.notes_binding import _ACCEPTED_MARKERS
 
             first = next((ln for ln in desc.splitlines() if ln.strip()), "")
-            if first.strip() == NOTES_MARKER:
+            if first.strip() in _ACCEPTED_MARKERS:
                 return desc
         return None
 

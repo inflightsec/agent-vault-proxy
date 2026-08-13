@@ -1,4 +1,4 @@
-"""``avp secret`` static-backend secret management."""
+"""``kow secret`` static-backend secret management."""
 
 from __future__ import annotations
 
@@ -61,12 +61,12 @@ def _load_static_path(config_path: str) -> Path:
         raise _die(f"invalid config {config_path}: {type(exc).__name__}") from None
 
     if config.backend is None or config.backend.type != "static":
-        raise _die("avp secret requires backend.type: static")
+        raise _die("kow secret requires backend.type: static")
 
     backend_config = config.backend._validated_config
     raw_path = getattr(backend_config, "path", None)
     if not isinstance(raw_path, str) or not raw_path:
-        raise _die("avp secret requires backend.config.path for the static backend")
+        raise _die("kow secret requires backend.config.path for the static backend")
 
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
@@ -190,7 +190,7 @@ def run_secret_add(name: str, config_path: str, from_stdin: bool) -> int:
     secrets[name] = _read_stdin_value() if from_stdin else _prompt_value()
     _write_secrets_atomic(path, secrets)
     print(f"✓ added secret {name!r}", file=sys.stderr)
-    print("  next: run `avp env` to refresh ~/.config/avp/env", file=sys.stderr)
+    print("  next: run `kow env` to refresh ~/.config/avp/env", file=sys.stderr)
     return 0
 
 
@@ -220,12 +220,12 @@ def run_secret_rotate(name: str, config_path: str) -> int:
     path = _load_static_path(config_path)
     secrets = _read_secrets(path, for_write=True)
     if name not in secrets:
-        raise _die(f"cannot rotate {name!r}: not present (use `avp secret add` instead)")
+        raise _die(f"cannot rotate {name!r}: not present (use `kow secret add` instead)")
     del secrets[name]
     secrets[name] = _prompt_value()
     _write_secrets_atomic(path, secrets)
     print(f"✓ rotated secret {name!r}", file=sys.stderr)
-    print("  next: run `avp env` to refresh ~/.config/avp/env", file=sys.stderr)
+    print("  next: run `kow env` to refresh ~/.config/avp/env", file=sys.stderr)
     return 0
 
 

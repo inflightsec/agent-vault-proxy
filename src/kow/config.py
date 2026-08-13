@@ -290,7 +290,7 @@ class SecretSpec(BaseModel):
     # event (see audit.AuditWriter) so the fleet collector alerts on a single
     # unambiguous type. The tripwire fires on ANY use of the planted
     # placeholder — injected, denied, scope-violated, or aimed at the wrong
-    # destination — before any real value moves. Per-secret (the AVP "binding"
+    # destination — before any real value moves. Per-secret (the kow "binding"
     # the audit `binding_name` names); honored regardless of binding_source.
     honeytoken: bool = False
 
@@ -460,12 +460,12 @@ class Config(BaseModel):
     # schema-breaking changes.
     version: Literal[1] = 1
     secrets: dict[str, SecretSpec]
-    # Default `forward_unmodified`: AVP is a credential broker, not an
+    # Default `forward_unmodified`: kow is a credential broker, not an
     # egress firewall. Operators opt into allow-listing with `deny`.
     unmatched_destination_policy: Literal["deny", "forward_unmodified"] = "forward_unmodified"
-    # ADR-0026: which destinations AVP TLS-terminates (MITM). `bound` (default):
+    # ADR-0026: which destinations kow TLS-terminates (MITM). `bound` (default):
     # terminate + inject ONLY for hosts the config binds; every other CONNECT is
-    # an opaque TCP passthrough (no leaf cert, no decryption) — AVP never holds
+    # an opaque TCP passthrough (no leaf cert, no decryption) — kow never holds
     # plaintext for traffic it does not broker, and a `tls_passthrough` audit
     # event records the tunneled destination for exfil visibility. `all`:
     # terminate every destination (pre-ADR-0026 behaviour; max observability).

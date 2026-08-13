@@ -71,7 +71,7 @@ _SALT_BYTES = 32
 _DEFAULT_SALT_BASENAME = "install-salt"
 
 # Stored (note-carried) placeholders — ADR-0029. A note may pin its secret's
-# placeholder explicitly (minted by `avp binding new`) instead of relying on
+# placeholder explicitly (minted by `kow binding new`) instead of relying on
 # the salt derivation above. The stored shape is deliberately IDENTICAL in
 # alphabet and prefix to the derived one (prefix + lowercase-base32 tail) so:
 #   * config.py's placeholder invariants (>=24 chars, PLACEHOLDER marker,
@@ -116,7 +116,7 @@ class InstallSaltError(ValueError):
     Subclasses :class:`ValueError` for backward compatibility with callers that
     already ``except ValueError``. Carries an optional ``hint`` — a human-facing
     remediation line the CLI surfaces (instead of a raw traceback) when the most
-    likely cause is operator error, e.g. running ``avp env`` as root when the
+    likely cause is operator error, e.g. running ``kow env`` as root when the
     salt is owned by the daemon's unprivileged service user.
     """
 
@@ -135,7 +135,7 @@ def _check_salt(install_salt: bytes) -> None:
         raise ValueError(
             f"install_salt must be at least {_SALT_BYTES} bytes "
             f"(got {len(install_salt)}); a short salt weakens the keyed HMAC. "
-            "Regenerate via `avp setup` (this invalidates existing placeholders)."
+            "Regenerate via `kow setup` (this invalidates existing placeholders)."
         )
 
 
@@ -236,10 +236,10 @@ def load_or_create_install_salt(salt_path: str | Path) -> bytes:
                 # service user. The CLI must run AS that user, not root.
                 hint = (
                     f"You're running as root, but the salt is owned by uid {st.st_uid} — "
-                    "the agent-vault-proxy daemon's own service user. This almost always "
+                    "the keys-on-the-wire daemon's own service user. This almost always "
                     "means the command was run as root (e.g. via sudo). Run it as the "
                     "salt's owner instead, for example:\n"
-                    f"    sudo -u '#{st.st_uid}' avp env --print"
+                    f"    sudo -u '#{st.st_uid}' kow env --print"
                 )
             raise InstallSaltError(
                 f"install salt at {path} is owned by uid {st.st_uid}; expected uid {euid} "

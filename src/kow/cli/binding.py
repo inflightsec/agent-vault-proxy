@@ -1,4 +1,4 @@
-"""``avp binding`` — generate a paste-ready binding note/annotation.
+"""``kow binding`` — generate a paste-ready binding note/annotation.
 
 Deterministic authoring of the per-secret binding metadata (BWS ``notes`` field
 or GSM ``avp-binding`` annotation). The tool builds the note from flags and
@@ -38,7 +38,7 @@ _VALIDATE_PLACEHOLDER = PLACEHOLDER_PREFIX + "bindingnewvalidatesentinel"
 
 
 def _die(msg: str) -> int:
-    print(f"avp binding: {msg}", file=sys.stderr)
+    print(f"kow binding: {msg}", file=sys.stderr)
     return 1
 
 
@@ -74,13 +74,13 @@ def _gsm_command(name: str, note: str) -> str:
     avp skill's GSM example)."""
     embedded = note.rstrip("\n").replace('"', '\\"').replace("\n", "\\n")
     return (
-        f"gcloud secrets update {name} --update-annotations=\"avp-binding=$(printf '{embedded}')\""
+        f"gcloud secrets update {name} --update-annotations=\"kow-binding=$(printf '{embedded}')\""
     )
 
 
 def run_binding(args: argparse.Namespace) -> int:
     if getattr(args, "binding_cmd", None) != "new":
-        return _die("unknown subcommand; use `avp binding new --host <host>`.")
+        return _die("unknown subcommand; use `kow binding new --host <host>`.")
 
     fmt: str = args.format
     if _SECRET_TOKEN not in fmt:
@@ -93,7 +93,7 @@ def run_binding(args: argparse.Namespace) -> int:
     paths = [p.strip() for p in args.paths.split(",") if p.strip()] if args.paths else []
 
     # ADR-0029: mint a stored placeholder by default so the note itself pins
-    # what the consumer must emit — no salt, no sudo `avp env` discovery.
+    # what the consumer must emit — no salt, no sudo `kow env` discovery.
     # `--no-placeholder` keeps the legacy salt-derived flow.
     minted = None if getattr(args, "no_placeholder", False) else mint_placeholder()
 
@@ -128,9 +128,9 @@ def run_binding(args: argparse.Namespace) -> int:
         # placeholder is a sentinel, not a secret — safe to print and to
         # write into the consumer's env/config.
         print(
-            "avp binding: wire the consumer now — add this line to the "
+            "kow binding: wire the consumer now — add this line to the "
             f"calling app's env:\n  export {args.name}='{minted}'\n"
-            "avp binding: the daemon picks the note up on its next reload.",
+            "kow binding: the daemon picks the note up on its next reload.",
             file=sys.stderr,
         )
     return 0
@@ -200,6 +200,6 @@ def register_binding_subparser(parent_subparsers: argparse._SubParsersAction) ->
         help=(
             "Do not mint a stored placeholder into the note; the daemon then "
             "derives one from the install salt (legacy flow — the consumer "
-            "must discover it via `avp env` on the daemon host)."
+            "must discover it via `kow env` on the daemon host)."
         ),
     )

@@ -1,4 +1,4 @@
-"""``avp mcp install`` — broker an MCP server's upstream credential through AVP.
+"""``kow mcp install`` — broker an MCP server's upstream credential through kow.
 
 ADR-0040. An MCP server is a subprocess that holds a long-lived upstream secret
 (a GitHub PAT, a Slack token, a Brave key) in cleartext in the client config. This
@@ -8,7 +8,7 @@ visible to the (possibly supply-chained) server process.
 
 It composes two existing pieces plus the new env plumbing:
 
-1. The vault **binding note** — built and self-validated exactly like ``avp binding
+1. The vault **binding note** — built and self-validated exactly like ``kow binding
    new`` (marker + ``{secret}`` + valid host, ADR-0029 stored placeholder). This
    command is **propose-only for the vault**: it prints the note to paste and never
    writes the secret value anywhere.
@@ -21,7 +21,7 @@ Security posture (ADR-0040 §5):
 - The credential **value** is never emitted — only the placeholder sentinel and the
   note template. The host allowlist + response-echo scrubbing keep the value hidden
   even from a compromised server; scope caps its *use*.
-- CA trust is granted **per-server** (an env var pointing at the AVP CA), never a
+- CA trust is granted **per-server** (an env var pointing at the kow CA), never a
   system trust store — the MITM-capable CA is trusted by exactly the servers you
   install, nothing else.
 - The ``host`` field is the trust-critical one (a wrong host leaks the key). The
@@ -52,7 +52,7 @@ _VALIDATE_PLACEHOLDER = PLACEHOLDER_PREFIX + "mcpinstallvalidatesentinel"
 
 # Consumer-visible sentinel when the operator opts out of a stored placeholder
 # (--no-placeholder). The real placeholder is then salt-derived on the daemon host
-# and discovered with `avp env`; we cannot know it here, so we flag it loudly.
+# and discovered with `kow env`; we cannot know it here, so we flag it loudly.
 _DERIVE_SENTINEL = "avp-DERIVE-VIA-avp-env"
 
 # client id -> the CLI binary that owns its config schema (we drive the client's own
@@ -85,7 +85,7 @@ def _has_forbidden_char(value: str) -> bool:
 
 
 def _die(msg: str) -> int:
-    print(f"avp mcp: {msg}", file=sys.stderr)
+    print(f"kow mcp: {msg}", file=sys.stderr)
     return 1
 
 
@@ -230,44 +230,44 @@ def _emit_client_commands(
         # --proxy-url / --ca-cert / --server-cmd must not inject into the operator's shell.
         rendered = shlex.join(argv)
         if args.apply:
-            print(f"avp mcp: applying [{client}]: {rendered}", file=sys.stderr)
+            print(f"kow mcp: applying [{client}]: {rendered}", file=sys.stderr)
             try:
                 proc = subprocess.run(argv, check=False)  # noqa: S603 — argv list, no shell
             except FileNotFoundError:
                 ok = False
                 print(
-                    f"avp mcp: [{client}] binary {_CLIENT_BIN[client]!r} not found on PATH "
+                    f"kow mcp: [{client}] binary {_CLIENT_BIN[client]!r} not found on PATH "
                     "— install the client, or drop --apply and run the printed command.",
                     file=sys.stderr,
                 )
                 continue
             if proc.returncode != 0:
                 ok = False
-                print(f"avp mcp: [{client}] `mcp add` exited {proc.returncode}", file=sys.stderr)
+                print(f"kow mcp: [{client}] `mcp add` exited {proc.returncode}", file=sys.stderr)
         else:
-            print(f"avp mcp: add to [{client}] — run:\n  {rendered}", file=sys.stderr)
+            print(f"kow mcp: add to [{client}] — run:\n  {rendered}", file=sys.stderr)
     return ok
 
 
 def _emit_reminders(*, minted: str | None, name: str) -> None:
     print(
-        "avp mcp: paste the note above into the secret's vault entry (the secret "
+        "kow mcp: paste the note above into the secret's vault entry (the secret "
         "VALUE is never touched by this command).",
         file=sys.stderr,
     )
     if minted is not None:
         print(
-            f"avp mcp: the placeholder {minted!r} is a non-secret sentinel — it is what "
+            f"kow mcp: the placeholder {minted!r} is a non-secret sentinel — it is what "
             f"the client emits and the daemon swaps for the real {name}.",
             file=sys.stderr,
         )
     else:
         print(
-            "avp mcp: --no-placeholder set; resolve the salt-derived placeholder on the "
-            f"daemon host with `avp env` and replace {_DERIVE_SENTINEL!r} in the client env.",
+            "kow mcp: --no-placeholder set; resolve the salt-derived placeholder on the "
+            f"daemon host with `kow env` and replace {_DERIVE_SENTINEL!r} in the client env.",
             file=sys.stderr,
         )
-    print("avp mcp: the daemon picks the note up on its next reload.", file=sys.stderr)
+    print("kow mcp: the daemon picks the note up on its next reload.", file=sys.stderr)
 
 
 def _emit_smoke(args: argparse.Namespace, placeholder_value: str) -> None:
@@ -282,7 +282,7 @@ def _emit_smoke(args: argparse.Namespace, placeholder_value: str) -> None:
         f"{shlex.quote(f'https://{args.host[0]}/')}"
     )
     print(
-        "avp mcp: smoke — with the daemon running and the note live, this should "
+        "kow mcp: smoke — with the daemon running and the note live, this should "
         f"authenticate using the placeholder (never the real key):\n  {smoke}",
         file=sys.stderr,
     )
@@ -291,7 +291,7 @@ def _emit_smoke(args: argparse.Namespace, placeholder_value: str) -> None:
 def run_mcp(args: argparse.Namespace) -> int:
     if getattr(args, "mcp_cmd", None) != "install":
         return _die(
-            "unknown subcommand; use `avp mcp install <server> --host <host> --env-var <VAR>`."
+            "unknown subcommand; use `kow mcp install <server> --host <host> --env-var <VAR>`."
         )
 
     error = _validate_install(args)
@@ -343,7 +343,7 @@ def run_mcp(args: argparse.Namespace) -> int:
 
     if not _proxy_is_loopback(args.proxy_url):
         print(
-            f"avp mcp: WARNING: --proxy-url {args.proxy_url!r} is not loopback. AVP's "
+            f"kow mcp: WARNING: --proxy-url {args.proxy_url!r} is not loopback. kow's "
             "model assumes a local proxy; only the placeholder (never the real secret) "
             "reaches client env, so this fails closed — but double-check the URL.",
             file=sys.stderr,
@@ -357,7 +357,7 @@ def run_mcp(args: argparse.Namespace) -> int:
         placeholder_value=placeholder_value,
     )
 
-    # stdout stays the pure paste artifact (the vault note), like `avp binding new`;
+    # stdout stays the pure paste artifact (the vault note), like `kow binding new`;
     # all operator guidance goes to stderr.
     print(note, end="")
     applied_ok = _emit_client_commands(args, env_block, server_cmd)
@@ -370,7 +370,7 @@ def run_mcp(args: argparse.Namespace) -> int:
 def register_mcp_subparser(parent_subparsers: argparse._SubParsersAction) -> None:
     mcp_p = parent_subparsers.add_parser(
         "mcp",
-        help="Broker an MCP server's upstream credential through AVP (ADR-0040).",
+        help="Broker an MCP server's upstream credential through kow (ADR-0040).",
         description=(
             "Compose the vault binding note and emit the per-server env block "
             "(proxy + per-runtime CA trust + placeholder) as the client's native "
@@ -384,7 +384,7 @@ def register_mcp_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
         help="Print the vault note + the `claude/codex mcp add --env` command for a server.",
         description=(
             "Build and self-validate an ADR-0029 binding note, then render the "
-            "env block a client needs to route the server through AVP. Prints "
+            "env block a client needs to route the server through kow. Prints "
             "both; writes nothing unless --apply is given (and even then, only the "
             "env block, never the secret value)."
         ),
@@ -440,13 +440,13 @@ def register_mcp_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
         "--proxy-url",
         dest="proxy_url",
         default=_DEFAULT_PROXY,
-        help=f"AVP proxy URL for HTTPS_PROXY/HTTP_PROXY (default: {_DEFAULT_PROXY}).",
+        help=f"kow proxy URL for HTTPS_PROXY/HTTP_PROXY (default: {_DEFAULT_PROXY}).",
     )
     install_p.add_argument(
         "--ca-cert",
         dest="ca_cert",
         default=str(_default_ca_path()),
-        help="Path the runtime CA-trust vars point at (the AVP CA; platform default).",
+        help="Path the runtime CA-trust vars point at (the kow CA; platform default).",
     )
     install_p.add_argument(
         "--server-cmd",

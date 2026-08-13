@@ -32,7 +32,7 @@ def healthz_response(*, ready: bool) -> http.Response:
     """Synthesize the probe response.
 
     ``ready`` (config, backend client, and audit writer all initialized) →
-    ``200 {"status": "ok"}``. Otherwise — mitmproxy is up but AVP has not
+    ``200 {"status": "ok"}``. Otherwise — mitmproxy is up but kow has not
     finished loading a config — ``503 {"status": "starting"}`` so an
     orchestrator holds traffic until the proxy can actually broker.
 

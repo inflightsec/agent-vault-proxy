@@ -26,8 +26,8 @@ Cross-platform install path that runs on Linux, macOS (Docker Desktop), and Wind
 ### 1. Clone the repo and prepare host files
 
 ```bash
-git clone https://github.com/inflightsec/agent-vault-proxy.git
-cd agent-vault-proxy
+git clone https://github.com/inflightsec/keys-on-the-wire.git
+cd keys-on-the-wire
 
 # Drop your BWS access token into a host file. `read -rs` keeps the token
 # out of shell history; `umask 077` makes the file 0600. We wrap the

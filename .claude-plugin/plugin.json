@@ -1,10 +1,10 @@
 {
-  "name": "avp",
-  "displayName": "Agent Vault Proxy",
-  "description": "Broker API credentials through agent-vault-proxy. Bundles the avp skill, which walks you through authoring notes/annotation bindings so a new secret is proxied with no config edit and no redeploy.",
-  "version": "0.8.0",
+  "name": "kow",
+  "displayName": "Keys on the Wire",
+  "description": "Broker API credentials through keys-on-the-wire (kow). Bundles the kow skill, which walks you through authoring notes/annotation bindings so a new secret is proxied with no config edit and no redeploy.",
+  "version": "1.0.0",
   "author": { "name": "Radek Maciaszek" },
-  "homepage": "https://github.com/inflightsec/agent-vault-proxy",
-  "repository": "https://github.com/inflightsec/agent-vault-proxy",
+  "homepage": "https://github.com/inflightsec/keys-on-the-wire",
+  "repository": "https://github.com/inflightsec/keys-on-the-wire",
   "license": "Apache-2.0"
 }

@@ -2,7 +2,7 @@
 
 kow keeps real API keys out of the agent's environment. A filesystem sandbox keeps the agent out of `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, browser cookies, and other places worms scan even when they can't reach env vars. Use both.
 
-macOS has [SandVault](https://github.com/webcoyote/sandvault) — one well-maintained Apache 2.0 wrapper that "just works". Linux has no single equivalent. This page covers the option we recommend (`bubblewrap`) and short notes on the alternatives.
+macOS has [SandVault](https://github.com/webcoyote/sandvault) — one well-maintained Apache 2.0 wrapper that "just works"; see [macOS isolation](macos-isolation.md) for how it composes with kow and the keychain backend. Linux has no single equivalent. This page covers the option we recommend (`bubblewrap`) and short notes on the alternatives.
 
 ## Recommended: bubblewrap
 

@@ -3,6 +3,7 @@
 # contributor's laptop, a GitHub runner, or a VM — and cleans up after itself.
 #
 #   bash tests/vm-e2e/macos-e2e.sh              # unprivileged: no sudo, $HOME only, no residue
+#   bash tests/vm-e2e/macos-e2e.sh --keychain   # the keychain backend, in a throwaway keychain
 #   bash tests/vm-e2e/macos-e2e.sh --system     # the documented system install (see consent below)
 #   bash tests/vm-e2e/macos-e2e.sh --system --keep   # leave it installed for inspection
 #
@@ -21,7 +22,8 @@ MODE=user
 KEEP=0
 for a in "$@"; do
   case "$a" in
-    --system) MODE=system ;;
+    --system)   MODE=system ;;
+    --keychain) MODE=keychain ;;
     --keep)   KEEP=1 ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$a" >&2; exit 2 ;;
@@ -90,8 +92,9 @@ on_exit() {
   # declare -F guards the window before the mode teardowns are defined; nothing
   # currently exits in it, but a future top-level check might.
   case "$MODE" in
-    user)   declare -F cleanup_user    >/dev/null && cleanup_user ;;
-    system) declare -F teardown_system >/dev/null && teardown_system ;;
+    user)     declare -F cleanup_user     >/dev/null && cleanup_user ;;
+    keychain) declare -F cleanup_keychain >/dev/null && cleanup_keychain ;;
+    system)   declare -F teardown_system  >/dev/null && teardown_system ;;
   esac
   [ "$KEEP" = "1" ] || rm -rf "$RUNDIR"
 }
@@ -99,6 +102,22 @@ trap on_exit EXIT
 
 # A fixed port that is already busy means the assertions could be answered by
 # somebody else's proxy — a false PASS. Refuse rather than test the wrong process.
+# Run a command under a wall-clock limit and return 124 if it outlasts it.
+# macOS ships no `timeout(1)` — that is GNU coreutils — and reaching for it
+# yields exit 127, which reads as "the command failed" and turns a hang into a
+# false PASS. Output lands in $RUNDIR/limited.out for the caller to inspect.
+run_limited() {
+  local secs="$1"; shift
+  "$@" >"$RUNDIR/limited.out" 2>&1 &
+  local pid=$! i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$((secs * 2))" ]; do sleep 0.5; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    return 124
+  fi
+  wait "$pid"
+}
+
 require_free_port() {
   local p="$1" what="$2"
   if nc -z 127.0.0.1 "$p" 2>/dev/null || lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -247,6 +266,206 @@ run_user_mode() {
 
   start_echo_upstream
   assert_wire_chain "$port" "$audit" "$log" ""
+}
+
+# ================================================================ keychain leg
+#
+# The keychain backend (ADR-0046) against the REAL /usr/bin/security. The unit
+# suite runs on Linux against a fake `security`, so everything that can only be
+# answered by the actual tool is answered here: does `security -i` accept a
+# quoted value on stdin, does exit 44 mean item-not-found, does dump-keychain
+# enumerate without prompting.
+#
+# Unprivileged by construction, and not by accident: a keychain belongs to a
+# login session, so a LaunchDaemon running as a service account has no access to
+# the operator's. This leg running as the calling user IS the LaunchAgent
+# constraint, demonstrated.
+#
+# Never touches the login keychain. Everything happens in a throwaway keychain
+# created for the run and deleted on exit.
+
+K_BASE=""; K_PROXY_PID=""; K_KEYCHAIN=""
+K_SERVICE=kow-e2e
+
+cleanup_keychain() {
+  [ -n "$K_PROXY_PID" ] && kill "$K_PROXY_PID" 2>/dev/null
+  [ -n "$ECHO_PID" ] && kill "$ECHO_PID" 2>/dev/null
+  if [ -n "$K_KEYCHAIN" ] && [ "$KEEP" != "1" ]; then
+    security delete-keychain "$K_KEYCHAIN" 2>/dev/null
+    if [ -e "$K_KEYCHAIN" ]; then
+      red "  RESIDUE LEFT: $K_KEYCHAIN"
+    else
+      printf '  clean: throwaway keychain deleted\n'
+    fi
+  fi
+  [ -z "$K_BASE" ] && return
+  if [ "$KEEP" = "1" ]; then printf '\nkept: %s (logs: %s)\n' "$K_BASE" "$RUNDIR"
+  else rm -rf "$K_BASE"; fi
+}
+
+run_keychain_mode() {
+  K_BASE="$(mktemp -d "${TMPDIR:-/tmp}/kow-e2e-kc.XXXXXX")"
+  local base="$K_BASE"
+  local venv="$base/venv" audit="$base/audit.jsonl" log="$base/proxy.log"
+  local port=14377
+  export KOW_CONFDIR="$base/config"
+
+  [ "$(id -u)" -ne 0 ] || { red "the keychain leg must not run as root — a keychain belongs to a login session"; exit 2; }
+  require_free_port "$port" "kow proxy"
+  require_free_port "$ECHO_PORT" "test upstream"
+
+  mkdir -p "$KOW_CONFDIR" "$base/state"
+  chmod 0700 "$base" "$base/state" "$KOW_CONFDIR"
+
+  step "1. throwaway keychain (the login keychain is never touched)"
+  K_KEYCHAIN="$base/kow-e2e.keychain-db"
+  # Password for a keychain that exists for ~60 seconds and holds only test
+  # values. It is on argv; the credentials the backend stores are not, which is
+  # the property this leg is here to prove.
+  local kcpw; kcpw="e2e-$(head -c12 /dev/urandom | xxd -p)"
+  security create-keychain -p "$kcpw" "$K_KEYCHAIN" \
+    && ok "created $K_KEYCHAIN" || { bad "create-keychain failed"; return; }
+  security set-keychain-settings "$K_KEYCHAIN"      # no auto-lock timeout
+  security unlock-keychain -p "$kcpw" "$K_KEYCHAIN" \
+    && ok "unlocked" || { bad "unlock-keychain failed"; return; }
+  # create-keychain does not join the search list. Assert it, because a leaked
+  # entry there outlives the file and confuses every later `security` call.
+  if security list-keychains | grep -q "kow-e2e"; then
+    bad "throwaway keychain entered the search list"
+  else
+    ok "not in the keychain search list"
+  fi
+
+  step "2. user-local venv + install from this tree"
+  "$PY" -m venv "$venv" >/dev/null 2>&1
+  if "$venv/bin/pip" -q install "$SRC" >"$RUNDIR/pip.log" 2>&1; then
+    ok "installed into \$HOME without sudo"
+  else
+    bad "install failed"; tail -8 "$RUNDIR/pip.log"; return
+  fi
+
+  step "3. bindings.yaml pointing at the keychain backend"
+  cat > "$KOW_CONFDIR/bindings.yaml" <<YAML
+version: 1
+binding_source: file
+secrets:
+  MACTEST_KEY:
+    placeholder: "${PLACEHOLDER}"
+    inject:
+      header: "Authorization"
+      format: "Bearer {MACTEST_KEY}"
+    bindings:
+      - host: "127.0.0.1"
+backend:
+  type: keychain
+  config:
+    type: keychain
+    service: ${K_SERVICE}
+    keychain: ${K_KEYCHAIN}
+    self_check: deny
+audit:
+  path: ${audit}
+unmatched_destination_policy: deny
+YAML
+  chmod 0600 "$KOW_CONFDIR/bindings.yaml"
+  ok "bindings.yaml written (backend.type: keychain)"
+
+  step "4. \`kow secret add\` writes through the CLI"
+  printf '%s\n' "$REAL_SECRET" | "$venv/bin/kow" secret add MACTEST_KEY --stdin \
+      --config "$KOW_CONFDIR/bindings.yaml" >/dev/null 2>&1 \
+    && ok "kow secret add MACTEST_KEY" || bad "kow secret add failed"
+
+  # The real `security` is the authority on whether the value landed intact.
+  local direct
+  direct=$(security find-generic-password -a MACTEST_KEY -s "$K_SERVICE" -w "$K_KEYCHAIN" 2>/dev/null)
+  [ "$direct" = "$REAL_SECRET" ] && ok "security agrees the stored value is byte-identical" \
+    || bad "stored value differs from what was written"
+
+  step "5. the \`security -i\` quoting protocol, against the real tool"
+  # The whole no-argv write path rests on security's interactive parser handling
+  # a quoted value. A value with a space, a double quote, a backslash and a
+  # dollar sign is where a naive implementation corrupts the credential.
+  local tricky='a b"c\d $HOME `id` end'
+  printf '%s\n' "$tricky" | "$venv/bin/kow" secret add MACTEST_TRICKY --stdin \
+      --config "$KOW_CONFDIR/bindings.yaml" >/dev/null 2>&1
+  local back
+  back=$(security find-generic-password -a MACTEST_TRICKY -s "$K_SERVICE" -w "$K_KEYCHAIN" 2>/dev/null)
+  [ "$back" = "$tricky" ] && ok "shell-hostile value round-trips exactly" \
+    || bad "quoting protocol mangled the value (${#back} bytes back, ${#tricky} written)"
+
+  step "6. \`kow secret list\` enumerates without prompting"
+  local listed
+  listed=$("$venv/bin/kow" secret list --config "$KOW_CONFDIR/bindings.yaml" 2>/dev/null)
+  printf '%s\n' "$listed" | grep -qx MACTEST_KEY && ok "MACTEST_KEY listed" || bad "MACTEST_KEY not listed"
+  printf '%s\n' "$listed" | grep -qx MACTEST_TRICKY && ok "MACTEST_TRICKY listed" || bad "MACTEST_TRICKY not listed"
+
+  step "7. no plaintext secret anywhere under the config dir"
+  if grep -rq "$REAL_SECRET" "$KOW_CONFDIR" 2>/dev/null; then
+    bad "SECRET FOUND IN A CONFIG FILE"
+  else
+    ok "no secret bytes on disk outside the keychain"
+  fi
+
+  step "8. run the proxy against the keychain backend"
+  HOME="$base/state" "$venv/bin/python" -m kow \
+      --listen-host 127.0.0.1 --listen-port "$port" \
+      --set kow_config="$KOW_CONFDIR/bindings.yaml" >"$log" 2>&1 &
+  K_PROXY_PID=$!
+  for _ in $(seq 1 30); do
+    curl -s -o /dev/null --max-time 2 -x "http://127.0.0.1:$port" http://healthz.kow.invalid/healthz && break
+    sleep 1
+  done
+  kill -0 "$K_PROXY_PID" 2>/dev/null && ok "proxy running (pid $K_PROXY_PID)" \
+    || { bad "proxy died on startup"; tail -12 "$log"; return; }
+
+  start_echo_upstream
+  assert_wire_chain "$port" "$audit" "$log" ""
+
+  step "9. a LOCKED keychain fails closed, and does not hang"
+  # The production failure mode: a lid-close locks the keychain under a
+  # long-running LaunchAgent. `security` must return an ERROR rather than block
+  # forever on an unlock prompt nobody is there to answer. Every assertion here
+  # is timed, so a hang FAILS the leg instead of stalling it.
+  security lock-keychain "$K_KEYCHAIN"
+
+  # First, the property that surprises people: an already-running proxy keeps
+  # serving, because the value is cached. A lid-close does not break in-flight
+  # traffic, and that is correct.
+  local locked_rc
+  locked_rc=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+                -x "http://127.0.0.1:$port" -H "Authorization: Bearer ${PLACEHOLDER}" \
+                "http://127.0.0.1:$ECHO_PORT/")
+  if [ "$locked_rc" = "000" ]; then
+    bad "locked keychain HUNG the running proxy (no response in 30s)"
+  else
+    ok "running proxy keeps serving from cache while locked (-> $locked_rc)"
+  fi
+
+  # Now the path that actually reaches the locked keychain: a FRESH process with
+  # nothing cached. It must fail, fail quickly, and name the fix.
+  local lockout rc9
+  run_limited 60 "$venv/bin/kow" secret list --config "$KOW_CONFDIR/bindings.yaml"; rc9=$?
+  lockout=$(cat "$RUNDIR/limited.out")
+  if [ "$rc9" = "124" ]; then
+    bad "a locked keychain HUNG a fresh kow process (blocked on an unlock prompt)"
+  elif [ "$rc9" = "0" ]; then
+    bad "a locked keychain was read anyway (rc 0) — the lock bought nothing"
+  else
+    ok "fresh process fails closed on a locked keychain (rc $rc9, no hang)"
+  fi
+  case "$lockout" in
+    *unlock-keychain*) ok "the error names \`security unlock-keychain\` as the fix" ;;
+    *)                 bad "locked-keychain error does not name the fix: ${lockout%%$'\n'*}" ;;
+  esac
+
+  security unlock-keychain -p "$kcpw" "$K_KEYCHAIN"
+  run_limited 60 "$venv/bin/kow" secret list --config "$KOW_CONFDIR/bindings.yaml" \
+    && ok "recovers after unlock" || bad "still failing after unlock-keychain"
+
+  step "10. removal"
+  "$venv/bin/kow" secret remove MACTEST_TRICKY --config "$KOW_CONFDIR/bindings.yaml" >/dev/null 2>&1
+  security find-generic-password -a MACTEST_TRICKY -s "$K_SERVICE" "$K_KEYCHAIN" >/dev/null 2>&1 \
+    && bad "item still present after kow secret remove" || ok "kow secret remove deleted the item"
 }
 
 # ============================================================== system leg
@@ -426,8 +645,9 @@ PY
 # ===================================================================== driver
 
 case "$MODE" in
-  user)   run_user_mode ;;
-  system) run_system_mode ;;
+  user)     run_user_mode ;;
+  keychain) run_keychain_mode ;;
+  system)   run_system_mode ;;
 esac
 
 printf '\n===== kow macOS e2e (%s): %d passed, %d failed =====\n' "$MODE" "$PASS" "$FAIL"

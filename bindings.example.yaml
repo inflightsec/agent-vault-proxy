@@ -482,6 +482,30 @@ backend:
     # trust setup in docs/prerequisites.md "Self-hosted Bitwarden".
     # Vaultwarden does NOT implement the BWS Secrets Manager API.
 
+# ─── Alternative backend: macOS Keychain (type: keychain) ───────────────────
+# One Mac, no vault account, nothing in plaintext on disk. Items land in the
+# file-based login keychain via /usr/bin/security and are visible in Keychain
+# Access (search for the `service` string). Manage them with
+# `kow secret add|list|remove|rotate`.
+#
+# READ THIS BEFORE USING IT: access is scoped to the USER ACCOUNT, not to kow.
+# kow is not Developer-ID-signed under PyPI/Homebrew, so anything running as
+# the same user can read these items. Run kow as a LaunchAgent in your account
+# and keep agent workloads in a SEPARATE macOS account — that account split is
+# the boundary that holds, not the keychain ACL. See docs/adrs/ADR-0046.
+#
+# The login keychain never syncs between Macs; for a fleet use bws/gsm/aws.
+# Multi-line values (PEM keys) are refused.
+# backend:
+#   type: keychain
+#   config:
+#     type: keychain
+#     service: kow                  # the generic-password "service" attribute
+#     # keychain: ~/Library/Keychains/kow.keychain-db   # omit for the login keychain
+#     # secret_prefix: "KOW_"       # defence-in-depth namespace bound
+#     self_check: deny              # refuse to start if the keychain won't open
+#     timeout_seconds: 10.0
+
 # ─── Alternative backend: Google Secret Manager (type: gsm) ──────────────────
 # Keyless by design — there is NO key-file field. Authenticate with ADC +
 # service-account impersonation, or a Workload-Identity cred-config. With

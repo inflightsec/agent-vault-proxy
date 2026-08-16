@@ -398,3 +398,58 @@ def test_run_preflight_on_documented_happy_path_is_quiet(monkeypatch, tmp_path) 
         audit_path=str(tmp_path / "audit.jsonl"),
     )
     assert run_preflight(cfg) == []
+
+
+# ---------------------------------------- keychain isolation warning (ADR-0046)
+
+from kow._preflight import check_keychain_backend_isolation  # noqa: E402
+
+
+def _config_with_backend(tmp_path, block: str):
+    from kow.config import load_config
+
+    cfg = tmp_path / "bindings.yaml"
+    cfg.write_text(
+        "version: 1\n"
+        "secrets:\n"
+        "  A_KEY:\n"
+        '    placeholder: "sk-PLACEHOLDER-aaaabbbbccccdddd"\n'
+        "    inject:\n"
+        '      header: "Authorization"\n'
+        '      format: "Bearer {A_KEY}"\n'
+        "    bindings:\n"
+        '      - host: "api.example.com"\n'
+        f"{block}"
+        "audit:\n"
+        f"  path: {tmp_path / 'audit.jsonl'}\n"
+    )
+    return load_config(str(cfg))
+
+
+_KEYCHAIN_BLOCK = "backend:\n  type: keychain\n  config:\n    type: keychain\n    service: kow\n"
+
+
+def test_keychain_backend_warns_about_the_user_account_boundary(tmp_path) -> None:
+    """Operators read "my keys are in the Keychain" as isolation. It is not:
+    a same-uid process reads the items with one command. Say so at startup."""
+    msgs = check_keychain_backend_isolation(_config_with_backend(tmp_path, _KEYCHAIN_BLOCK))
+    assert len(msgs) == 1
+    assert "USER ACCOUNT" in msgs[0]
+    assert "SEPARATE" in msgs[0]
+
+
+def test_keychain_warning_names_the_doc(tmp_path) -> None:
+    msgs = check_keychain_backend_isolation(_config_with_backend(tmp_path, _KEYCHAIN_BLOCK))
+    assert "docs/macos-isolation.md" in msgs[0]
+
+
+def test_keychain_warning_is_in_the_aggregate(tmp_path) -> None:
+    msgs = run_preflight(_config_with_backend(tmp_path, _KEYCHAIN_BLOCK))
+    assert any("KEYCHAIN SCOPE" in m for m in msgs)
+
+
+def test_no_keychain_warning_for_other_backends(tmp_path) -> None:
+    secrets = tmp_path / "s.yaml"
+    secrets.write_text("secrets:\n  A_KEY: v\n")
+    block = f"backend:\n  type: static\n  config:\n    type: static\n    path: {secrets}\n"
+    assert check_keychain_backend_isolation(_config_with_backend(tmp_path, block)) == []

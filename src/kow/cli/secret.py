@@ -1,4 +1,10 @@
-"""``kow secret`` static-backend secret management."""
+"""``kow secret`` secret management for the two local backends.
+
+Two backends keep their secrets on this machine and so can be managed from
+here: ``static`` (a YAML file) and ``keychain`` (a macOS keychain, ADR-0046).
+The networked backends are managed by their own vendor tooling. No verb in this
+module ever prints a secret value.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -17,6 +24,9 @@ from kow import _paths
 from kow.config import load_config
 
 _NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# Backends whose secrets live on this machine, and which `kow secret` can
+# therefore manage. Networked vaults are managed with their own vendor tooling.
+_LOCAL_BACKENDS = frozenset({"static", "keychain"})
 _LINUX_CONFIG = _paths.resolve(_paths.LINUX_CONFDIR / "bindings.yaml")
 _MACOS_CONFIG = _paths.resolve(_paths.MACOS_CONFDIR / "bindings.yaml")
 
@@ -51,7 +61,10 @@ def _validate_name(name: str) -> str:
         raise _die(f"invalid secret name {name!r}: must match ^[A-Z][A-Z0-9_]*$") from None
 
 
-def _load_static_path(config_path: str) -> Path:
+def _load_backend_block(config_path: str):
+    """Return the validated ``backend:`` block, or die with an operator-readable
+    message. Shared by the static and keychain paths so a bad config produces
+    the same diagnostic whichever backend is selected."""
     try:
         config = load_config(config_path)
     except FileNotFoundError:
@@ -61,10 +74,31 @@ def _load_static_path(config_path: str) -> Path:
     except Exception as exc:
         raise _die(f"invalid config {config_path}: {type(exc).__name__}") from None
 
-    if config.backend is None or config.backend.type != "static":
-        raise _die("kow secret requires backend.type: static")
+    if config.backend is None or config.backend.type not in _LOCAL_BACKENDS:
+        raise _die(
+            "kow secret manages locally-stored secrets only; it requires "
+            f"backend.type to be one of {sorted(_LOCAL_BACKENDS)} "
+            "(networked vaults are managed with their own vendor tooling)"
+        )
+    return config.backend
 
-    backend_config = config.backend._validated_config
+
+def _load_keychain_backend(config_path: str):
+    """Build a :class:`KeychainBackend` from the configured backend block."""
+    from kow.backends.keychain import KeychainBackend
+
+    block = _load_backend_block(config_path)
+    if block.type != "keychain":
+        raise _die("internal: _load_keychain_backend called for a non-keychain backend")
+    return KeychainBackend(config=block._validated_config)
+
+
+def _load_static_path(config_path: str) -> Path:
+    block = _load_backend_block(config_path)
+    if block.type != "static":
+        raise _die("internal: _load_static_path called for a non-static backend")
+
+    backend_config = block._validated_config
     raw_path = getattr(backend_config, "path", None)
     if not isinstance(raw_path, str) or not raw_path:
         raise _die("kow secret requires backend.config.path for the static backend")
@@ -184,47 +218,104 @@ def _read_stdin_value() -> str:
     return value
 
 
+@contextmanager
+def _backend_errors(doing: str):
+    """Turn backend exceptions into a one-line CLI death.
+
+    The backend's own messages are already operator-readable and carry no secret
+    bytes (that is a backend invariant, asserted in its tests), so they are
+    surfaced verbatim rather than replaced with a generic failure.
+    """
+    from kow.backends import BackendUnavailableError, SecretNotFoundError
+
+    try:
+        yield
+    except SecretNotFoundError as exc:
+        raise _die(f"{doing}: {exc}") from None
+    except BackendUnavailableError as exc:
+        raise _die(f"{doing}: {exc}") from None
+
+
 def run_secret_add(name: str, config_path: str, from_stdin: bool) -> int:
     name = _validate_name(name)
-    path = _load_static_path(config_path)
-    secrets = _read_secrets(path, for_write=True)
-    secrets[name] = _read_stdin_value() if from_stdin else _prompt_value()
-    _write_secrets_atomic(path, secrets)
+    block = _load_backend_block(config_path)
+    # Every check that can fail runs BEFORE the value is read, so an operator
+    # never types a credential into a session that was going to die anyway.
+    if block.type == "keychain":
+        backend = _load_keychain_backend(config_path)
+        value = _read_stdin_value() if from_stdin else _prompt_value()
+        with _backend_errors(f"could not add {name!r}"):
+            backend.update(name, value)
+    else:
+        path = _load_static_path(config_path)
+        secrets = _read_secrets(path, for_write=True)
+        secrets[name] = _read_stdin_value() if from_stdin else _prompt_value()
+        _write_secrets_atomic(path, secrets)
     print(f"✓ added secret {name!r}", file=sys.stderr)
     print("  next: run `kow env` to refresh ~/.config/kow/env", file=sys.stderr)
     return 0
 
 
 def run_secret_list(config_path: str) -> int:
-    path = _load_static_path(config_path)
-    secrets = _read_secrets(path)
-    for name in sorted(secrets):
+    block = _load_backend_block(config_path)
+    if block.type == "keychain":
+        backend = _load_keychain_backend(config_path)
+        with _backend_errors("could not list secrets"):
+            names = backend.list_secret_names()
+    else:
+        names = sorted(_read_secrets(_load_static_path(config_path)))
+    for name in names:
         print(name)
     return 0
 
 
 def run_secret_remove(name: str, config_path: str) -> int:
     name = _validate_name(name)
-    path = _load_static_path(config_path)
-    secrets = _read_secrets(path, for_write=True)
-    if name not in secrets:
-        print(f"secret {name!r} not present; nothing to do", file=sys.stderr)
-        return 0
-    del secrets[name]
-    _write_secrets_atomic(path, secrets)
+    block = _load_backend_block(config_path)
+    if block.type == "keychain":
+        backend = _load_keychain_backend(config_path)
+        # delete is idempotent in the backend, so "not present" is not an error
+        # here either — same contract as the static path below.
+        with _backend_errors(f"could not remove {name!r}"):
+            backend.delete(name)
+    else:
+        path = _load_static_path(config_path)
+        secrets = _read_secrets(path, for_write=True)
+        if name not in secrets:
+            print(f"secret {name!r} not present; nothing to do", file=sys.stderr)
+            return 0
+        del secrets[name]
+        _write_secrets_atomic(path, secrets)
     print(f"✓ removed secret {name!r}", file=sys.stderr)
     return 0
 
 
 def run_secret_rotate(name: str, config_path: str) -> int:
     name = _validate_name(name)
-    path = _load_static_path(config_path)
-    secrets = _read_secrets(path, for_write=True)
-    if name not in secrets:
-        raise _die(f"cannot rotate {name!r}: not present (use `kow secret add` instead)")
-    del secrets[name]
-    secrets[name] = _prompt_value()
-    _write_secrets_atomic(path, secrets)
+    block = _load_backend_block(config_path)
+    if block.type == "keychain":
+        from kow.backends import SecretNotFoundError
+
+        backend = _load_keychain_backend(config_path)
+        # Prompt only after confirming the name exists: rotate is not a
+        # create verb, and an operator who mistyped should learn that before
+        # they type a credential.
+        with _backend_errors(f"could not rotate {name!r}"):
+            try:
+                backend.fetch(name)
+            except SecretNotFoundError:
+                raise _die(
+                    f"cannot rotate {name!r}: not present (use `kow secret add` instead)"
+                ) from None
+            backend.update(name, _prompt_value())
+    else:
+        path = _load_static_path(config_path)
+        secrets = _read_secrets(path, for_write=True)
+        if name not in secrets:
+            raise _die(f"cannot rotate {name!r}: not present (use `kow secret add` instead)")
+        del secrets[name]
+        secrets[name] = _prompt_value()
+        _write_secrets_atomic(path, secrets)
     print(f"✓ rotated secret {name!r}", file=sys.stderr)
     print("  next: run `kow env` to refresh ~/.config/kow/env", file=sys.stderr)
     return 0
@@ -240,10 +331,11 @@ def register_secret_subparser(parent_subparsers: argparse._SubParsersAction) -> 
 
     secret_p = parent_subparsers.add_parser(
         "secret",
-        help="Manage static-backend secret entries without ever showing <value>.",
+        help="Manage locally-stored secrets (static file, macOS keychain) without showing <value>.",
         description=(
-            "Manage static-backend secret entries. This CLI never displays "
-            "<value>; it can add, list names, remove, and rotate entries."
+            "Manage secrets held by a local backend — the static YAML file or a "
+            "macOS keychain. This CLI never displays <value>; it can add, list "
+            "names, remove, and rotate entries."
         ),
     )
     secret_p.set_defaults(_secret_parser=secret_p)

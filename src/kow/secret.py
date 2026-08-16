@@ -55,7 +55,17 @@ class Secret:
         # caller cannot probe the value one guess at a time.
         if not isinstance(other, Secret):
             return NotImplemented
-        return hmac.compare_digest(self._value, other._value)
+        # Compare the UTF-8 BYTES, not the str. `hmac.compare_digest` accepts
+        # str only when both sides are ASCII-only, and raises TypeError
+        # otherwise — so comparing two perfectly legal non-ASCII credentials
+        # used to crash instead of answering.
+        #
+        # What this gives, precisely: `compare_digest` does not short-circuit on
+        # the first differing byte, so it does not leak WHERE two values differ.
+        # It is not constant-time in the full sense — the length of each value is
+        # observable, both through timing and through `len()` — so this hides the
+        # contents of a secret, not its size.
+        return hmac.compare_digest(self._value.encode("utf-8"), other._value.encode("utf-8"))
 
     def __hash__(self) -> int:
         # Hashing the value would let it leak through a dict key's hash in a

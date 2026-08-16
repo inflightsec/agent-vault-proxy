@@ -268,6 +268,38 @@ def check_secret_prefix_boundary(config: Config) -> list[str]:
     ]
 
 
+def check_keychain_backend_isolation(config: Config) -> list[str]:
+    """The keychain backend's boundary is the USER ACCOUNT, and operators
+    reliably assume otherwise.
+
+    kow is not a Developer-ID-signed application under PyPI/Homebrew
+    distribution, so a keychain item's ACL identity is ``/usr/bin/security``
+    itself: any process running as the same user can read the same items with
+    one command. If the agent kow is protecting runs as that user, it can read
+    the credential directly and the proxy has bought nothing — which is the
+    exact opposite of what "my keys are in the Keychain" sounds like.
+
+    Advisory, not fatal, and deliberately so: the backend is a legitimate
+    single-user setup (encryption at rest, no plaintext on disk, a GUI view),
+    and we cannot detect the agent's uid from in here. Operators who want a
+    hard stop set ``preflight.fail_on_warning``.
+    """
+    backend = getattr(config, "backend", None)
+    if backend is None or backend.type != "keychain":
+        return []
+    return [
+        "KEYCHAIN SCOPE: the keychain backend's access boundary is the USER "
+        "ACCOUNT, not kow. kow is not Developer-ID-signed under PyPI/Homebrew, "
+        "so any process running as this user can read these items directly with "
+        "`security find-generic-password` — including the agent this proxy "
+        "exists to keep credentials away from. Run the agent under a SEPARATE "
+        "macOS account (SandVault creates one) so per-user keychain encryption "
+        "is a real wall; it reaches the proxy over loopback and still gets "
+        "substitution. Same-account agent + keychain backend is not a supported "
+        "isolation story. See docs/macos-isolation.md."
+    ]
+
+
 def run_preflight(config: Config) -> list[str]:
     """Aggregate all checks. Returns the combined warning list."""
     msgs: list[str] = []
@@ -276,6 +308,7 @@ def run_preflight(config: Config) -> list[str]:
     msgs.extend(check_root_uid_in_container())
     msgs.extend(check_loose_bindings_on_sensitive_hosts(config))
     msgs.extend(check_secret_prefix_boundary(config))
+    msgs.extend(check_keychain_backend_isolation(config))
     return msgs
 
 

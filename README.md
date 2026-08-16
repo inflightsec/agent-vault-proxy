@@ -88,6 +88,7 @@ The marker line is what makes it a binding. A note whose first line isn't `# kow
 - Install: [Linux](docs/install-systemd.md) · [Docker](docs/docker.md) · [macOS](https://github.com/inflightsec/homebrew-keys-on-the-wire)
 - [Usage](docs/usage.md) points your agent at the proxy.
 - [Linux isolation](docs/linux-isolation.md) composes Keys on the Wire with `bubblewrap` for filesystem sandboxing.
+- [macOS isolation](docs/macos-isolation.md) explains the deployment that makes the boundary real — the agent in a separate account (SandVault), kow as a LaunchAgent in yours — and exactly what the Keychain does and does not buy when both run as the same user.
 - [Google Secret Manager](docs/gcp-secret-manager.md) covers keyless auth and end-to-end testing.
 
 **Reference**

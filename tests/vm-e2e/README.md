@@ -22,6 +22,8 @@ bash tests/vm-e2e/run.sh --keep all      # leave it up: ssh -F /dev/null -p 2222
 
 ```bash
 bash tests/vm-e2e/macos-e2e.sh                            # unprivileged: no sudo, no residue, ~3 min
+bash tests/vm-e2e/macos-e2e.sh --keychain                 # the keychain backend, throwaway keychain, ~4 min
+bash tests/vm-e2e/macos-keyd-e2e.sh                       # the signed helper scopes the ACL to kow, ~3 min
 KOW_E2E_CONSENT=1 bash tests/vm-e2e/macos-e2e.sh --system # the documented system install, ~6 min
 bash tests/vm-e2e/macos-e2e.sh --system --keep            # leave it installed to poke at
 KOW_FORMULA=/path/to/keys-on-the-wire.rb \
@@ -38,9 +40,24 @@ machine it refuses to start without `KOW_E2E_CONSENT=1`, and refuses outright if
 a kow install already exists, so it can never damage a real deployment. Prefer a
 disposable machine for it.
 
-CI runs both modes on `macos-13` (Intel) and `macos-14` (Apple Silicon) on every
-push — see `.github/workflows/macos-e2e.yml`. Those are the same scripts, so a
-green CI run and a local run mean the same thing.
+`--keychain` exercises the macOS Keychain backend against the real
+`/usr/bin/security`. It creates a throwaway keychain, **never touches your login
+keychain**, and deletes it on exit. It needs no admin rights and no consent flag,
+and it is unprivileged by construction rather than by choice: a keychain belongs
+to a login session, so this leg running as you *is* the LaunchAgent constraint
+demonstrated. The unit suite runs on Linux against a fake `security`; this leg is
+where the interactive quoting protocol, exit-44 item-not-found, prompt-free
+enumeration, and locked-keychain behaviour are answered by the actual tool.
+
+CI runs the unprivileged, keychain and system modes on `macos-13` (Intel) and
+`macos-14` (Apple Silicon) on every push — see `.github/workflows/macos-e2e.yml`.
+Those are the same scripts, so a green CI run and a local run mean the same
+thing.
+
+There is no macOS VM path in this repo, deliberately: Apple's licence permits
+macOS virtualisation on Apple hardware only, so a VM is a maintainer's private
+convenience, never the project's macOS story. Everything above runs natively on
+any Mac, and on GitHub's runners.
 
 ## The legs
 
@@ -54,6 +71,8 @@ green CI run and a local run mean the same thing.
 | readme | `guest-readme.sh` | walks the README quickstart command by command, ending in the README's own end-to-end promise |
 | brew | `guest-brew.sh` | the REAL tap formula, repointed at a locally built sdist: `brew install --build-from-source` |
 | macOS user | `macos-e2e.sh` | the no-admin path: venv + config in a scratch dir, proxy run as the caller, zero residue |
+| macOS keychain | `macos-e2e.sh --keychain` | the keychain backend on the real `security(1)`: CLI write with no value on argv, a shell-hostile value round-tripping byte-identical, prompt-free enumeration, nothing plaintext on disk, locked keychain failing closed without hanging |
+| macOS kow-keyd | `macos-keyd-e2e.sh` | the signed helper scopes the ACL: builds and self-signs `kow-keyd`, then asserts `security(1)` AND a Python script are both refused while the helper reads its own item, and that a rebuild keeps the same designated requirement |
 | macOS system | `macos-e2e.sh --system` | `dscl` account, Homebrew prefix, `chflags sappnd`, launchd — then full teardown |
 
 Every leg ends with the same four wire assertions: healthz 200, a real placeholder

@@ -21,7 +21,7 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="${KOW_MACOS_GATE:-$HOME/ios-gate-dev}"
 TAP="${KOW_TAP:-$(dirname "$REPO")/homebrew-keys-on-the-wire}"
 GUEST_USER="${KOW_MACOS_USER:-claude}"
-LEGS="${1:-system}"; [ "$LEGS" = "all" ] && LEGS="user system brew"
+LEGS="${1:-system}"; [ "$LEGS" = "all" ] && LEGS="user keychain keyd system brew"
 DISK="$GATE/macos-sequoia/disk.qcow2"
 VMSSH="$GATE/vmssh"
 
@@ -72,6 +72,10 @@ for leg in $LEGS; do
   case "$leg" in
     user)   echo; green "### LEG: unprivileged (no sudo, no residue)"
             "$VMSSH" "$GENV; bash \$HOME/kow-src/tests/vm-e2e/macos-e2e.sh" || RC=1 ;;
+    keychain) echo; green "### LEG: keychain backend (throwaway keychain, real /usr/bin/security)"
+            "$VMSSH" "$GENV; bash \$HOME/kow-src/tests/vm-e2e/macos-e2e.sh --keychain" || RC=1 ;;
+    keyd)   echo; green "### LEG: kow-keyd (signed helper scopes the ACL to kow, not to python)"
+            "$VMSSH" "$GENV; bash \$HOME/kow-src/tests/vm-e2e/macos-keyd-e2e.sh" || RC=1 ;;
     system) echo; green "### LEG: system install (dscl account, launchd, chflags sappnd)"
             "$VMSSH" "$GENV KOW_E2E_CONSENT=1; bash \$HOME/kow-src/tests/vm-e2e/macos-e2e.sh --system" || RC=1 ;;
     brew)   echo; green "### LEG: brew (real tap formula, built from source — slow)"
@@ -87,7 +91,7 @@ for leg in $LEGS; do
             else
               red "brew leg skipped (no formula staged)"; RC=1
             fi ;;
-    *) red "unknown leg: $leg (want: user, system, brew, all)"; RC=1 ;;
+    *) red "unknown leg: $leg (want: user, keychain, keyd, system, brew, all)"; RC=1 ;;
   esac
 done
 

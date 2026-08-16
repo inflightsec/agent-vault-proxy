@@ -133,3 +133,36 @@ def test_derived_token_cache_key_repr_omits_credentials() -> None:
     assert VALUE not in rep
     assert "client-abc" not in rep
     assert "B" in rep  # non-secret identity fields still visible for debugging
+
+
+# --------------------------------------------- non-ASCII comparison (2026-08-16)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["żółć", "naïve-key", "密码-token", "emoji-🔑-key", "Ω≈ç√"],
+    ids=["polish", "diaeresis", "cjk", "emoji", "symbols"],
+)
+def test_equality_works_for_non_ascii_secrets(value: str) -> None:
+    """`hmac.compare_digest` accepts `str` only when BOTH sides are ASCII-only
+    and raises TypeError otherwise, so comparing two perfectly legal non-ASCII
+    credentials used to crash rather than answer. Every backend that
+    read-back-compares a write depends on this."""
+    assert Secret(value) == Secret(value)
+    assert Secret(value) != Secret(value + "x")
+
+
+def test_non_ascii_comparison_does_not_raise_type_error() -> None:
+    try:
+        equal = Secret("żółć") == Secret("żółć")
+    except TypeError as exc:  # pragma: no cover — the regression itself
+        raise AssertionError(f"non-ASCII Secret comparison raised: {exc}") from exc
+    assert equal
+
+
+def test_mixed_ascii_and_non_ascii_compare_unequal() -> None:
+    assert Secret("plain") != Secret("żółć")
+
+
+def test_equal_length_different_bytes_still_unequal() -> None:
+    assert Secret("ąą") != Secret("ćć")

@@ -333,11 +333,13 @@ def _reset_registry_for_tests() -> None:
     from kow.backends.aws import AwsConfig, AwsSecretsManagerBackend
     from kow.backends.bws import BitwardenBackend, BwsConfig
     from kow.backends.gsm import GsmBackend, GsmConfig
+    from kow.backends.keychain import KeychainBackend, KeychainConfig
     from kow.backends.static import StaticSecretsBackend, StaticSecretsConfig
 
     register_backend("aws-secrets-manager", AwsSecretsManagerBackend, AwsConfig)
     register_backend("bws", BitwardenBackend, BwsConfig)
     register_backend("gsm", GsmBackend, GsmConfig)
+    register_backend("keychain", KeychainBackend, KeychainConfig)
     register_backend("static", StaticSecretsBackend, StaticSecretsConfig)
 
 
@@ -346,6 +348,7 @@ def _reset_registry_for_tests() -> None:
 from kow.backends import aws as _aws_module  # noqa: E402, F401
 from kow.backends import bws as _bws_module  # noqa: E402, F401
 from kow.backends import gsm as _gsm_module  # noqa: E402, F401
+from kow.backends import keychain as _keychain_module  # noqa: E402, F401
 from kow.backends import static as _static_module  # noqa: E402, F401
 
 __all__ = [

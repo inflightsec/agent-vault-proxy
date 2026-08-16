@@ -56,6 +56,57 @@ jobs:
       - name: Unprivileged macOS e2e
         run: bash tests/vm-e2e/macos-e2e.sh
 
+  # The keychain backend against the REAL /usr/bin/security. The unit suite runs
+  # on Linux against a fake `security`, so everything only the actual tool can
+  # answer — the interactive quoting protocol, exit 44 for item-not-found,
+  # enumeration without a prompt, locked-keychain behaviour — is answered here.
+  #
+  # Unprivileged, and not by accident: a keychain belongs to a login session, so
+  # this leg running as the calling user IS the LaunchAgent constraint. It builds
+  # a throwaway keychain, never touches the login keychain, and deletes it on
+  # exit. Runs on PRs for that reason — there is nothing to consent to.
+  keychain:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+
+      - name: Keychain backend macOS e2e (throwaway keychain, real security(1))
+        run: bash tests/vm-e2e/macos-e2e.sh --keychain
+
+  # kow-keyd: does the signed helper actually scope keychain access to kow
+  # rather than to the Python interpreter? Builds the helper from source with a
+  # throwaway self-signed identity, then asserts that security(1) and a Python
+  # script are BOTH refused while the helper reads its own item. Needs no
+  # secrets and no Developer ID — that is the point of the self-signed path.
+  keyd:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: kow-keyd e2e (signed helper scopes the ACL)
+        run: bash tests/vm-e2e/macos-keyd-e2e.sh
+
   # The documented system install: dscl service account, LaunchDaemon,
   # append-only audit log. Safe here precisely because the runner is thrown away
   # afterwards; the script still tears everything down and reports residue.

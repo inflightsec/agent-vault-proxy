@@ -4,8 +4,11 @@ Boots a throwaway Debian VM under QEMU/KVM with **real systemd** and follows
 `docs/install-systemd.md` step by step for the static backend, then asserts the
 whole chain on the wire.
 
+**Linux** — boots a throwaway Debian VM under QEMU/KVM. Needs `qemu-system-x86_64`
+and `/dev/kvm`; nothing else, and nothing of yours is touched.
+
 ```bash
-bash tests/vm-e2e/run.sh                 # Linux, systemd leg (default), ~4 min
+bash tests/vm-e2e/run.sh                 # systemd leg (default), ~4 min
 bash tests/vm-e2e/run.sh all             # all six Linux legs, ~25 min
 bash tests/vm-e2e/run.sh pypi            # build + install from a mock PyPI index
 bash tests/vm-e2e/run.sh readme          # walk the README quickstart
@@ -13,12 +16,33 @@ bash tests/vm-e2e/run.sh tls             # TLS interception only
 bash tests/vm-e2e/run.sh docker          # container path only
 bash tests/vm-e2e/run.sh rootless        # unprivileged install only
 bash tests/vm-e2e/run.sh --keep all      # leave it up: ssh -F /dev/null -p 2222 debian@127.0.0.1
-bash tests/vm-e2e/run-macos.sh           # macOS launchd leg (default), ~8 min
-bash tests/vm-e2e/run-macos.sh brew      # the tap formula, built from source, ~15 min
-bash tests/vm-e2e/run-macos.sh all       # both macOS legs
 ```
 
-## The four legs
+**macOS** — run these **directly on a Mac**, Intel or Apple Silicon. No VM.
+
+```bash
+bash tests/vm-e2e/macos-e2e.sh                            # unprivileged: no sudo, no residue, ~3 min
+KOW_E2E_CONSENT=1 bash tests/vm-e2e/macos-e2e.sh --system # the documented system install, ~6 min
+bash tests/vm-e2e/macos-e2e.sh --system --keep            # leave it installed to poke at
+KOW_FORMULA=/path/to/keys-on-the-wire.rb \
+  bash tests/vm-e2e/guest-brew.sh                         # the real tap formula, ~15 min
+```
+
+The default mode needs no admin rights: a venv and config in a scratch
+directory, the proxy run as you, everything deleted on exit. **Start there.**
+
+`--system` performs the real documented install — a `_kow` service account, a
+LaunchDaemon, directories under the Homebrew prefix, an append-only audit log —
+and reverses all of it on exit, reporting any residue. Because it mutates the
+machine it refuses to start without `KOW_E2E_CONSENT=1`, and refuses outright if
+a kow install already exists, so it can never damage a real deployment. Prefer a
+disposable machine for it.
+
+CI runs both modes on `macos-13` (Intel) and `macos-14` (Apple Silicon) on every
+push — see `.github/workflows/macos-e2e.yml`. Those are the same scripts, so a
+green CI run and a local run mean the same thing.
+
+## The legs
 
 | Leg | Script | Asserts |
 |---|---|---|
@@ -29,7 +53,8 @@ bash tests/vm-e2e/run-macos.sh all       # both macOS legs
 | pypi | `guest-pypi.sh` | builds sdist+wheel from this tree, serves a PEP 503 index, installs from it — packaging, console scripts, extras |
 | readme | `guest-readme.sh` | walks the README quickstart command by command, ending in the README's own end-to-end promise |
 | brew | `guest-brew.sh` | the REAL tap formula, repointed at a locally built sdist: `brew install --build-from-source` |
-| macOS | `guest-install-macos.sh` | `dscl` account, `/usr/local` prefix, `chflags sappnd`, launchd |
+| macOS user | `macos-e2e.sh` | the no-admin path: venv + config in a scratch dir, proxy run as the caller, zero residue |
+| macOS system | `macos-e2e.sh --system` | `dscl` account, Homebrew prefix, `chflags sappnd`, launchd — then full teardown |
 
 Every leg ends with the same four wire assertions: healthz 200, a real placeholder
 swapped for a real secret upstream, an unbound destination refused 403, and **no
@@ -56,10 +81,18 @@ The legs share one VM and are independent: docker publishes on its own host port
 so it cannot collide with a running systemd unit, and the rootless leg snapshots
 `/etc` first so a system install from another leg is never mistaken for its own.
 
-The macOS leg drives the Sequoia VM that already exists on the mainframe for the
-Laima iOS gate (`~/ios-gate-dev`, ADR-0036). It is a **shared resource**: the
-harness reverts to the golden snapshot before and after every run and never
-writes a new one.
+### The macOS legs run natively, not in a VM
+
+`macos-e2e.sh` is self-contained and location-agnostic: it resolves the Homebrew
+prefix at run time (`/usr/local` on Intel, `/opt/homebrew` on Apple Silicon —
+hardcoding either one broke the install on half the Macs in existence), finds any
+Python >= 3.12, and takes its source tree from `KOW_SRC` or its own location. The
+same script therefore runs on a laptop, on a CI runner, and inside a VM.
+
+`run-macos.sh` is a **maintainer convenience** that ships those scripts into a
+local macOS VM over ssh. It is deliberately not the documented path: Apple's
+licence permits macOS virtualisation on Apple hardware only, so the project's
+macOS story is "run it on a Mac, or let CI run it on GitHub's".
 
 ## Why a VM and not a container
 
@@ -97,8 +130,9 @@ than calling `kow setup`. A doc that drifts from reality fails here.
 
 ## Not yet covered
 
-- Docker / compose path (needs a reachable docker daemon).
-- Non-root / rootless install.
+- The real vault backends (BWS / GSM / AWS) — every leg uses the `static` route.
+- The computed injectors (sigv4, hmac, jwt, github-app, oauth2).
+- Operational paths: service restart, config reload, CA rotation.
 
 
 ## Prerequisites
@@ -106,12 +140,19 @@ than calling `kow setup`. A doc that drifts from reality fails here.
 | Leg | Needs |
 |---|---|
 | all Linux legs | `qemu-system-x86_64` + `/dev/kvm`; the Debian cloud image is fetched once into `/tmp/kow-vm` (override with `KOW_VM_WORK`) |
-| macOS legs | the Sequoia VM at `~/ios-gate-dev` (override with `KOW_MACOS_GATE`) |
-| brew leg | a checkout of the tap at `/home/shared/nfs/src/homebrew-keys-on-the-wire` (override with `KOW_TAP`) — it tests the REAL formula |
+| macOS legs | a Mac with Homebrew and Python >= 3.12 (`brew install python@3.13`). `--system` also needs sudo. |
+| brew leg | a checkout of the tap; point `KOW_FORMULA` at its `Formula/keys-on-the-wire.rb` — it tests the REAL formula |
+| `run-macos.sh` (maintainers) | a local macOS VM (override its location with `KOW_MACOS_GATE`, the tap with `KOW_TAP`) |
+
+Environment overrides honoured by the macOS legs: `KOW_SRC` (source tree),
+`KOW_PY` (interpreter), `KOW_PREFIX` (Homebrew prefix), `KOW_FORMULA` (tap
+formula), `KOW_E2E_CONSENT` (unlock `--system`).
 
 Both harnesses are safe to re-run: the Linux legs boot a throwaway overlay and
-delete it, and the macOS legs revert the shared VM to its golden snapshot before
-**and** after, never writing a new one.
+delete it; `macos-e2e.sh` removes everything it creates in either mode. The brew
+leg is the exception — it uninstalls the formula but keeps its scratch tree at
+`~/kow-brew` and the local test tap, so prefer a disposable machine for it (and `run-macos.sh` reverts
+its VM to the golden snapshot before **and** after, never writing a new one).
 
 Known host gotcha: if `ssh` refuses to start with *"Bad owner or permissions on
 /etc/ssh/ssh_config.d/…"*, that is the host's config, not the VM — both runners

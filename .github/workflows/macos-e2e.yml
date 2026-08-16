@@ -1,0 +1,120 @@
+name: macos-e2e
+
+# The macOS end-to-end legs, on both architectures. These run the SAME scripts a
+# contributor runs on their own Mac (`bash tests/vm-e2e/macos-e2e.sh`), on
+# ephemeral machines Apple licenses to GitHub — so the privileged leg, which
+# creates a service account and a LaunchDaemon, runs continuously without asking
+# anyone to hand their laptop over.
+#
+# macos-13 is the last Intel runner (/usr/local Homebrew prefix); macos-14 is
+# Apple Silicon (/opt/homebrew). Both matter: the prefix difference is exactly
+# what used to break the documented install.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Zero-privilege leg: no sudo, everything under a scratch dir, nothing left
+  # behind. This is the one a contributor is expected to run locally.
+  unprivileged:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # step-security/harden-runner is Linux-only, so these jobs run with NO egress
+    # guard — unlike the Linux jobs in test.yml. Network access is whatever the
+    # runner image, setup-python, pip and Homebrew make; it is not constrained
+    # here. Treat that as a known gap, not a property.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+
+      - name: Report the prefix this runner actually uses
+        run: |
+          echo "arch=$(uname -m)  brew prefix=$(brew --prefix)"
+
+      - name: Unprivileged macOS e2e
+        run: bash tests/vm-e2e/macos-e2e.sh
+
+  # The documented system install: dscl service account, LaunchDaemon,
+  # append-only audit log. Safe here precisely because the runner is thrown away
+  # afterwards; the script still tears everything down and reports residue.
+  system:
+    # NOT on pull_request: this leg runs a sudo-capable install, and a PR (from a
+    # fork especially) is untrusted code. The unprivileged leg above covers PRs.
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+
+      - name: System macOS e2e (install, assert, tear down)
+        env:
+          KOW_E2E_CONSENT: '1'
+        run: bash tests/vm-e2e/macos-e2e.sh --system
+
+  # The real tap formula, built from source. Slow (~15 min), so it is not on the
+  # push path — run it from the Actions tab when the formula or packaging changes.
+  brew:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout the tap (the formula under test)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: inflightsec/homebrew-keys-on-the-wire
+          path: tap
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+
+      - name: Homebrew formula e2e
+        env:
+          KOW_SRC: ${{ github.workspace }}
+          KOW_FORMULA: ${{ github.workspace }}/tap/Formula/keys-on-the-wire.rb
+        run: bash tests/vm-e2e/guest-brew.sh

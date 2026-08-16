@@ -55,7 +55,7 @@ sudo chflags sappnd    /usr/local/var/log/kow/audit.jsonl   # BSD append-only
 
 The append-only flag (`chattr +a` on Linux, `chflags sappnd` on macOS) makes the audit log unrewritable without first explicitly stripping it. That strip is a visible, auditable event. The proxy refuses to start if the audit log is unwritable, so this step has to happen before the unit is enabled.
 
-> **Platform notes for macOS:** The proxy itself runs (mitmproxy is cross-platform), but the hardening story is meaningfully weaker, `launchd` is service supervision, not a sandbox, and there's no equivalent to systemd's `ProtectSystem`, `RestrictAddressFamilies`, or syscall filter. If the host is a credible target, run the proxy inside Docker or a Linux VM. Steps 2-5 reference Linux paths; on macOS, prefix `/etc/` and `/var/{lib,log}/` with `/usr/local/` and use `launchctl load -w /Library/LaunchDaemons/io.inflightsec.kow.plist` in place of systemd commands.
+> **Platform notes for macOS:** The proxy itself runs (mitmproxy is cross-platform), but the hardening story is meaningfully weaker, `launchd` is service supervision, not a sandbox, and there's no equivalent to systemd's `ProtectSystem`, `RestrictAddressFamilies`, or syscall filter. If the host is a credible target, run the proxy inside Docker or a Linux VM. Steps 2-5 reference Linux paths; on macOS, prefix `/etc/` and `/var/{lib,log}/` with the Homebrew prefix — `$(brew --prefix)`, which is `/usr/local` on Intel and `/opt/homebrew` on Apple Silicon and use `launchctl load -w /Library/LaunchDaemons/io.inflightsec.kow.plist` in place of systemd commands.
 
 ## 2. Install the package into a system-wide venv
 

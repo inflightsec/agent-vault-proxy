@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# Runs INSIDE the macOS VM. Exercises the REAL Homebrew formula from the tap,
-# repointed at an sdist built from THIS tree and served locally — so the
-# formula's own install logic (venv, --require-hashes lockfile install,
-# symlinks) is what is under test, not a hand-rolled approximation.
+# Exercises the REAL Homebrew formula from the tap, repointed at an sdist built
+# from THIS tree and served locally — so the formula's own install logic (venv,
+# --require-hashes lockfile install, symlinks) is what is under test, not a
+# hand-rolled approximation.
+#
+# Runs on any Mac (Intel or Apple Silicon): a VM, a CI runner, or a laptop. It
+# installs and then uninstalls the formula, leaving a scratch dir in $HOME.
+# Point it at a source tree and a formula with KOW_SRC and KOW_FORMULA.
+#
+# The interpreter-discovery block below is duplicated from macos-e2e.sh. That is
+# deliberate: these two scripts are independently runnable and a contributor may
+# copy either one on its own. Twelve lines is cheaper than a shared file that
+# both must carry.
 set -uo pipefail
 
 PASS=0; FAIL=0
@@ -10,11 +19,24 @@ ok(){ printf '  PASS %s\n' "$*"; PASS=$((PASS+1)); }
 bad(){ printf '  FAIL %s\n' "$*"; FAIL=$((FAIL+1)); }
 step(){ printf '\n== %s\n' "$*"; }
 
-SRC=$HOME/kow-src
+SRC="${KOW_SRC:-$HOME/kow-src}"
+FORMULA="${KOW_FORMULA:-$HOME/kow-formula.rb}"
 WORK=$HOME/kow-brew; rm -rf "$WORK" 2>/dev/null
 mkdir -p "$WORK/dist" "$WORK/conf/static" "$WORK/state"
 chmod 700 "$WORK/conf/static" "$WORK/state"
-PY=/usr/local/opt/python@3.13/bin/python3.13
+# Homebrew lives at /opt/homebrew on Apple Silicon and /usr/local on Intel, so
+# the interpreter path cannot be hardcoded. macOS itself ships 3.9; kow needs 3.12+.
+BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /usr/local)"
+PY=""
+for c in "${KOW_PY:-}" "$BREW_PREFIX/opt/python@3.14/bin/python3.14" \
+         "$BREW_PREFIX/opt/python@3.13/bin/python3.13" \
+         "$BREW_PREFIX/opt/python@3.12/bin/python3.12" \
+         python3.14 python3.13 python3.12 python3; do
+  [ -n "$c" ] && command -v -- "$c" >/dev/null 2>&1 || continue
+  "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null \
+    && { PY="$(command -v -- "$c")"; break; }
+done
+[ -n "$PY" ] || { echo "no python >=3.12 found (brew install python@3.13)" >&2; exit 2; }
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_ANALYTICS=1
 PORT=8086
 PROXY_PORT=14377
@@ -35,12 +57,12 @@ step "2. serve it, and repoint the REAL tap formula at it"
 ( cd "$WORK/dist" && "$PY" -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$WORK/http.pid" )
 sleep 2
 curl -sf "http://127.0.0.1:$PORT/$(basename "$SDIST")" -o /dev/null && ok "sdist served locally" || { bad "not served"; exit 1; }
-[ -f "$HOME/kow-formula.rb" ] || { bad "tap formula not staged in the guest"; exit 1; }
+[ -f "$FORMULA" ] || { bad "tap formula not found at $FORMULA (set KOW_FORMULA)"; exit 1; }
 # brew refuses a loose .rb path — the formula must live in a tap.
 brew tap-new kowtest/local --no-git >/dev/null 2>&1
 TAPDIR=$(brew --repository kowtest/local)/Formula
 mkdir -p "$TAPDIR"
-"$PY" - "$HOME/kow-formula.rb" "$TAPDIR/keys-on-the-wire.rb" \
+"$PY" - "$FORMULA" "$TAPDIR/keys-on-the-wire.rb" \
        "http://127.0.0.1:$PORT/$(basename "$SDIST")" "$SHA" <<'PY'
 import re, sys
 src, dst, url, sha = sys.argv[1:5]
@@ -113,7 +135,12 @@ PY
 sleep 2
 SEEN=$(curl -s --max-time 10 -x "http://127.0.0.1:$PROXY_PORT" -H "Authorization: Bearer ${PLACEHOLDER}" \
         http://127.0.0.1:8094/ | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["auth"])' 2>/dev/null)
-[ "$SEEN" = "Bearer ${REAL_SECRET}" ] && ok "brew-installed kow swapped the real secret" || bad "upstream saw: ${SEEN:-<nothing>}"
+if [ "$SEEN" = "Bearer ${REAL_SECRET}" ]; then ok "brew-installed kow swapped the real secret"
+elif [ "$SEEN" = "Bearer ${PLACEHOLDER}" ]; then bad "no substitution: upstream saw the placeholder unchanged"
+elif [ -z "$SEEN" ]; then bad "upstream saw nothing (request did not complete)"
+# Never echo the observed value: on a partial-substitution failure it IS the
+# secret, and CI logs are public.
+else bad "upstream saw an unexpected value (${#SEEN} bytes, withheld)"; fi
 if grep -q "$REAL_SECRET" "$WORK/proxy.log" 2>/dev/null; then bad "SECRET IN PROXY LOG"; else ok "no secret bytes in proxy log"; fi
 
 step "6. formula caveats must match reality"

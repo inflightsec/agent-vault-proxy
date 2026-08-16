@@ -24,6 +24,7 @@ from urllib.parse import parse_qsl, quote, urlsplit
 from mitmproxy import http
 
 from kow.backends import BackendUnavailableError, SecretNotFoundError
+from kow.denials import Sigv4CredentialUnavailableError
 
 if TYPE_CHECKING:
     from kow.audit import AuditWriter
@@ -295,12 +296,12 @@ class Sigv4Resolver:
             method=flow.request.method,
             url=flow.request.url,
             body=flow.request.raw_content or b"",
-            access_key_id=access_key_id,
-            secret_access_key=secret_access_key,
+            access_key_id=access_key_id.reveal(),
+            secret_access_key=secret_access_key.reveal(),
             region=injector.region,
             service=injector.service,
             amz_date=amz_date,
-            session_token=session_token,
+            session_token=session_token.reveal() if session_token is not None else None,
             sign_content_sha256=True,
             signed_headers_extra=_client_amz_headers(flow.request.headers),
         )
@@ -352,6 +353,6 @@ class Sigv4Resolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: sigv4 credential unavailable\n",
+            Sigv4CredentialUnavailableError.client_message,
             {"Content-Type": "text/plain"},
         )

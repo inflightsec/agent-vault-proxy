@@ -45,7 +45,7 @@ body:
     id: audit-log
     attributes:
       label: Audit log lines
-      description: Recent entries from `/var/log/agent-vault-proxy/audit.jsonl`. Do NOT paste real secret values or full URLs.
+      description: Recent entries from `/var/log/kow/audit.jsonl`. Do NOT paste real secret values or full URLs.
       render: json
     validations:
       required: false
@@ -54,7 +54,7 @@ body:
     id: journal
     attributes:
       label: Service log lines
-      description: Output of `journalctl -u agent-vault-proxy -n 50 --no-pager`. Redact anything sensitive.
+      description: Output of `journalctl -u kow -n 50 --no-pager`. Redact anything sensitive.
       render: shell
     validations:
       required: false

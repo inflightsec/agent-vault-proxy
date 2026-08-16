@@ -23,6 +23,7 @@ from kow.backends import (
 )
 from kow.cli import oauth_login as ol
 from kow.placeholders import PLACEHOLDER_PREFIX
+from kow.secret import Secret
 
 _LIVE_TOKEN = "1//refresh-token-value-abcdefghijklmnop"
 
@@ -34,15 +35,15 @@ class FakeBackend:
         self._v = dict(values)
         self.written: dict[str, str] = {}
 
-    def fetch(self, name: str, ctx: object = None) -> str:
+    def fetch(self, name: str, ctx: object = None) -> Secret:
         if name not in self._v:
             raise SecretNotFoundError(name)
-        return self._v[name]
+        return Secret(self._v[name])
 
-    def fetch_with_meta(self, name: str, ctx: object = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: object = None) -> tuple[Secret, str | None]:
         if name not in self._v:
             raise SecretNotFoundError(name)
-        return self._v[name], None
+        return Secret(self._v[name]), None
 
     def update(
         self,
@@ -76,7 +77,7 @@ def _args(**over: object) -> argparse.Namespace:
         "loopback": False,
         "device": True,
         "callback_port": 0,
-        "config": "/etc/agent-vault-proxy/bindings.yaml",
+        "config": "/etc/kow/bindings.yaml",
         "force": False,
     }
     base.update(over)

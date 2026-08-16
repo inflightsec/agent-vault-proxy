@@ -56,7 +56,7 @@ the org, or `bws project list` returns it.
 ## Layer 1: unit tests
 
 ```bash
-cd <your-checkout>/agent-vault-proxy
+cd <your-checkout>/kow
 .venv/bin/pytest -v
 ```
 
@@ -67,7 +67,7 @@ If anything fails: stop. Don't proceed.
 ## Layer 2: BWS read test (no proxy involved)
 
 ```bash
-cd <your-checkout>/agent-vault-proxy
+cd <your-checkout>/kow
 .venv/bin/python tests/smoke/layer2_bws_read.py
 ```
 
@@ -95,8 +95,8 @@ This needs two terminals.
 ### Terminal 1, start the proxy
 
 ```bash
-cd <your-checkout>/agent-vault-proxy
-.venv/bin/python -m kow --set avp_config=tests/smoke/bindings.smoke.yaml
+cd <your-checkout>/kow
+.venv/bin/python -m kow --set kow_config=tests/smoke/bindings.smoke.yaml
 ```
 
 Expected: mitmproxy banner, listening on 127.0.0.1:14322. Leave this
@@ -108,7 +108,7 @@ already have one, you'll see it create the files.
 ### Terminal 2 - run the test client
 
 ```bash
-cd <your-checkout>/agent-vault-proxy
+cd <your-checkout>/kow
 .venv/bin/python tests/smoke/layer3_proxy_anthropic.py
 ```
 

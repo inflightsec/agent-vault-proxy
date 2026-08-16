@@ -28,6 +28,11 @@ from kow.backends import (
 )
 from kow.caching import CachingSecretsClient
 from kow.config import BodyInjector, SecretSpec
+from kow.denials import (
+    CompositeRenderUnexpectedError,
+    SecretFetchFailedError,
+    SecretUnavailableError,
+)
 
 _log = logging.getLogger("kow.injectors.body")
 
@@ -231,7 +236,7 @@ class _BodyReplacer:
                         self._emit_fail_closed_denial(
                             secret_name=name,
                             reason=f"composite_render_unexpected_error:{type(e).__name__}",
-                            message=b"agent-vault-proxy: composite render failed unexpectedly\n",
+                            message=CompositeRenderUnexpectedError.client_message,
                         )
                         return b""
                     if rendered is None:
@@ -257,7 +262,7 @@ class _BodyReplacer:
                         self._emit_fail_closed_denial(
                             secret_name=name,
                             reason=f"secret_unavailable:{type(e).__name__}",
-                            message=b"agent-vault-proxy: secret unavailable\n",
+                            message=SecretUnavailableError.client_message,
                         )
                         return b""
                     except Exception as e:  # noqa: BLE001
@@ -270,11 +275,11 @@ class _BodyReplacer:
                         self._emit_fail_closed_denial(
                             secret_name=name,
                             reason=f"secret_fetch_error:{type(e).__name__}",
-                            message=b"agent-vault-proxy: secret fetch failed\n",
+                            message=SecretFetchFailedError.client_message,
                         )
                         return b""
                     self._rendered_cache[name] = inject.render_value(
-                        real_secret=real_secret,
+                        real_secret=real_secret.reveal(),
                         secret_name=name,
                     ).encode("utf-8")
             pending.append((placeholder, name, spec))

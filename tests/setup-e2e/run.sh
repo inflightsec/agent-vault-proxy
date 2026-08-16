@@ -62,7 +62,7 @@ docker run -d --name "$CONTAINER" \
     --cap-add LINUX_IMMUTABLE \
     -v "$WHEEL_DIR":/wheels:ro \
     -v "$SCRIPT_DIR":/suite:ro \
-    -v "$CONTAINER-log":/var/log/agent-vault-proxy \
+    -v "$CONTAINER-log":/var/log/kow \
     "$IMAGE" sleep infinity >/dev/null
 
 docker exec "$CONTAINER" bash -eu -o pipefail -c '
@@ -71,10 +71,10 @@ docker exec "$CONTAINER" bash -eu -o pipefail -c '
     apt-get install -yq --no-install-recommends \
         python3 python3-venv sudo bats e2fsprogs ca-certificates >/dev/null
     python3 -m venv /opt/avp
-    /opt/avp/bin/pip install --quiet --require-hashes --only-binary :all: \
+    /opt/kow/bin/pip install --quiet --require-hashes --only-binary :all: \
         -r /wheels/requirements.lock
-    /opt/avp/bin/pip install --quiet --no-deps /wheels/*.whl
-    ln -s /opt/avp/bin/avp /usr/local/bin/avp
+    /opt/kow/bin/pip install --quiet --no-deps /wheels/*.whl
+    ln -s /opt/kow/bin/avp /usr/local/bin/avp
 '
 
 green "[4/4] Running setup.bats inside the container..."
@@ -84,9 +84,9 @@ else
     red "setup.bats failed — provisioned state for diagnosis:"
     docker exec "$CONTAINER" bash -c '
         id avp || true
-        ls -laR /etc/agent-vault-proxy /var/lib/agent-vault-proxy \
-            /var/log/agent-vault-proxy /etc/systemd/system 2>/dev/null || true
-        lsattr /var/log/agent-vault-proxy/audit.jsonl 2>/dev/null || true
+        ls -laR /etc/kow /var/lib/kow \
+            /var/log/kow /etc/systemd/system 2>/dev/null || true
+        lsattr /var/log/kow/audit.jsonl 2>/dev/null || true
     ' >&2 || true
     exit 1
 fi

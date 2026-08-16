@@ -127,7 +127,7 @@ cache:
   jitter_seconds: 5
 
 audit:
-  path: /var/log/agent-vault-proxy/audit.jsonl
+  path: /var/log/kow/audit.jsonl
   fail_on_unwritable: true
 
 # Quiet preflight: the documented happy path for this harness shouldn't
@@ -141,4 +141,4 @@ backend:
   type: static
   config:
     type: static
-    path: /etc/agent-vault-proxy/secrets.yml
+    path: /etc/kow/secrets.yml

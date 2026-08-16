@@ -26,6 +26,7 @@ from kow.addon import AgentVaultProxyAddon
 from kow.audit import AuditWriter
 from kow.backends import FetchContext
 from kow.caching import CachingSecretsClient
+from kow.secret import Secret
 
 GITHUB_PLACEHOLDER = "ghp-PLACEHOLDER-01HXY1234567890AB"
 JFROG_PLACEHOLDER = "jfrog-PLACEHOLDER-01HXY1234567890AB"
@@ -33,8 +34,8 @@ REAL_SECRET = "real-secret-value-XYZ"
 
 
 class _ConstBackend:
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return REAL_SECRET
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(REAL_SECRET)
 
 
 def _client() -> CachingSecretsClient:

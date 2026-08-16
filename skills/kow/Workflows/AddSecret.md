@@ -34,7 +34,7 @@ kow binding new --host api.acme.com --name ACME_API_KEY
 #   --no-placeholder     legacy salt-derived flow (omits the placeholder: line)
 ```
 
-If the tool exits non-zero, it printed a diagnostic on stderr — relay it; do NOT paste a partial/edited note. (Source install without `avp` on PATH: `/opt/agent-vault-proxy/.venv/bin/kow`.)
+If the tool exits non-zero, it printed a diagnostic on stderr — relay it; do NOT paste a partial/edited note. (Source install without `avp` on PATH: `/opt/kow/.venv/bin/kow`.)
 
 Manual-fallback notes must OMIT `placeholder:` — only the tool mints one (the daemon's format gate rejects hand-typed strings); a note without it uses the legacy derived flow.
 

@@ -33,7 +33,7 @@ from kow._ssrf_guard import SsrfBlockedError, check_url_not_internal, resolve_an
 
 _log = logging.getLogger("kow.injectors._token_transport")
 _RETRY_BACKOFF_SECONDS = 1.0
-_USER_AGENT = "agent-vault-proxy/token-exchange"
+_USER_AGENT = "kow/token-exchange"
 _TLS_CONTEXT = ssl.create_default_context()
 
 

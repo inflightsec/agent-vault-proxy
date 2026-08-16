@@ -118,9 +118,7 @@ def section_break():
 
 # ── DEMO SCRIPT ───────────────────────────────────────────────────────────────
 
-emit(
-    f"\r\n{hdr('── agent-vault-proxy: prompt injection vs credential isolation ──')}\r\n\r\n", dt=0
-)
+emit(f"\r\n{hdr('── kow: prompt injection vs credential isolation ──')}\r\n\r\n", dt=0)
 pause(INITIAL_PAUSE)
 
 # ── ACT 1: what the agent's process actually sees ──
@@ -163,7 +161,7 @@ comment("# ^ the real keys are still in the vault.", punchline=True)
 section_break()
 
 # ── ACT 3: under the hood ──
-cmd("sudo tail -1 /var/log/agent-vault-proxy/audit.jsonl | jq")
+cmd("sudo tail -1 /var/log/kow/audit.jsonl | jq")
 output(f"{faint('# (with unmatched_destination_policy: deny)')}\r\n")
 pause(0.3)
 output(
@@ -187,7 +185,7 @@ output(
 )
 pause(DWELL_AFTER_OUTPUT)
 
-cmd("sudo tail -2 /var/log/agent-vault-proxy/audit.jsonl | jq")
+cmd("sudo tail -2 /var/log/kow/audit.jsonl | jq")
 output(
     "{\r\n"
     '  "ts": "2026-05-28T14:03:18.114203+00:00",\r\n'
@@ -217,7 +215,7 @@ comment("# ^ the agent's process never held the real ANTHROPIC_API_KEY.", punchl
 section_break()
 
 # ── End screen ──
-emit(f"\r\n{hdr('── github.com/inflightsec/agent-vault-proxy ──')}\r\n", dt=0)
+emit(f"\r\n{hdr('── github.com/inflightsec/keys-on-the-wire ──')}\r\n", dt=0)
 pause(ENDING_HOLD)
 
 # ── Write cast ────────────────────────────────────────────────────────────────
@@ -226,7 +224,7 @@ HEADER = {
     "width": WIDTH,
     "height": HEIGHT,
     "timestamp": 1779878404,
-    "title": "agent-vault-proxy: prompt injection vs. credential isolation",
+    "title": "kow: prompt injection vs. credential isolation",
     "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"},
 }
 

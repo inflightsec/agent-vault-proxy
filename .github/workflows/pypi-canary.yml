@@ -1,7 +1,7 @@
 name: pypi-canary
 
 # Daily canary against the LATEST released PyPI version of
-# `agent-vault-proxy`. Catches issues that a one-shot post-publish
+# `kow`. Catches issues that a one-shot post-publish
 # smoke can't surface:
 #
 #   - A transitive dep gets yanked weeks after release.

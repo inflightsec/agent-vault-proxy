@@ -14,6 +14,7 @@ from kow.backends import (
     SecretsBackend,
 )
 from kow.caching import CachingSecretsClient
+from kow.secret import Secret
 
 
 class FakeBackend:
@@ -26,7 +27,7 @@ class FakeBackend:
         self.fetch_call_log: list[str] = []
         self.lock = threading.Lock()
 
-    def fetch(self, name: str, ctx=None) -> str:
+    def fetch(self, name: str, ctx=None) -> Secret:
         with self.lock:
             self.fetch_calls += 1
             self.fetch_call_log.append(name)
@@ -34,7 +35,7 @@ class FakeBackend:
             time.sleep(self.delay)
         if name not in self.store:
             raise SecretNotFoundError(name)
-        return self.store[name]
+        return Secret(self.store[name])
 
 
 def test_fake_backend_satisfies_protocol() -> None:
@@ -46,7 +47,7 @@ def test_fake_backend_satisfies_protocol() -> None:
 def test_get_returns_backend_value_on_miss() -> None:
     backend = FakeBackend({"FOO": "real-value"})
     cache = CachingSecretsClient(backend=backend)
-    assert cache.get("FOO") == "real-value"
+    assert cache.get("FOO").reveal() == "real-value"
     assert backend.fetch_calls == 1
 
 
@@ -101,7 +102,7 @@ def test_lru_bump_on_read_protects_from_eviction() -> None:
     backend.fetch_calls = 0
     cache.get("A")  # still cached (was bumped)
     cache.get("B")  # was evicted — refetches
-    assert cache.get("A") == "1"
+    assert cache.get("A").reveal() == "1"
     assert backend.fetch_calls == 1  # only B refetched
 
 
@@ -112,18 +113,18 @@ def test_backend_unavailable_not_cached() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             self.calls += 1
             if self.calls == 1:
                 raise BackendUnavailableError("transient")
-            return "recovered"
+            return Secret("recovered")
 
     backend = FlakyBackend()
     cache = CachingSecretsClient(backend=backend)
     with pytest.raises(BackendUnavailableError):
         cache.get("FOO")
     # Second call must hit backend again — not a cached error.
-    assert cache.get("FOO") == "recovered"
+    assert cache.get("FOO").reveal() == "recovered"
     assert backend.calls == 2
 
 
@@ -135,17 +136,17 @@ def test_secret_not_found_not_cached() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             self.calls += 1
             if self.calls == 1:
                 raise SecretNotFoundError(name)
-            return "exists-now"
+            return Secret("exists-now")
 
     backend = TransientMissBackend()
     cache = CachingSecretsClient(backend=backend)
     with pytest.raises(SecretNotFoundError):
         cache.get("FOO")
-    assert cache.get("FOO") == "exists-now"
+    assert cache.get("FOO").reveal() == "exists-now"
     assert backend.calls == 2
 
 
@@ -180,8 +181,8 @@ def test_flush_calls_backend_flush_name_map_when_present() -> None:
         def __init__(self) -> None:
             self.flush_called = False
 
-        def fetch(self, name: str, ctx=None) -> str:
-            return "x"
+        def fetch(self, name: str, ctx=None) -> Secret:
+            return Secret("x")
 
         def flush_name_map(self) -> None:
             self.flush_called = True
@@ -207,7 +208,7 @@ def test_singleflight_dedupes_concurrent_fetches() -> None:
     with ThreadPoolExecutor(max_workers=50) as ex:
         results = list(ex.map(lambda _: caller(), range(50)))
 
-    assert results == ["v"] * 50
+    assert [r.reveal() for r in results] == ["v"] * 50
     # The whole point: 50 concurrent calls, ONE backend fetch.
     assert backend.fetch_calls == 1
 
@@ -223,11 +224,11 @@ def test_singleflight_leader_baseexception_clears_inflight_slot() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             self.calls += 1
             if self.calls == 1:
                 raise KeyboardInterrupt("simulated Ctrl+C")
-            return "recovered"
+            return Secret("recovered")
 
     backend = InterruptingBackend()
     cache = CachingSecretsClient(backend=backend)
@@ -239,7 +240,7 @@ def test_singleflight_leader_baseexception_clears_inflight_slot() -> None:
     assert "FOO" not in cache._inflight
 
     # And the next call must work.
-    assert cache.get("FOO") == "recovered"
+    assert cache.get("FOO").reveal() == "recovered"
     assert backend.calls == 2
 
 
@@ -265,12 +266,12 @@ def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             self.calls += 1
             call_num = self.calls
             fetch_started.set()
             release_fetch.wait(timeout=2)
-            return f"value-call-{call_num}"
+            return Secret(f"value-call-{call_num}")
 
     backend = CountingSlowBackend()
     cache = CachingSecretsClient(backend=backend, ttl_seconds=300)
@@ -297,7 +298,7 @@ def test_flush_during_inflight_fetch_invalidates_stale_result() -> None:
     assert isinstance(leader_outcome.get("error"), BackendUnavailableError)
 
     # The stale value must NOT have been cached. Next call must re-fetch.
-    assert cache.get("FOO") == "value-call-2"
+    assert cache.get("FOO").reveal() == "value-call-2"
     assert backend.calls == 2
 
 
@@ -316,14 +317,14 @@ def test_flush_during_inflight_propagates_retry_to_waiters() -> None:
             self.calls = 0
             self._lock = threading.Lock()
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             with self._lock:
                 self.calls += 1
                 n = self.calls
             if n == 1:
                 fetch_started.set()
                 release_fetch.wait(timeout=2)
-            return f"value-call-{n}"
+            return Secret(f"value-call-{n}")
 
     backend = SlowBackend()
     cache = CachingSecretsClient(backend=backend, ttl_seconds=300)
@@ -333,7 +334,7 @@ def test_flush_during_inflight_propagates_retry_to_waiters() -> None:
 
     def caller() -> None:
         try:
-            v = cache.get("FOO")
+            v = cache.get("FOO").reveal()
             with outcomes_lock:
                 outcomes.append(("ok", v))
         except BackendUnavailableError as e:
@@ -368,14 +369,14 @@ def test_flush_clears_inflight_so_concurrent_callers_dont_get_stale() -> None:
             self.calls = 0
             self._lock = threading.Lock()
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             with self._lock:
                 self.calls += 1
                 n = self.calls
             if n == 1:
                 fetch_started.set()
                 release_fetch.wait(timeout=2)
-            return f"v{n}"
+            return Secret(f"v{n}")
 
     backend = BlockingBackend()
     cache = CachingSecretsClient(backend=backend, ttl_seconds=300)
@@ -405,7 +406,7 @@ def test_singleflight_propagates_failure_to_all_waiters() -> None:
             self.calls = 0
             self.lock = threading.Lock()
 
-        def fetch(self, name: str, ctx=None) -> str:
+        def fetch(self, name: str, ctx=None) -> Secret:
             with self.lock:
                 self.calls += 1
             time.sleep(0.1)  # ensure other threads pile up while we're in flight
@@ -441,7 +442,7 @@ def test_composite_fetch_returns_all_values() -> None:
     backend = FakeBackend({"USER": "alice", "TOKEN": "s3cret"})
     cache = CachingSecretsClient(backend=backend)
     values = cache.composite_fetch(["USER", "TOKEN"])
-    assert values == {"USER": "alice", "TOKEN": "s3cret"}
+    assert {k: v.reveal() for k, v in values.items()} == {"USER": "alice", "TOKEN": "s3cret"}
 
 
 def test_composite_fetch_empty_value_raises_backend_unavailable() -> None:
@@ -508,8 +509,8 @@ def test_composite_fetch_flush_between_underlyings_raises_stale() -> None:
     # To actually trigger the post-check failure we need a flush DURING
     # the composite — simulate via a backend that flushes during fetch.
     values = cache.composite_fetch(["A", "B"])
-    assert values["A"] == "rotated-a"
-    assert values["B"] == "first-b"
+    assert values["A"].reveal() == "rotated-a"
+    assert values["B"].reveal() == "first-b"
 
 
 def test_composite_fetch_post_check_detects_gen_bump_between_gets() -> None:
@@ -559,7 +560,7 @@ def test_composite_fetch_flush_during_underlying_fetch_propagates_stale() -> Non
             # During the fetch of A, signal that a flush should happen,
             # and wait briefly so the flush wins.
             flushed.wait(timeout=1.0)
-            return f"value-of-{name}"
+            return Secret(f"value-of-{name}")
 
     backend = SlowAndFlushable()
     cache = CachingSecretsClient(backend=backend)

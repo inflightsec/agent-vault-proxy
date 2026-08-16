@@ -27,6 +27,8 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from kow.secret import Secret
+
 
 class SecretNotFoundError(Exception):
     """The backend confirms no secret exists under that name."""
@@ -98,7 +100,7 @@ class SecretsBackend(Protocol):
 
     Contract:
         - __init__(config) does NO I/O. First I/O is on first fetch().
-        - fetch(name, ctx=None) returns the secret string.
+        - fetch(name, ctx=None) returns the value wrapped in a Secret.
         - fetch raises SecretNotFoundError when the backend confirms no
           such name exists. Distinct from auth/transport failures.
         - fetch raises BackendUnavailableError on transient failures.
@@ -115,14 +117,14 @@ class SecretsBackend(Protocol):
     unchanged under the Protocol change.
     """
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str: ...
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret: ...
 
 
 def fetch_with_meta(
     backend: SecretsBackend,
     name: str,
     ctx: FetchContext | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[Secret, str | None]:
     """Return ``(value, note)`` for ``name``.
 
     Dispatch: if ``backend`` implements its own ``fetch_with_meta`` (bws
@@ -143,7 +145,7 @@ def fetch_with_meta(
         # bitwarden-sdk-backed backend has no type stubs for this method;
         # the cast keeps the helper's (str, str | None) contract at the
         # boundary rather than leaking Any to every caller.
-        result: tuple[str, str | None] = backend.fetch_with_meta(name, ctx)  # type: ignore[attr-defined]
+        result: tuple[Secret, str | None] = backend.fetch_with_meta(name, ctx)  # type: ignore[attr-defined]
         return result
     return backend.fetch(name, ctx), None
 

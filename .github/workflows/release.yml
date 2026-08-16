@@ -3,8 +3,8 @@ name: release
 # Triggers on `git push origin v0.4.0` (or any v* tag).
 # Uses PyPI's trusted-publisher OIDC flow — no API token to store.
 # Set up at https://pypi.org/manage/account/publishing/ once before the first
-# release: project name = agent-vault-proxy, owner = inflightsec,
-# repository = agent-vault-proxy, workflow = release.yml, env = pypi.
+# release: project name = kow, owner = inflightsec,
+# repository = kow, workflow = release.yml, env = pypi.
 
 on:
   push:
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/agent-vault-proxy/
+      url: https://pypi.org/project/keys-on-the-wire/
     permissions:
       # OIDC token for PyPI trusted publishing — no API token needed.
       id-token: write
@@ -142,7 +142,7 @@ jobs:
         # the upload, but the CDN that pip resolves against can take
         # 30-120s before the new version becomes visible to a fresh
         # client. Without this wait, the smoke racy-fails with "No
-        # matching distribution found for agent-vault-proxy==X.Y.Z".
+        # matching distribution found for keys-on-the-wire==X.Y.Z".
         # 120s covers the long tail; shorter is flakier.
         run: sleep 120
 
@@ -155,7 +155,7 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Smoking agent-vault-proxy==$VERSION from real PyPI"
+          echo "Smoking keys-on-the-wire==$VERSION from real PyPI"
 
       - name: Run PyPI smoke harness against real PyPI
         env:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Pre-publish wheel smoke test for agent-vault-proxy.
+# Pre-publish wheel smoke test for kow.
 #
 # Builds the wheel from the current tree (or uses the already-published
 # version on PyPI) INSIDE a clean python:3.12-slim container, with no
@@ -58,7 +58,7 @@ green()  { printf '\033[1;32m%s\033[0m\n' "$*"; }
 red()    { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
 
 if [ "$MODE" = "local" ]; then
-    green "[1/2] Building + smoke-testing wheel for agent-vault-proxy ${EXPECTED_VERSION}..."
+    green "[1/2] Building + smoke-testing wheel for kow ${EXPECTED_VERSION}..."
     green "      (single container: build → install → import → version → --help)"
 
     # The source tree is mounted read-only; the container builds and
@@ -132,7 +132,7 @@ print(\"entry point OK\")
 "
         '
 else
-    green "[1/2] Smoke-testing published agent-vault-proxy==${PYPI_VERSION} from PyPI..."
+    green "[1/2] Smoke-testing published keys-on-the-wire==${PYPI_VERSION} from PyPI..."
 
     docker run --rm \
         -e EXPECTED_VERSION="$EXPECTED_VERSION" \
@@ -141,7 +141,7 @@ else
         sh -eux -c '
             python -m venv /tmp/testvenv
             /tmp/testvenv/bin/pip install --quiet --no-cache-dir --only-binary :all: \
-                "agent-vault-proxy==${PYPI_VERSION}"
+                "keys-on-the-wire==${PYPI_VERSION}"
 
             /tmp/testvenv/bin/python -c "import kow; print(\"import OK\")"
 
@@ -163,5 +163,5 @@ if [ "$MODE" = "local" ]; then
     green "      Build + install + import + version + entry point all green."
     green "      Safe to tag + publish to PyPI."
 else
-    green "[2/2] ✓ Published wheel agent-vault-proxy==${PYPI_VERSION} smoke test passed."
+    green "[2/2] ✓ Published wheel keys-on-the-wire==${PYPI_VERSION} smoke test passed."
 fi

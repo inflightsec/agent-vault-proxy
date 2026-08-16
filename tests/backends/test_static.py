@@ -53,7 +53,7 @@ def test_warn_downgraded_to_info_when_safe(
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(path)))
     caplog.set_level(logging.INFO, logger="kow.backends.static")
 
-    assert backend.fetch("K") == "v"
+    assert backend.fetch("K").reveal() == "v"
 
     assert capsys.readouterr().err == ""
     assert any(
@@ -70,7 +70,7 @@ def test_warn_stays_on_stderr_when_unsafe(
     path = _write_secrets(tmp_path / "secrets.yaml", "secrets:\n  K: v\n", mode=0o600)
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(path)))
 
-    assert backend.fetch("K") == "v"
+    assert backend.fetch("K").reveal() == "v"
 
     assert "static secrets backend is in use" in capsys.readouterr().err
 

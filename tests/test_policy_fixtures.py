@@ -20,6 +20,7 @@ from kow.audit import AuditWriter
 from kow.backends import BackendUnavailableError, FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "policy"
 
@@ -31,10 +32,10 @@ class _StaticBackend:
         self._secrets = secrets
         self._fail = fail
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         if self._fail:
             raise BackendUnavailableError("fixture: simulated outage")
-        return self._secrets[name]
+        return Secret(self._secrets[name])
 
 
 def run_policy_fixture(fix: dict[str, Any], tmp_path: Path) -> dict[str, Any]:

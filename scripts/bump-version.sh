@@ -3,7 +3,7 @@
 # Bump every mechanical version reference in the repo from the current
 # pyproject.toml value to a new value, in a single command.
 #
-# Why this exists: agent-vault-proxy carries the version literal in
+# Why this exists: kow carries the version literal in
 # multiple files that all need to agree at release time. v0.4.2 shipped
 # with src/kow/__init__.py stuck at "0.4.1" because the
 # bumper only edited pyproject.toml. This script makes that class of
@@ -109,8 +109,8 @@ echo "  [strict] README.md                       keys-on-the-wire==$NEW"
 sed_inplace -E "s|git clone -b v$CURRENT|git clone -b v$NEW|g" README.md
 echo "  [strict] README.md                       git clone -b v$NEW"
 
-# 4. docker-compose.yml image: inflightsec/agent-vault-proxy:X.Y.Z
-sed_inplace -E "s|inflightsec/agent-vault-proxy:$CURRENT|inflightsec/agent-vault-proxy:$NEW|g" \
+# 4. docker-compose.yml image: inflightsec/keys-on-the-wire:X.Y.Z
+sed_inplace -E "s|inflightsec/keys-on-the-wire:$CURRENT|inflightsec/keys-on-the-wire:$NEW|g" \
     docker-compose.yml
 echo "  [strict] docker-compose.yml              image: ...:$NEW"
 

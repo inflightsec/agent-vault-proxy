@@ -21,6 +21,10 @@ from mitmproxy import http
 from kow._derived_token_cache import KeyInputs
 from kow.backends import BackendUnavailableError, SecretNotFoundError
 from kow.config import Oauth2ClientCredentialsInjector
+from kow.denials import (
+    OauthCcExchangeFailedError,
+    OauthCcSecretUnavailableError,
+)
 from kow.injectors._token_transport import TokenResult, post
 
 if TYPE_CHECKING:
@@ -30,11 +34,6 @@ if TYPE_CHECKING:
     from kow.policy import Decision
 
 _log = logging.getLogger("kow.injectors.oauth2_client_credentials")
-
-
-class _ExchangeFailedError(Exception):
-    def __init__(self, result: TokenResult) -> None:
-        self.result = result
 
 
 def exchange(
@@ -128,8 +127,8 @@ class Oauth2CcResolver:
             binding_name=secret_name,
             token_url=str(injector.token_url),
             scopes=injector.scopes,
-            client_id_value=client_id_value,
-            refresh_token_value=client_secret_value,
+            client_id_value=client_id_value.reveal(),
+            refresh_token_value=client_secret_value.reveal(),
         )
         cached = token_cache.get(cache_inputs)
         if cached is not None:
@@ -150,17 +149,17 @@ class Oauth2CcResolver:
         holder: list[TokenResult] = []
 
         def _fetch() -> tuple[str, float]:
-            result = exchange(injector, client_id_value, client_secret_value)
+            result = exchange(injector, client_id_value.reveal(), client_secret_value.reveal())
             holder.append(result)
             if result.outcome != "success":
-                raise _ExchangeFailedError(result)
+                raise OauthCcExchangeFailedError(result)
             assert result.token is not None
             assert result.expires_at is not None
             return result.token, result.expires_at
 
         try:
             token = token_cache.dedup_or_fetch(cache_inputs, _fetch)
-        except _ExchangeFailedError as exc:
+        except OauthCcExchangeFailedError as exc:
             result = exc.result
         else:
             if holder:  # only the leader that actually exchanged emits the audit
@@ -192,7 +191,7 @@ class Oauth2CcResolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: oauth2 client-credentials exchange failed\n",
+            OauthCcExchangeFailedError.client_message,
             {"Content-Type": "text/plain"},
         )
 
@@ -272,6 +271,6 @@ class Oauth2CcResolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: oauth2 client-credentials secret unavailable\n",
+            OauthCcSecretUnavailableError.client_message,
             {"Content-Type": "text/plain"},
         )

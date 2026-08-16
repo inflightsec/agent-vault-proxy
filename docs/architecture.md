@@ -87,21 +87,21 @@ The most important counter-intuitive choice is **G5 enforcement by omission**: r
               │ owns
               ▼
 ┌──────────────────────────────────────────┐
-│   agent-vault-proxy.service              │
+│   kow.service              │
 │   ─────────────────────────────────      │
-│   User=avp (fixed system user)           │
-│   Group=avp                              │
-│   HOME=/var/lib/agent-vault-proxy        │
+│   User=kow (fixed system user)           │
+│   Group=kow                              │
+│   HOME=/var/lib/kow        │
 │   python -m kow            │
 │     → mitmproxy in-process addon         │
 │     → BWS Python SDK + cache             │
 │   Listens: 127.0.0.1:14322               │
-│   Audit:   /var/log/agent-vault-proxy/   │
+│   Audit:   /var/log/kow/   │
 │            audit.jsonl (chattr +a)       │
 └──────────────────────────────────────────┘
               ▲
               │ HTTPS_PROXY=http://127.0.0.1:14322
-              │ NODE_EXTRA_CA_CERTS=/etc/agent-vault-proxy/ca.pem
+              │ NODE_EXTRA_CA_CERTS=/etc/kow/ca.pem
               │ NO_PROXY=localhost,127.0.0.1,::1,…
               │
 ┌──────────────────────────────────────────┐
@@ -112,7 +112,7 @@ The most important counter-intuitive choice is **G5 enforcement by omission**: r
 
 ### 4.2 Bindings configuration
 
-YAML at `/etc/agent-vault-proxy/bindings.yaml`. Re-read on service restart; file-mtime auto-reload is not implemented (planned for a later release). See [`bindings.example.yaml`](../bindings.example.yaml) for the full grammar; abbreviated:
+YAML at `/etc/kow/bindings.yaml`. Re-read on service restart; file-mtime auto-reload is not implemented (planned for a later release). See [`bindings.example.yaml`](../bindings.example.yaml) for the full grammar; abbreviated:
 
 ```yaml
 version: 1
@@ -145,7 +145,7 @@ cache:
   jitter_seconds: 30
 
 audit:
-  path: /var/log/agent-vault-proxy/audit.jsonl
+  path: /var/log/kow/audit.jsonl
   fail_on_unwritable: true
 
 backend:
@@ -153,8 +153,8 @@ backend:
   config:
     type: bws
     organization_id: "<bws-org-uuid>"
-    access_token_path: /etc/agent-vault-proxy/bws-token
-    state_path: /var/lib/agent-vault-proxy/bws-state.json
+    access_token_path: /etc/kow/bws-token
+    state_path: /var/lib/kow/bws-state.json
     # EU region: explicit URLs
     # api_url: https://api.bitwarden.eu
     # identity_url: https://identity.bitwarden.eu
@@ -230,7 +230,7 @@ In `notes`/`both` mode, placeholders are not hand-authored — they are derived 
 avp-PLACEHOLDER-<base32(HMAC-SHA256(install_salt, secret_name))[:21]>
 ```
 
-The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-owner) is generated once at `kow setup` and stored at `install_salt_path` (default: `$AVP_CONFDIR/install-salt`, else `install-salt` under the daemon's `$HOME` — the `avp`-writable confdir, e.g. `/var/lib/agent-vault-proxy/`). It makes placeholders non-precomputable from the secret name alone. The same derivation runs in `kow env` (which writes the agent's `export NAME='<placeholder>'` file) and in the daemon, so both sides agree without a second config. A derived-placeholder **collision** across the secret set is a hard startup failure listing the conflicting names.
+The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-owner) is generated once at `kow setup` and stored at `install_salt_path` (default: `$AVP_CONFDIR/install-salt`, else `install-salt` under the daemon's `$HOME` — the `avp`-writable confdir, e.g. `/var/lib/kow/`). It makes placeholders non-precomputable from the secret name alone. The same derivation runs in `kow env` (which writes the agent's `export NAME='<placeholder>'` file) and in the daemon, so both sides agree without a second config. A derived-placeholder **collision** across the secret set is a hard startup failure listing the conflicting names.
 
 **Notes-binding marker (`# kow-binding`, ADR-0025):** a note/annotation is parsed as a binding **only when its first non-blank line is exactly `# kow-binding`**. The marker line is stripped and the remainder parses under the normal grammar (bare hostname, or the flat mapping). An unmarked note is a human description — `NoBinding`: it cannot bind, cannot be malformed, and cannot exclude the same secret's file bindings. An unmarked note that *looks* host-shaped (bare FQDN, or a `host:`/`hosts:` line) logs a load-time warning naming the secret and the missing marker. A **marked** note with an empty or unparsable body is `InvalidBinding` — the marker is explicit intent, so errors are loud, fail-closed, and audited. The contract is uniform across sources: BWS notes and the GSM `kow-binding` annotation alike.
 
@@ -342,7 +342,7 @@ For multi-injector secrets (`inject.type: multi`), each substituted leaf emits i
 ### 4.5 BWS integration
 
 - Dedicated BWS machine account, scoped to one Project containing only the secrets in `bindings.yaml`.
-- Token at `/etc/agent-vault-proxy/bws-token`, mode `0440 root:avp` - root owns, `avp` group reads.
+- Token at `/etc/kow/bws-token`, mode `0440 root:avp` - root owns, `avp` group reads.
 - `bitwarden-sdk` Python bindings (in-process), not a shell-out.
 - EU and US regions supported via explicit `api_url` / `identity_url`.
 - Cache: in-memory `OrderedDict` with LRU eviction, TTL 300 s ± 30 s jitter per entry (jitter clamped to `ttl/2`). Capacity bounded by `cache.max_entries` (default 100). A backend failure is not cached (`BackendUnavailableError`): the fetch raises and the request fails closed — the placeholder forwards verbatim, no stale value is served.
@@ -357,10 +357,10 @@ export HTTPS_PROXY="http://127.0.0.1:14322"
 export HTTP_PROXY="http://127.0.0.1:14322"
 
 # Trust the proxy CA — multiple env vars cover different client libraries
-export NODE_EXTRA_CA_CERTS="/etc/agent-vault-proxy/ca.pem"
-export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
-export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
-export CURL_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
+export NODE_EXTRA_CA_CERTS="/etc/kow/ca.pem"
+export SSL_CERT_FILE="/etc/kow/ca.pem"
+export REQUESTS_CA_BUNDLE="/etc/kow/ca.pem"
+export CURL_CA_BUNDLE="/etc/kow/ca.pem"
 
 # Bypass for loopback and any internal mesh (Tailscale, VPN, LAN peers).
 # Without this, every local-service call gets sent to the proxy, denied
@@ -378,7 +378,7 @@ export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 
 | Item | Why |
 |---|---|
-| `User=avp Group=avp`; bws-token `0440 root:avp` | Containment if proxy is exploited |
+| `User=kow Group=kow`; bws-token `0440 root:avp` | Containment if proxy is exploited |
 | `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, `ProtectKernelLogs`, `ProtectHostname`, `ProtectClock` | Standard systemd sandboxing |
 | `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `NoNewPrivileges=yes` | Reduce attack surface |
 | `SystemCallFilter=@system-service ~@privileged ~@resources ~@mount` | Reduce syscalls available |
@@ -497,7 +497,7 @@ expected decision against this verdict.
 - **Two test surfaces, one engine:** `pytest` runs the fixtures through the live addon
   (`test_policy_fixtures.py`), and a parity test (`test_policy_decide.py`) runs every fixture
   through BOTH the addon and `decide()` directly, asserting the verdicts agree. An operator-facing
-  `avp test` / `avp validate` CLI over the same engine is planned, not yet shipped.
+  `kow test` / `kow validate` CLI over the same engine is planned, not yet shipped.
 - **Test-mode invariants:** static backend only (BWS backend uninstantiable — no real secret in the
   process), clock pinned, jitter off, `ts`/`request_id` excluded from the compared record.
 - **Scope:** fixtures + `decide()` own policy correctness; transport + `inject_decision` fsync ordering
@@ -508,9 +508,9 @@ expected decision against this verdict.
 
 Three independent dimensions:
 
-1. **Stop the service.** `sudo systemctl stop keys-on-the-wire`. With env-var-only routing, the agent's outbound TLS will fail (connection refused on loopback). Restart to recover.
+1. **Stop the service.** `sudo systemctl stop kow`. With env-var-only routing, the agent's outbound TLS will fail (connection refused on loopback). Restart to recover.
 2. **Unset proxy env.** Clear `HTTPS_PROXY` / `NO_PROXY` / CA env vars in the calling shell. The agent reverts to direct egress (subject to whatever the host firewall says).
-3. **Full teardown.** Remove the systemd unit, `/opt/agent-vault-proxy`, `/etc/agent-vault-proxy`. Preserve `/var/log/agent-vault-proxy/audit.jsonl` for forensics.
+3. **Full teardown.** Remove the systemd unit, `/opt/kow`, `/etc/kow`. Preserve `/var/log/kow/audit.jsonl` for forensics.
 
 Because there's no kernel egress lock to "leave on," the rollback model is simple.
 
@@ -552,11 +552,11 @@ Originally HIGH. Closed by per-binding method/path scope. Bindings may declare o
 
 Things that turned out non-obvious in real deploys. Recorded for whoever picks this up next.
 
-1. **Fixed system user beats `DynamicUser=yes`.** Dynamic UIDs can't read a fixed-path `0440 root` token file without `LoadCredential=`, which would require addon-side code changes. `User=avp` is simpler.
+1. **Fixed system user beats `DynamicUser=yes`.** Dynamic UIDs can't read a fixed-path `0440 root` token file without `LoadCredential=`, which would require addon-side code changes. `User=kow` is simpler.
 
 2. **`MemoryDenyWriteExecute=yes` breaks cffi.** Both `mitmproxy` and `bitwarden-sdk` use cffi for callback trampolines; cffi needs W+X memory. Symptom: `MemoryError: Cannot allocate write+execute memory for ffi.callback()` in the journal. Remove the directive.
 
-3. **`HOME` matters more than you'd think.** mitmproxy generates its CA at `$HOME/.mitmproxy/mitmproxy-ca-cert.pem` on first proxied request. With `ProtectHome=yes` and no explicit `Environment=HOME=`, the daemon has nowhere writable to put the CA. Set `Environment=HOME=/var/lib/agent-vault-proxy` so the CA lands in a `ReadWritePaths` location.
+3. **`HOME` matters more than you'd think.** mitmproxy generates its CA at `$HOME/.mitmproxy/mitmproxy-ca-cert.pem` on first proxied request. With `ProtectHome=yes` and no explicit `Environment=HOME=`, the daemon has nowhere writable to put the CA. Set `Environment=HOME=/var/lib/kow` so the CA lands in a `ReadWritePaths` location.
 
 4. **EU vs US Bitwarden regions need explicit URLs.** Default SDK behavior targets `.com`; EU users get auth failures with no clear error. Add `api_url` + `identity_url` overrides in `bindings.yaml`.
 

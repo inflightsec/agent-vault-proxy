@@ -20,6 +20,7 @@ from kow.backends import (
 )
 from kow.backends.gsm import GsmBackend, GsmConfig, _is_service_account_key
 from kow.runtime_bindings import resolve_runtime_bindings
+from kow.secret import Secret
 from tests.backends.test_protocol_contract import ProtocolContract
 
 
@@ -103,7 +104,7 @@ def test_self_check_deny_requires_prefix() -> None:
 
 def test_fetch_returns_decoded_value() -> None:
     b = _backend(_router([(":access", (200, _access_body("sk-secret-123")))]))
-    assert b.fetch("OPENAI_API_KEY") == "sk-secret-123"
+    assert b.fetch("OPENAI_API_KEY").reveal() == "sk-secret-123"
 
 
 def test_fetch_missing_secret_raises_not_found() -> None:
@@ -161,7 +162,7 @@ def test_fetch_with_meta_serves_annotation_from_list_cache() -> None:
     )
     b.list_secret_names()  # populates the annotation cache
     value, note = b.fetch_with_meta("avp-OPENAI")
-    assert value == "sk-1"
+    assert value.reveal() == "sk-1"
     assert note == "api.openai.com"
 
 
@@ -176,7 +177,7 @@ def test_fetch_with_meta_falls_back_to_metadata_get() -> None:
         )
     )
     value, note = b.fetch_with_meta("SOME_KEY")
-    assert value == "sk-2"
+    assert value.reveal() == "sk-2"
     assert note == "api.internal.acme.com"
 
 
@@ -229,13 +230,13 @@ def test_self_check_passes_when_listing_is_denied() -> None:
         secret_prefix="avp-",
         self_check="deny",
     )
-    assert b.fetch("avp-x") == "v"
+    assert b.fetch("avp-x").reveal() == "v"
 
 
 def test_self_check_off_skips_probe() -> None:
     # self_check=off -> no list on first fetch even without a list route.
     b = _backend(_router([(":access", (200, _access_body("v")))]), self_check="off")
-    assert b.fetch("anything") == "v"
+    assert b.fetch("anything").reveal() == "v"
 
 
 def test_self_check_deny_fails_closed_on_transient_list_error() -> None:
@@ -256,7 +257,7 @@ def test_self_check_warn_continues_on_transient() -> None:
         secret_prefix="avp-",
         self_check="warn",
     )
-    assert b.fetch("avp-x") == "v"
+    assert b.fetch("avp-x").reveal() == "v"
 
 
 def test_list_secret_notes_reads_annotations_without_fetching_values() -> None:
@@ -364,7 +365,7 @@ def test_malformed_annotation_does_not_crash() -> None:
         _router([(":access", (200, _access_body("v"))), ("/secrets/", (200, {"annotations": "x"}))])
     )
     value, note = b.fetch_with_meta("SOME_KEY")
-    assert value == "v"
+    assert value.reveal() == "v"
     assert note is None
 
 
@@ -426,7 +427,7 @@ def test_self_check_passes_when_access_probe_shows_scoped() -> None:
         secret_prefix="avp-",
         self_check="deny",
     )
-    assert b.fetch("avp-x") == "v"
+    assert b.fetch("avp-x").reveal() == "v"
 
 
 # ---------------------------------------------------------------------------
@@ -443,10 +444,10 @@ class _FakeListableBackend:
     def __init__(self, data: dict[str, tuple[str, str | None]]) -> None:
         self._data = data  # name -> (value, note)
 
-    def fetch(self, name: str, ctx: Any = None) -> str:
-        return self._data[name][0]
+    def fetch(self, name: str, ctx: Any = None) -> Secret:
+        return Secret(self._data[name][0])
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         return self._data[name]
 
     def list_secret_names(self) -> list[str]:
@@ -521,7 +522,7 @@ def test_self_check_write_probe_inconclusive_does_not_block() -> None:
         secret_prefix="avp-",
         self_check="deny",
     )
-    assert b.fetch("avp-x") == "v"
+    assert b.fetch("avp-x").reveal() == "v"
 
 
 def test_diagnose_flags_project_write_access() -> None:

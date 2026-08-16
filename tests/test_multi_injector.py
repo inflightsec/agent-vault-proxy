@@ -44,6 +44,7 @@ from kow.config import (
     iter_leaf_injectors,
     load_config,
 )
+from kow.secret import Secret
 
 PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"
 REAL = "tok-real-XYZ"
@@ -54,8 +55,8 @@ class _FakeBackend:
     def __init__(self, per_name: dict[str, str]) -> None:
         self._per_name = per_name
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return self._per_name[name]
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(self._per_name[name])
 
 
 def _make_client(per_name: dict[str, str]) -> CachingSecretsClient:

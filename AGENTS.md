@@ -6,7 +6,7 @@ Human contributors: [`CONTRIBUTING.md`](./CONTRIBUTING.md) is the right doc.
 
 ## What this project is
 
-`agent-vault-proxy` is a credential broker - a loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and substitutes them into outbound requests, so the calling agent's address space never contains the real secret bytes.
+`kow` is a credential broker - a loopback HTTPS proxy that fetches API credentials from Bitwarden Secrets Manager just-in-time and substitutes them into outbound requests, so the calling agent's address space never contains the real secret bytes.
 
 Read [`docs/architecture.md`](./docs/architecture.md) before making non-trivial changes. The whole design hangs on nine binary invariants (G1–G9); changes that affect those need explicit human discussion, not just a passing test.
 

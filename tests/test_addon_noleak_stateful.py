@@ -33,6 +33,7 @@ from kow.audit import AuditWriter
 from kow.backends import FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 # Distinctive so a substring search in headers/audit is unambiguous.
 REAL = "sk-REAL-DO-NOT-LEAK-0xDEADBEEF"
@@ -84,8 +85,8 @@ def _authorized(variant: str, host: str, method: str, path: str) -> bool:
 class _FakeBackend:
     """Constant-value backend; first I/O is fetch (Protocol contract)."""
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return REAL
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(REAL)
 
 
 class NoLeakMachine(RuleBasedStateMachine):

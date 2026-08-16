@@ -430,7 +430,7 @@ class BackendBlock(BaseModel):
         A typo under ``backend.config`` (e.g., ``organization_iddd`` for
         ``organization_id``) would otherwise only surface at first secret
         fetch, when the addon calls ``build_backend()``. Validating at
-        config-load makes ``avp bindings diff`` and ``--check`` honest about
+        config-load makes ``kow bindings diff`` and ``--check`` honest about
         backend-block correctness instead of deferring it to runtime.
         """
         from kow.backends import BACKEND_REGISTRY, _normalize_name

@@ -31,12 +31,21 @@ from kow.config import (
     SecretSpec,
     iter_leaf_injectors,
 )
+from kow.denials import (
+    AmbiguousPlaceholderError,
+    CompositeFetchFailedError,
+    CompositeRenderFailedError,
+    CompositeUnavailableError,
+    SecretFetchFailedError,
+    SecretUnavailableError,
+)
 from kow.injectors.body import _build_body_replacer
 from kow.injectors.github_app import GithubAppResolver
 from kow.injectors.oauth2_client_credentials import Oauth2CcResolver
 from kow.injectors.oauth2_refresh import OauthResolver
 from kow.matching import host_matches_pattern
 from kow.policy import matched_binding
+from kow.secret import Secret
 from kow.template import TemplateRenderError
 
 if TYPE_CHECKING:
@@ -92,7 +101,7 @@ class CompositeResolver:
                 request_id=request_id,
                 reason=f"composite_unavailable:{type(e).__name__}",
                 secret_name=secret_name,
-                message=b"agent-vault-proxy: composite secret unavailable\n",
+                message=CompositeUnavailableError.client_message,
                 target_host=target_host,
                 extra={"compose": list(secret_spec.compose)},
             )
@@ -112,7 +121,7 @@ class CompositeResolver:
                 request_id=request_id,
                 reason=f"composite_fetch_error:{type(e).__name__}",
                 secret_name=secret_name,
-                message=b"agent-vault-proxy: composite secret fetch failed\n",
+                message=CompositeFetchFailedError.client_message,
                 target_host=target_host,
                 extra={"compose": list(secret_spec.compose)},
             )
@@ -124,7 +133,11 @@ class CompositeResolver:
         self._maybe_warn_same_uuid(secret_name, values)
 
         try:
-            rendered = secret_spec.compiled_template.render(values)
+            # Single plaintext boundary for the composite path: the template
+            # needs the bytes, nothing upstream of here does.
+            rendered = secret_spec.compiled_template.render(
+                {k: v.reveal() for k, v in values.items()}
+            )
         except TemplateRenderError as exc:
             # Audit reason stays generic ("render_failed") so the agent
             # boundary can't infer compose-internal details.
@@ -155,7 +168,7 @@ class CompositeResolver:
                 request_id=request_id,
                 reason="render_failed",
                 secret_name=secret_name,
-                message=b"agent-vault-proxy: composite render failed\n",
+                message=CompositeRenderFailedError.client_message,
                 target_host=target_host,
                 extra={"compose": list(secret_spec.compose)},
             )
@@ -166,7 +179,7 @@ class CompositeResolver:
     def _maybe_warn_same_uuid(
         self,
         secret_name: str,
-        values: dict[str, str],
+        values: dict[str, Secret],
     ) -> None:
         """One-shot warning if two compose entries resolve to the same
         value. Suggests an operator typo (two names pointing at one BWS
@@ -395,7 +408,7 @@ class HeaderInjectionHandler:
             )
             flow.response = http.Response.make(
                 400,
-                b"agent-vault-proxy: ambiguous placeholder match\n",
+                AmbiguousPlaceholderError.client_message,
                 {"Content-Type": "text/plain"},
             )
             return True
@@ -479,7 +492,7 @@ class HeaderInjectionHandler:
                 request_id=request_id,
                 reason=f"secret_unavailable:{type(e).__name__}",
                 secret_name=secret_name,
-                message=b"agent-vault-proxy: secret unavailable\n",
+                message=SecretUnavailableError.client_message,
                 target_host=target_host,
             )
             return None
@@ -501,7 +514,7 @@ class HeaderInjectionHandler:
                 request_id=request_id,
                 reason=f"secret_fetch_error:{type(e).__name__}",
                 secret_name=secret_name,
-                message=b"agent-vault-proxy: secret fetch failed\n",
+                message=SecretFetchFailedError.client_message,
                 target_host=target_host,
             )
             return None
@@ -509,7 +522,7 @@ class HeaderInjectionHandler:
         # form {<SECRET_NAME>} replaced with the resolved bytes via
         # .replace(), not .format() — no attribute-access traversal).
         return header_injector.render_value(
-            real_secret=real_secret,
+            real_secret=real_secret.reveal(),
             secret_name=secret_name,
         )
 

@@ -39,7 +39,7 @@ def main() -> int:
 
     for secret_name in config.secrets:
         try:
-            value = client.get(secret_name)
+            value = client.get(secret_name).reveal()
         except Exception as e:
             print(f"FAIL [{secret_name}]: {type(e).__name__}: {e}")
             return 1

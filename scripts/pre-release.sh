@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Release-time gate for agent-vault-proxy.
+# Release-time gate for kow.
 #
 # Run before any `git tag v0.x.y && git push --tags`. Mirrors what CI
 # runs but in one local pass, plus a few release-specific checks that

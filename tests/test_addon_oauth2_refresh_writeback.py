@@ -149,7 +149,7 @@ def test_rotation_flushes_vault_cache_for_refresh_token(tmp_path: Path) -> None:
     # right after write-back MUST round-trip to the backend (cache
     # entry invalidated), not return a cached value.
     fetches_before_re_read = len(backend.fetches)
-    value = client.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+    value = client.get("GOOGLE_OAUTH_REFRESH_TOKEN").reveal()
     assert value == "rtok-NEW"  # backend now holds the rotated value
     assert len(backend.fetches) == fetches_before_re_read + 1
 

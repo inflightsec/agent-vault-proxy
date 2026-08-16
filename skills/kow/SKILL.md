@@ -78,7 +78,7 @@ salt; discover with the flagless one-liner on the kow host:
 
 ```bash
 sudo kow env --print | grep <SECRET_NAME>
-# (source installs without avp on PATH: /opt/agent-vault-proxy/.venv/bin/kow)
+# (source installs without avp on PATH: /opt/kow/.venv/bin/kow)
 ```
 
 `kow env` prefers the stored placeholder wherever a note pins one, so its output always matches

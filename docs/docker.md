@@ -38,7 +38,7 @@ mkdir -p secrets
 bash -c '( umask 077 && read -rsp "BWS access token: " TOKEN && printf "%s" "$TOKEN" > secrets/bws-token && echo )'
 
 # Copy the example config and edit. bindings.example.yaml already references
-# /etc/agent-vault-proxy/bws-token and /var/log/agent-vault-proxy/audit.jsonl,
+# /etc/kow/bws-token and /var/log/kow/audit.jsonl,
 # which match the container's bind-mount and named volume — no path edits needed.
 cp bindings.example.yaml bindings.yaml
 $EDITOR bindings.yaml
@@ -66,29 +66,29 @@ docker compose ps
 docker compose logs --tail 50 avp
 ```
 
-First start takes a few seconds for mitmproxy to initialize. The named volume `agent-vault-proxy-state` is initialized empty; mitmproxy will write its CA there on the first proxied request.
+First start takes a few seconds for mitmproxy to initialize. The named volume `kow-state` is initialized empty; mitmproxy will write its CA there on the first proxied request.
 
 ### 4. Apply append-only to the audit log
 
-The audit log lives inside `agent-vault-proxy-logs`. To get the same `chattr +a` defense the bare-metal install applies, run a short-lived privileged container that holds `LINUX_IMMUTABLE` (the main proxy does not - `cap_drop: [ALL]`):
+The audit log lives inside `kow-logs`. To get the same `chattr +a` defense the bare-metal install applies, run a short-lived privileged container that holds `LINUX_IMMUTABLE` (the main proxy does not - `cap_drop: [ALL]`):
 
 ```bash
 docker run --rm \
   --cap-add LINUX_IMMUTABLE \
   --user 0:0 \
   --network none \
-  -v agent-vault-proxy-logs:/var/log/agent-vault-proxy \
+  -v kow-logs:/var/log/kow \
   debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb \
-  bash -c "touch /var/log/agent-vault-proxy/audit.jsonl \
-        && chown 65532:65532 /var/log/agent-vault-proxy/audit.jsonl \
-        && chmod 0640        /var/log/agent-vault-proxy/audit.jsonl \
-        && chattr +a         /var/log/agent-vault-proxy/audit.jsonl \
-        && lsattr            /var/log/agent-vault-proxy/audit.jsonl"
+  bash -c "touch /var/log/kow/audit.jsonl \
+        && chown 65532:65532 /var/log/kow/audit.jsonl \
+        && chmod 0640        /var/log/kow/audit.jsonl \
+        && chattr +a         /var/log/kow/audit.jsonl \
+        && lsattr            /var/log/kow/audit.jsonl"
 ```
 
 Pin the init container's digest for the same supply-chain reasons as the proxy image. Update the `sha256:...` above periodically by checking `docker manifest inspect debian:bookworm-slim`.
 
-This is a one-shot per volume - re-run after `docker volume rm agent-vault-proxy-logs`. Without it, the audit log is still `O_APPEND`-only from the proxy's perspective; the `chattr +a` adds filesystem-level enforcement against an attacker with shell access inside the container. On filesystems that don't support extended attributes (very rare, Docker Desktop's Linux VM does), `chattr` is a no-op.
+This is a one-shot per volume - re-run after `docker volume rm kow-logs`. Without it, the audit log is still `O_APPEND`-only from the proxy's perspective; the `chattr +a` adds filesystem-level enforcement against an attacker with shell access inside the container. On filesystems that don't support extended attributes (very rare, Docker Desktop's Linux VM does), `chattr` is a no-op.
 
 **Tamper window:** between first `docker compose up` and the init container completing, the audit log has no filesystem-level append-only enforcement. Run the init container immediately after the first `up`, ideally before the proxy serves real traffic.
 
@@ -101,8 +101,8 @@ mitmproxy generates its own CA on the first proxied request. Trigger that once, 
 curl -x http://127.0.0.1:14322 -sS https://example.com -o /dev/null || true
 
 # Copy the PUBLIC CA cert (-ca-cert.pem) to the host.
-docker cp agent-vault-proxy:/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem ca.pem
-sudo install -m 0644 -o root -g root ca.pem /etc/agent-vault-proxy/ca.pem
+docker cp kow:/var/lib/kow/.mitmproxy/mitmproxy-ca-cert.pem ca.pem
+sudo install -m 0644 -o root -g root ca.pem /etc/kow/ca.pem
 rm ca.pem
 ```
 
@@ -136,7 +136,7 @@ You should see `proxy_restart` in the audit lifecycle and either NO preflight ba
 docker compose run --rm -e BWS_ACCESS_TOKEN=dummy-trigger-the-warning avp \
     python -c "from kow._preflight import emit_preflight; \
                from kow.config import load_config; \
-               emit_preflight(load_config('/etc/agent-vault-proxy/bindings.yaml'))"
+               emit_preflight(load_config('/etc/kow/bindings.yaml'))"
 ```
 
 Expected output: a banner like `INSECURE: BWS_ACCESS_TOKEN is set as an environment variable inside a container...`. If you don't see it, the preflight isn't running: check that your image actually contains `kow/_preflight.py`.
@@ -147,8 +147,8 @@ Expected output: a banner like `INSECURE: BWS_ACCESS_TOKEN is set as an environm
 # Pick a real binding from your bindings.yaml. Replace the placeholder
 # string with the EXACT value of `placeholder:` for that secret.
 HTTPS_PROXY=http://127.0.0.1:14322 \
-  SSL_CERT_FILE=/etc/agent-vault-proxy/ca.pem \
-  CURL_CA_BUNDLE=/etc/agent-vault-proxy/ca.pem \
+  SSL_CERT_FILE=/etc/kow/ca.pem \
+  CURL_CA_BUNDLE=/etc/kow/ca.pem \
   curl -H "Authorization: Bearer sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH" \
        https://api.anthropic.com/v1/messages -d '{}'
 ```
@@ -158,7 +158,7 @@ If substitution worked, you get the upstream's normal response (likely a `400 in
 Cross-check by tailing the audit log:
 
 ```bash
-docker compose exec avp tail -3 /var/log/agent-vault-proxy/audit.jsonl
+docker compose exec avp tail -3 /var/log/kow/audit.jsonl
 ```
 
 You should see an `inject_decision: allowed` event matching your request.
@@ -167,10 +167,10 @@ You should see an `inject_decision: allowed` event matching your request.
 
 ```bash
 docker compose down                    # stop + remove container
-docker volume rm agent-vault-proxy-state agent-vault-proxy-logs   # delete CA + audit log
+docker volume rm kow-state kow-logs   # delete CA + audit log
 ```
 
-⚠️  Removing `agent-vault-proxy-state` wipes the mitmproxy CA: every caller that trusted the old `ca.pem` will get TLS errors on next start until you re-extract the new one (step 5). Removing `agent-vault-proxy-logs` destroys the audit history: back it up first if you need it for forensics.
+⚠️  Removing `kow-state` wipes the mitmproxy CA: every caller that trusted the old `ca.pem` will get TLS errors on next start until you re-extract the new one (step 5). Removing `kow-logs` destroys the audit history: back it up first if you need it for forensics.
 
 ---
 
@@ -179,8 +179,8 @@ docker volume rm agent-vault-proxy-state agent-vault-proxy-logs   # delete CA + 
 **The proxy's whole isolation claim assumes the AI agent process cannot read the BWS token or the mitmproxy CA private key.** Under Docker, that holds only if the agent's host UID does **NOT** have access to the docker daemon. If the agent's UID is in the `docker` group, or can reach the docker socket, the agent can:
 
 ```bash
-docker exec agent-vault-proxy cat /etc/agent-vault-proxy/bws-token
-docker cp agent-vault-proxy:/var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca.pem ./ca-key.pem
+docker exec kow cat /etc/kow/bws-token
+docker cp kow:/var/lib/kow/.mitmproxy/mitmproxy-ca.pem ./ca-key.pem
 ```
 
 …and the proxy provides **zero** isolation from the agent. Docker group membership is equivalent to root on the host.
@@ -215,7 +215,7 @@ The compose file declares a dedicated `avp-net` bridge specifically so no other 
 | No privilege escalation | `security_opt: no-new-privileges:true` |
 | Default seccomp profile | applied implicitly, not overridden |
 | Host-side port binding loopback-only | `127.0.0.1:14322:14322` (NOT `0.0.0.0`) |
-| Isolated single-tenant network | dedicated `agent-vault-proxy-net` bridge |
+| Isolated single-tenant network | dedicated `kow-net` bridge |
 | Resource bounds (DoS / fork-bomb / runaway) | `pids_limit: 256`, `mem_limit: 512m`, `cpus: 1.0`, no swap |
 | BWS token never visible in env / `docker inspect` | bind-mount as file, never `environment:` |
 | Append-only audit log | named volume + manual `chattr +a` init (see §4) |
@@ -234,7 +234,7 @@ vs the bare-metal systemd install: systemd's `SystemCallFilter=@system-service` 
 | Not done | Why |
 |---|---|
 | **Egress restriction** | The proxy MUST forward to arbitrary upstream APIs. The binding-scope check in `bindings.yaml` is what controls which destinations get the real secret vs the placeholder; Docker-level egress controls would either be no-ops or break the proxy. |
-| **Image signature verification** | The image isn't published to a registry yet. Planned: cosign-signed images via `cosign verify ghcr.io/inflightsec/agent-vault-proxy@<digest>`. For now, build locally from the pinned-base Dockerfile. |
+| **Image signature verification** | The image isn't published to a registry yet. Planned: cosign-signed images via `cosign verify ghcr.io/inflightsec/keys-on-the-wire@<digest>`. For now, build locally from the pinned-base Dockerfile. |
 | **SBOM at build time** | Planned (syft / CycloneDX in `release.yml`). |
 | **Auto-applied `chattr +a`** | The proxy can't apply it itself (no `LINUX_IMMUTABLE`). Auto-init via depends_on/init container is being evaluated; for now it's a documented manual step. |
 | **Hash-pinned pip install** | **Landed in v0.4.1.** The Dockerfile now installs runtime deps from `requirements.lock` with `--require-hashes --only-binary :all:`, then installs the project wheel with `--no-deps`. Matches the CI install posture. |
@@ -253,7 +253,7 @@ These are residual risks the Docker hardening does NOT eliminate. Decide per hos
 
 3. **Initial image pull queries Docker Hub.** The `python:3.12-slim-bookworm@sha256:...` pull is one outbound trip to docker.io. The sha256 pin guarantees you get the same bits regardless, but the request itself is unavoidable.
 
-4. **CA private key in named volume.** Anyone with `docker exec` access, or read access to the named volume's host backing path (`/var/lib/docker/volumes/agent-vault-proxy-state/_data` on Linux), can read the key. See #2 above.
+4. **CA private key in named volume.** Anyone with `docker exec` access, or read access to the named volume's host backing path (`/var/lib/docker/volumes/kow-state/_data` on Linux), can read the key. See #2 above.
 
 5. **`docker exec --user 0` bypasses `USER` and `no-new-privileges`.** The `--user` flag on `docker exec` is not constrained by the image's USER or the no-new-privileges security_opt. Only grant `docker exec` access to operators trusted to root the host.
 
@@ -292,7 +292,7 @@ You haven't run step 1 (`cp bindings.example.yaml bindings.yaml`). The compose b
 You haven't created `./secrets/bws-token`. Re-run step 1's `read -rs` block.
 
 **Container starts, logs show `BackendUnavailableError`:**
-Either the BWS token is wrong, or `bindings.yaml`'s `backend.config.access_token_path` doesn't point at `/etc/agent-vault-proxy/bws-token` (the in-container path matching the bind-mount). `bindings.example.yaml` already has the correct path.
+Either the BWS token is wrong, or `bindings.yaml`'s `backend.config.access_token_path` doesn't point at `/etc/kow/bws-token` (the in-container path matching the bind-mount). `bindings.example.yaml` already has the correct path.
 
 **Healthcheck fails with no useful error:**
 `docker compose logs avp` shows mitmproxy's startup output. Most common: YAML syntax error in `bindings.yaml`, or a binding that references a secret name BWS doesn't have.

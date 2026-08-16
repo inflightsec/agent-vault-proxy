@@ -7,7 +7,7 @@ before printing it**, so it can only ever emit a binding the daemon will
 accept — the mandatory ``# avp-binding`` marker present, the ``{secret}`` token
 present, a valid host.
 
-This is the code-before-prompts backbone the ``avp`` skill wraps: the
+This is the code-before-prompts backbone the ``kow`` skill wraps: the
 security-critical note is produced by code, not authored free-hand by an LLM.
 Two real outages came from hand-authored notes — a missing marker (2026-07-18,
 silent fleet un-brokering) and a host-shaped description mistaken for a host —
@@ -71,7 +71,7 @@ def _build_note(
 def _gsm_command(name: str, note: str) -> str:
     """Render the gcloud annotation-update command, printf-embedding the note so
     the multi-line YAML survives as a single shell argument (matches the
-    avp skill's GSM example)."""
+    kow skill's GSM example)."""
     embedded = note.rstrip("\n").replace('"', '\\"').replace("\n", "\\n")
     return (
         f"gcloud secrets update {name} --update-annotations=\"kow-binding=$(printf '{embedded}')\""

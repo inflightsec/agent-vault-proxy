@@ -146,7 +146,7 @@ def test_version_stage_rejects_awspending() -> None:
 
 def test_fetch_returns_secret_string() -> None:
     b = _backend(_router({_GET: (200, {"SecretString": "sk-secret-123"})}))
-    assert b.fetch("avp/OPENAI_API_KEY") == "sk-secret-123"
+    assert b.fetch("avp/OPENAI_API_KEY").reveal() == "sk-secret-123"
 
 
 def test_fetch_missing_raises_not_found() -> None:
@@ -201,7 +201,7 @@ def test_request_is_sigv4_signed_with_target_and_content_hash() -> None:
         return (200, {"SecretString": "v"})
 
     b = _backend(http)
-    assert b.fetch("avp/K") == "v"
+    assert b.fetch("avp/K").reveal() == "v"
     auth = seen["Authorization"]
     assert auth.startswith("AWS4-HMAC-SHA256 ")
     assert "/us-east-1/secretsmanager/aws4_request" in auth
@@ -309,7 +309,7 @@ def test_fetch_with_meta_returns_value_and_note_via_describe() -> None:
     }
     b = _backend(_router(routes), secret_prefix="avp/")
     value, note = b.fetch_with_meta("avp/OPENAI")
-    assert value == "sk-x"
+    assert value.reveal() == "sk-x"
     assert note == "api.openai.com"
 
 
@@ -328,7 +328,7 @@ def test_self_check_deny_refuses_when_can_list_outside_prefix() -> None:
 def test_self_check_deny_passes_when_scoped() -> None:
     routes = {_LIST: (200, {"SecretList": [{"Name": "avp/A"}]}), _GET: (200, {"SecretString": "v"})}
     b = _backend(_router(routes), secret_prefix="avp/", self_check="deny")
-    assert b.fetch("avp/A") == "v"
+    assert b.fetch("avp/A").reveal() == "v"
 
 
 def test_self_check_deny_passes_when_list_access_denied_400() -> None:
@@ -341,7 +341,7 @@ def test_self_check_deny_passes_when_list_access_denied_400() -> None:
         _GET: (200, {"SecretString": "v"}),
     }
     b = _backend(_router(routes), secret_prefix="avp/", self_check="deny")
-    assert b.fetch("avp/A") == "v"  # can't enumerate others → scoped → OK
+    assert b.fetch("avp/A").reveal() == "v"  # can't enumerate others → scoped → OK
 
 
 def test_self_check_deny_refuses_on_broken_credential_403() -> None:
@@ -366,7 +366,7 @@ def test_self_check_warn_does_not_refuse() -> None:
         _GET: (200, {"SecretString": "v"}),
     }
     b = _backend(_router(routes), secret_prefix="avp/", self_check="warn")
-    assert b.fetch("avp/A") == "v"
+    assert b.fetch("avp/A").reveal() == "v"
 
 
 def test_self_check_deny_refuses_on_broad_read() -> None:
@@ -387,7 +387,7 @@ def test_self_check_deny_passes_when_read_scoped() -> None:
     # ListSecrets denied (enum scoped) + probe AccessDenied (read scoped) → boots.
     routes = {_LIST: (400, {"__type": "AccessDeniedException"}), _GET: (200, {"SecretString": "v"})}
     b = _backend(_router(routes), secret_prefix="avp/", self_check="deny")  # probe defaults scoped
-    assert b.fetch("avp/A") == "v"
+    assert b.fetch("avp/A").reveal() == "v"
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +407,7 @@ def test_permanent_credentials_allowed_when_opted_out() -> None:
         temporary=False,
         require_temporary_credentials=False,
     )
-    assert b.fetch("avp/A") == "v"
+    assert b.fetch("avp/A").reveal() == "v"
 
 
 def test_permanent_credentials_refused_on_a_later_call() -> None:

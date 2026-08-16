@@ -7,10 +7,10 @@ With the daemon running (either install path), any HTTPS client can route throug
 export HTTPS_PROXY="http://127.0.0.1:14322"
 export HTTP_PROXY="http://127.0.0.1:14322"
 export NODE_USE_ENV_PROXY="1"   # Node 24+ ignores *_PROXY env without this
-export NODE_EXTRA_CA_CERTS="/etc/agent-vault-proxy/ca.pem"
-export SSL_CERT_FILE="/etc/agent-vault-proxy/ca.pem"
-export REQUESTS_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
-export CURL_CA_BUNDLE="/etc/agent-vault-proxy/ca.pem"
+export NODE_EXTRA_CA_CERTS="/etc/kow/ca.pem"
+export SSL_CERT_FILE="/etc/kow/ca.pem"
+export REQUESTS_CA_BUNDLE="/etc/kow/ca.pem"
+export CURL_CA_BUNDLE="/etc/kow/ca.pem"
 
 # Bypass the proxy for loopback and any internal mesh (Tailscale, VPN, LAN peers).
 # Without this, local-service calls get routed at the proxy pointlessly and the
@@ -27,7 +27,7 @@ curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 
 Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses; setting all of them is harmless. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
 
-The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/agent-vault-proxy/audit.jsonl`.
+The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/kow/audit.jsonl`.
 
 ### Excluding a host from the proxy (and why)
 
@@ -39,7 +39,7 @@ Crucially, this does **not** turn the proxy off for the agent's children. A scri
 
 ## Configuration
 
-YAML at `/etc/agent-vault-proxy/bindings.yaml`. Re-read on service restart. Minimal example:
+YAML at `/etc/kow/bindings.yaml`. Re-read on service restart. Minimal example:
 
 ```yaml
 version: 1

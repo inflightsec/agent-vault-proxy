@@ -29,14 +29,15 @@ from kow.audit import AuditWriter
 from kow.backends import FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 REAL = "sk-REAL-DO-NOT-LEAK-0xDEADBEEF"
 
 
 class _FakeBackend:
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return REAL
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(REAL)
 
 
 def _build_addon(tmp_path: Path) -> AgentVaultProxyAddon:

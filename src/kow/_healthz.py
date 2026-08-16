@@ -18,14 +18,19 @@ from mitmproxy import http
 
 # Reserved probe target. Gated on BOTH host and path so a real proxied
 # request to some-bound-host/healthz is never intercepted.
-HEALTHZ_HOST = "healthz.agent-vault-proxy.invalid"
+HEALTHZ_HOST = "healthz.kow.invalid"
+# Pre-rename sentinel (ADR-0045). Still answered so a container or orchestrator
+# probe written against the old host keeps passing across the upgrade; drops in
+# 2.0.0 with the other avp-* compatibility surfaces.
+LEGACY_HEALTHZ_HOST = "healthz.agent-vault-proxy.invalid"
+HEALTHZ_HOSTS = frozenset({HEALTHZ_HOST, LEGACY_HEALTHZ_HOST})
 HEALTHZ_PATH = "/healthz"
 
 
 def is_healthz_request(flow: http.HTTPFlow) -> bool:
     """True iff this flow is the reserved liveness probe (exact host + path)."""
     path = flow.request.path.split("?", 1)[0]
-    return path == HEALTHZ_PATH and flow.request.pretty_host == HEALTHZ_HOST
+    return path == HEALTHZ_PATH and flow.request.pretty_host in HEALTHZ_HOSTS
 
 
 def healthz_response(*, ready: bool) -> http.Response:
@@ -39,7 +44,7 @@ def healthz_response(*, ready: bool) -> http.Response:
     The body carries NO version or build identifier: an orchestrator only
     needs the status code, and a version string on an unauthenticated
     endpoint is gratuitous fingerprint/CVE-matching surface. Read the
-    version on the host via ``avp --version``, never over the wire.
+    version on the host via ``kow --version``, never over the wire.
     """
     status = "ok" if ready else "starting"
     code = 200 if ready else 503

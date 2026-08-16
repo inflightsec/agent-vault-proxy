@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from kow.addon import AgentVaultProxyAddon
+from kow.secret import Secret
 
 _SALT = b"\x11" * 32
 
@@ -22,10 +23,10 @@ class _FakeNotesListBackend:
     def list_secret_names(self) -> list[str]:
         return list(self._secrets)
 
-    def fetch(self, name, ctx=None) -> str:
-        return self._secrets[name][0]
+    def fetch(self, name, ctx=None) -> Secret:
+        return Secret(self._secrets[name][0])
 
-    def fetch_with_meta(self, name, ctx=None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name, ctx=None) -> tuple[Secret, str | None]:
         return self._secrets[name]
 
 

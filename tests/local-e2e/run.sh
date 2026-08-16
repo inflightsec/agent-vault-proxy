@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Container-free end-to-end test for agent-vault-proxy.
+# Container-free end-to-end test for kow.
 #
 # Stands up a REAL mitmdump proxy process (static backend, file bindings) plus a
 # local echo upstream, then drives live HTTP through the proxy and asserts on
@@ -106,7 +106,7 @@ done
 "$MITM" -s "$REPO/src/kow/addon.py" \
     --listen-host 127.0.0.1 --listen-port "$PROXY_PORT" \
     --set confdir="$WORKDIR/mitm" \
-    --set avp_config="$WORKDIR/bindings.yaml" > "$WORKDIR/proxy.log" 2>&1 &
+    --set kow_config="$WORKDIR/bindings.yaml" > "$WORKDIR/proxy.log" 2>&1 &
 PROXY_PID=$!
 
 listening=0

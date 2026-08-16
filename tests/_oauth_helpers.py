@@ -16,6 +16,7 @@ from kow.backends import (
     FetchContext,
     SecretNotFoundError,
 )
+from kow.secret import Secret
 
 PLACEHOLDER = "google-oauth-PLACEHOLDER-01HXY1234567890ABCD"
 
@@ -62,11 +63,11 @@ class FakeBackend:
     def update_count(self) -> int:
         return len(self.updates)
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         self.fetches.append(name)
         if name not in self._values:
             raise SecretNotFoundError(f"missing secret {name!r}")
-        return self._values[name]
+        return Secret(self._values[name])
 
     def update(
         self,
@@ -96,18 +97,18 @@ class ReadOnlyBackend:
         self._values = dict(values)
         self.fetches: list[str] = []
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         self.fetches.append(name)
         if name not in self._values:
             raise SecretNotFoundError(f"missing secret {name!r}")
-        return self._values[name]
+        return Secret(self._values[name])
 
 
 class FailingBackend:
     def __init__(self, error: Exception | None = None) -> None:
         self._error = error or BackendUnavailableError("vault down")
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         raise self._error
 
 

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from mitmproxy import http
 
 from kow.backends import BackendUnavailableError, SecretNotFoundError
+from kow.denials import SigningKeyUnavailableError
 
 if TYPE_CHECKING:
     from kow.audit import AuditWriter
@@ -133,7 +134,7 @@ class HmacResolver:
             timestamp=timestamp,
         )
         signature = hmac_sign(
-            key=key,
+            key=key.reveal(),
             signing_string=signing_string,
             algorithm=injector.algorithm,
             encoding=injector.encoding,
@@ -164,7 +165,7 @@ def _deny(
     )
     flow.response = http.Response.make(
         503,
-        b"agent-vault-proxy: signing key unavailable\n",
+        SigningKeyUnavailableError.client_message,
         {"Content-Type": "text/plain"},
     )
 

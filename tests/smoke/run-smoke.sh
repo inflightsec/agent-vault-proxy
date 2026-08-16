@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-command smoke test runner for agent-vault-proxy.
+# One-command smoke test runner for kow.
 # Runs all three layers (unit / BWS / full pipeline) end-to-end against
 # real BWS and real Anthropic. Starts the proxy in the background, runs
 # the tests, then tears the proxy down. Zero impact on your environment
@@ -126,7 +126,7 @@ hdr "Starting proxy in background"
 
 BWS_ACCESS_TOKEN="$BWS_ACCESS_TOKEN" \
 nohup .venv/bin/python -m kow \
-    --set avp_config="$SMOKE_CONFIG" \
+    --set kow_config="$SMOKE_CONFIG" \
     > "$PROXY_LOG" 2>&1 &
 echo $! > "$PROXY_PID_FILE"
 echo "  proxy pid=$(cat $PROXY_PID_FILE), log=$PROXY_LOG"

@@ -1,4 +1,4 @@
-"""Systematic concurrency / race audit of agent-vault-proxy.
+"""Systematic concurrency / race audit of kow.
 
 Motivation: a cold-start follower race in the OAuth2 resolver
 (``exchange_result_holder[0]`` IndexError on every follower of a cold
@@ -58,6 +58,7 @@ from kow.backends import (
 from kow.caching import CachingSecretsClient
 from kow.config import Oauth2RefreshInjector
 from kow.injectors.oauth2_refresh import OauthResolver
+from kow.secret import Secret
 from tests import _oauth_helpers as oh
 
 # ===========================================================================
@@ -108,10 +109,10 @@ class _ValueBackend:
     def __init__(self, values: dict[str, str]) -> None:
         self._values = dict(values)
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         if name not in self._values:
             raise SecretNotFoundError(name)
-        return self._values[name]
+        return Secret(self._values[name])
 
 
 def test_config_reload_no_cross_secret_leak_or_crash(tmp_path: Path) -> None:  # noqa: C901 — threaded reload harness; branches are the concurrency scenario, not logic
@@ -615,12 +616,12 @@ class _MutableBackend:
         self._lock = threading.Lock()
         self.fetch_calls = 0
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         with self._lock:
             self.fetch_calls += 1
             if name not in self._values:
                 raise SecretNotFoundError(name)
-            return self._values[name]
+            return Secret(self._values[name])
 
     def update(
         self,
@@ -659,7 +660,7 @@ def test_get_and_update_secret_interleaved_no_stale_cache(tmp_path: Path) -> Non
         try:
             while not stop.is_set():
                 try:
-                    v = cache.get("TOK")
+                    v = cache.get("TOK").reveal()
                 except BackendUnavailableError:
                     # _StaleAfterFlushError (flush raced our fetch) — retry.
                     continue
@@ -694,7 +695,7 @@ def test_get_and_update_secret_interleaved_no_stale_cache(tmp_path: Path) -> Non
 
     assert not errors, f"get/update interleave raised: {errors!r}"
     # No sticky stale entry: post-quiescence read equals the live backend.
-    final = cache.get("TOK")
+    final = cache.get("TOK").reveal()
     assert final == backend.current("TOK")
 
 
@@ -713,7 +714,7 @@ def test_concurrent_distinct_keys_lru_no_corruption() -> None:
         try:
             for r in range(300):
                 i = (seed * 7 + r * 13) % n_keys
-                assert cache.get(f"K{i}") == f"val-{i}"
+                assert cache.get(f"K{i}").reveal() == f"val-{i}"
         except BaseException as e:  # noqa: BLE001
             with err_lock:
                 errors.append(e)

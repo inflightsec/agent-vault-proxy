@@ -38,6 +38,7 @@ from kow.audit import AuditWriter
 from kow.backends import FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 REAL = "tok-REAL-DO-NOT-LEAK-0xDEADBEEF"
 PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars (matches body tests)
@@ -85,8 +86,8 @@ def _authorized(variant: str, host: str, method: str, path: str) -> bool:
 
 
 class _FakeBackend:
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return REAL
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(REAL)
 
 
 def _stream_through(replacer: Any, chunks: list[bytes]) -> bytes:

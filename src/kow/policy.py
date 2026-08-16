@@ -37,6 +37,12 @@ from kow.config import (
     Sigv4Injector,
     iter_leaf_injectors,
 )
+from kow.config_models import _PLACEHOLDER_MARKER
+from kow.denials import (
+    AmbiguousPlaceholderError,
+    DestinationNotBoundError,
+    SniHostMismatchError,
+)
 
 # Injectors whose target is a request header (all expose ``.header``); the body
 # injector is the only leaf that is not header-targeting. Used for placeholder
@@ -125,8 +131,33 @@ def matched_binding(host: str, spec: SecretSpec) -> BindingSpec | None:
     return None
 
 
+HeaderIndex = dict[str, tuple[tuple[int, str, SecretSpec, _HeaderTargetInjector], ...]]
+
+
+def build_header_index(config: Config) -> HeaderIndex:
+    """``{header_name: ((order, secret_name, spec, injector), ...)}``.
+
+    The injector tree is static between config reloads, so walking it per
+    request is pure waste. Built once per config snapshot (see
+    ``addon._ResolvedSnapshot``) and consulted per request. ``order`` preserves
+    config declaration order across the header buckets.
+    """
+    index: dict[str, list[tuple[int, str, SecretSpec, _HeaderTargetInjector]]] = {}
+    order = 0
+    for secret_name, spec in config.secrets.items():
+        for child in iter_leaf_injectors(spec.inject):
+            # Body leaves are handled by the streaming body path.
+            if isinstance(child, _HeaderTargetInjector):
+                index.setdefault(child.header, []).append((order, secret_name, spec, child))
+                order += 1
+    return {header: tuple(entries) for header, entries in index.items()}
+
+
 def find_header_placeholder_matches(
-    config: Config, header_get: Callable[[str], str | None]
+    config: Config,
+    header_get: Callable[[str], str | None],
+    *,
+    header_index: HeaderIndex | None = None,
 ) -> list[tuple[str, SecretSpec, _HeaderTargetInjector, str, str]]:
     """Every ``(secret_name, spec, injector, header_name, value)`` where
     the secret's placeholder appears inside its configured target header.
@@ -141,18 +172,24 @@ def find_header_placeholder_matches(
     ``header_get`` is the request's header accessor (case-insensitive,
     mitmproxy semantics) so this stays free of the flow object.
     """
-    matches: list[tuple[str, SecretSpec, _HeaderTargetInjector, str, str]] = []
-    for secret_name, spec in config.secrets.items():
-        for child in iter_leaf_injectors(spec.inject):
-            if isinstance(child, _HeaderTargetInjector):
-                header_name = child.header
-            else:
-                # Body leaves: handled by the streaming body path.
-                continue
-            value = header_get(header_name)
-            if value and spec.placeholder in value:
-                matches.append((secret_name, spec, child, header_name, value))
-    return matches
+    index = header_index if header_index is not None else build_header_index(config)
+    matches: list[tuple[int, str, SecretSpec, _HeaderTargetInjector, str, str]] = []
+    for header_name, entries in index.items():
+        value = header_get(header_name)
+        # Fast reject: every placeholder must carry the marker
+        # (validate_placeholder_invariants), so a header without it cannot
+        # match any secret. This is the common case — most requests carry no
+        # placeholder at all — and it costs one scan per header instead of one
+        # per secret.
+        if not value or _PLACEHOLDER_MARKER not in value:
+            continue
+        for order, secret_name, spec, child in entries:
+            if spec.placeholder in value:
+                matches.append((order, secret_name, spec, child, header_name, value))
+    # Restore config declaration order so the result is identical to the
+    # pre-index scan (ambiguity is refused, but order must not drift).
+    matches.sort(key=lambda m: m[0])
+    return [m[1:] for m in matches]
 
 
 # --- the decision -----------------------------------------------------------
@@ -169,6 +206,7 @@ def decide(
     path: str,
     connect_host: str | None,
     header_get: Callable[[str], str | None],
+    header_index: HeaderIndex | None = None,
 ) -> Decision:
     """Compute the header-path verdict for one request. Pure.
 
@@ -186,7 +224,7 @@ def decide(
             decision="denied",
             reason="sni_host_mismatch",
             response_status=403,
-            response_body=b"agent-vault-proxy: CONNECT host and request host disagree\n",
+            response_body=SniHostMismatchError.client_message,
             extra={"destination": {"connect_host": connect_host, "request_host": host}},
         )
 
@@ -199,12 +237,12 @@ def decide(
             decision="denied",
             reason="unmatched_destination",
             response_status=403,
-            response_body=b"agent-vault-proxy: destination not in any binding\n",
+            response_body=DestinationNotBoundError.client_message,
             extra={"destination": {"host": host, "port": port}},
         )
 
     # 3. Placeholder match in the configured target header(s).
-    matches = find_header_placeholder_matches(config, header_get)
+    matches = find_header_placeholder_matches(config, header_get, header_index=header_index)
     if not matches:
         return _FORWARD
     if len(matches) > 1:
@@ -215,7 +253,7 @@ def decide(
             decision="denied",
             reason="ambiguous_placeholder_match",
             response_status=400,
-            response_body=b"agent-vault-proxy: ambiguous placeholder match\n",
+            response_body=AmbiguousPlaceholderError.client_message,
             extra={"matched_secret_names": sorted({m[0] for m in matches})},
         )
     secret_name, secret_spec, matched_injector, header_name, _value = matches[0]

@@ -1,10 +1,10 @@
 # Systemd unit (hardened)
 
-Drop the unit below at `/etc/systemd/system/agent-vault-proxy.service`, then:
+Drop the unit below at `/etc/systemd/system/kow.service`, then:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now keys-on-the-wire
+sudo systemctl enable --now kow
 ```
 
 The rationale for each directive is in [`architecture.md`](./architecture.md) §5 (Hardening checklist).
@@ -17,17 +17,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=avp
-Group=avp
-ExecStart=/opt/agent-vault-proxy/.venv/bin/python -m kow --set avp_config=/etc/agent-vault-proxy/bindings.yaml
+User=kow
+Group=kow
+ExecStart=/opt/kow/.venv/bin/python -m kow --set kow_config=/etc/kow/bindings.yaml
 
 # HOME must point inside ReadWritePaths so mitmproxy can write its CA at
 # $HOME/.mitmproxy/. ProtectHome=yes still hides /home, /root, /run/user.
-Environment=HOME=/var/lib/agent-vault-proxy
+Environment=HOME=/var/lib/kow
 
 # Filesystem hardening
-ReadWritePaths=/var/log/agent-vault-proxy /var/lib/agent-vault-proxy
-ReadOnlyPaths=/etc/agent-vault-proxy /opt/agent-vault-proxy
+ReadWritePaths=/var/log/kow /var/lib/kow
+ReadOnlyPaths=/etc/kow /opt/kow
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
@@ -62,7 +62,7 @@ WantedBy=multi-user.target
 
 ## First-boot CA generation
 
-The CA is generated and installed during the install procedure: see [install-systemd.md](install-systemd.md#5-trust-the-ca) step 5. Unit-specific detail: with `HOME=/var/lib/agent-vault-proxy` (set above), mitmproxy writes the CA under `/var/lib/agent-vault-proxy/.mitmproxy/`. Do not regenerate it on later deploys, any caller that pinned the old `ca.pem` would break. To rotate it deliberately, see below.
+The CA is generated and installed during the install procedure: see [install-systemd.md](install-systemd.md#5-trust-the-ca) step 5. Unit-specific detail: with `HOME=/var/lib/kow` (set above), mitmproxy writes the CA under `/var/lib/kow/.mitmproxy/`. Do not regenerate it on later deploys, any caller that pinned the old `ca.pem` would break. To rotate it deliberately, see below.
 
 ## CA rotation
 
@@ -70,21 +70,21 @@ Plan for a CA rotation every 6–12 months, or immediately if you suspect the pr
 
 ```bash
 # 1. Stop the proxy and back up the old CA dir + installed cert.
-sudo systemctl stop keys-on-the-wire
-sudo cp -a /var/lib/agent-vault-proxy/.mitmproxy /var/lib/agent-vault-proxy/.mitmproxy.bak.$(date +%Y%m%d)
-sudo cp -a /etc/agent-vault-proxy/ca.pem /etc/agent-vault-proxy/ca.pem.bak.$(date +%Y%m%d)
+sudo systemctl stop kow
+sudo cp -a /var/lib/kow/.mitmproxy /var/lib/kow/.mitmproxy.bak.$(date +%Y%m%d)
+sudo cp -a /etc/kow/ca.pem /etc/kow/ca.pem.bak.$(date +%Y%m%d)
 
 # 2. Remove the old CA material so mitmproxy regenerates on next start.
-sudo rm /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem \
-        /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca.pem
-sudo systemctl start keys-on-the-wire
+sudo rm /var/lib/kow/.mitmproxy/mitmproxy-ca-cert.pem \
+        /var/lib/kow/.mitmproxy/mitmproxy-ca.pem
+sudo systemctl start kow
 
 # 3. Make any request through the proxy to trigger CA generation, then install
 #    the new cert in place. Callers will fail TLS verification until they're
 #    updated to the new CA, so do this in a maintenance window.
 sudo install -m 0644 -o root -g root \
-  /var/lib/agent-vault-proxy/.mitmproxy/mitmproxy-ca-cert.pem \
-  /etc/agent-vault-proxy/ca.pem
+  /var/lib/kow/.mitmproxy/mitmproxy-ca-cert.pem \
+  /etc/kow/ca.pem
 ```
 
 Audit the rotation in the operator log (this is a manual ritual, not yet a runbook the daemon emits).
@@ -97,13 +97,13 @@ Created during install: see [install-systemd.md](install-systemd.md#1-create-the
 
 ```bash
 # Service running?
-systemctl is-active keys-on-the-wire
+systemctl is-active kow
 
 # Listening on loopback?
 ss -tln | grep 127.0.0.1:14322
 
 # Recent decisions?
-sudo tail /var/log/agent-vault-proxy/audit.jsonl
+sudo tail /var/log/kow/audit.jsonl
 
 # Round-trip test (placeholder must be in your shell env as documented in README)
 curl -sS -H "Authorization: Bearer $OPENAI_API_KEY" \

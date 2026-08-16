@@ -20,6 +20,7 @@ from mitmproxy.test import tflow
 
 from kow.addon import AgentVaultProxyAddon
 from kow.placeholders import derive_placeholder
+from kow.secret import Secret
 
 _SALT = b"\x0b" * 32
 
@@ -34,10 +35,10 @@ class _FakeNotesListBackend:
     def list_secret_names(self) -> list[str]:
         return list(self._secrets)
 
-    def fetch(self, name: str, ctx: Any = None) -> str:
-        return self._secrets[name][0]
+    def fetch(self, name: str, ctx: Any = None) -> Secret:
+        return Secret(self._secrets[name][0])
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         return self._secrets[name]
 
 

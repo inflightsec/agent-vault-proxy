@@ -30,6 +30,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from kow.secret import Secret
+
 _log = logging.getLogger("kow.backends.static")
 
 
@@ -62,14 +64,14 @@ class StaticSecretsBackend:
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
 
-    def fetch(self, name: str, ctx: Any = None) -> str:
+    def fetch(self, name: str, ctx: Any = None) -> Secret:
         from kow.backends import SecretNotFoundError
 
         self._maybe_warn_in_use()
         secrets = self._load_secrets()
         if name not in secrets:
             raise SecretNotFoundError(f"secret {name!r} not in static file")
-        return secrets[name]
+        return Secret(secrets[name])
 
     def list_secret_names(self) -> list[str]:
         """Return every secret name in the static file (drives ``kow env``

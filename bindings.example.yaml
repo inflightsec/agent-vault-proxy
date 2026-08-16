@@ -454,7 +454,7 @@ cache:
   jitter_seconds: 30
 
 audit:
-  path: /var/log/agent-vault-proxy/audit.jsonl
+  path: /var/log/kow/audit.jsonl
   fail_on_unwritable: true
 
 # Preflight warns on known-insecure deployment patterns (advisory by
@@ -469,8 +469,8 @@ backend:
   config:
     type: bws
     organization_id: "REPLACE-WITH-YOUR-BWS-ORGANIZATION-UUID"
-    access_token_path: /etc/agent-vault-proxy/bws-token
-    state_path: /var/lib/agent-vault-proxy/bws-state.json
+    access_token_path: /etc/kow/bws-token
+    state_path: /var/lib/kow/bws-state.json
 
     # `BWS_ACCESS_TOKEN` env var, if set, ALWAYS wins over access_token_path.
     # Proxy emits a DeprecationWarning on first fetch when both are set.
@@ -498,6 +498,6 @@ backend:
 #     project_id: "123456789012"             # project NUMBER preferred
 #     secret_prefix: "avp-owner-"            # scopes list + the self_check guard
 #     impersonate_service_account: "avp-ro@PROJECT.iam.gserviceaccount.com"
-#     # credential_config_path: /etc/agent-vault-proxy/gcp-wif.json   # WIF instead
+#     # credential_config_path: /etc/kow/gcp-wif.json   # WIF instead
 #     self_check: deny                        # refuse to start under a broad identity
 #     reject_ambient_key: true                # refuse a downloaded SA key via ADC

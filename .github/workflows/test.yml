@@ -374,7 +374,7 @@ jobs:
       - name: Create fresh venv + install wheel
         # Fresh venv (not the runner's system Python) so the install
         # resolves ONLY the wheel-declared deps. Mirrors what a
-        # downstream `pip install agent-vault-proxy` would see.
+        # downstream `pip install kow` would see.
         # WHEEL is bound via env: rather than interpolated directly into
         # the shell — zizmor template-injection guard, even though the
         # value comes from `ls dist/`-controlled output.

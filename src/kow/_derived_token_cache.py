@@ -26,7 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -41,13 +41,15 @@ class KeyInputs:
     binding_name: str
     token_url: str
     scopes: str | None
-    client_id_value: str
-    refresh_token_value: str
+    # repr=False: these carry live credential material and the dataclass's
+    # generated __repr__ lands in tracebacks and log records.
+    client_id_value: str = field(repr=False)
+    refresh_token_value: str = field(repr=False)
 
 
 @dataclass(frozen=True)
 class _Entry:
-    value: str
+    value: str = field(repr=False)  # the minted token
     expires_at: float
     binding_name: str  # for flush_binding lookup
 

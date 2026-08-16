@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Post-publish PyPI smoke test for agent-vault-proxy.
+# Post-publish PyPI smoke test for kow.
 #
 # Pulls the published wheel from PyPI (or any --index-url you point at),
 # stands up the proxy + an HTTP echo upstream on an isolated bridge
@@ -201,18 +201,18 @@ fi
 dump_diagnostics() {
     red "----- BEGIN DIAGNOSTICS -----"
     red "[installed version inside avp-pypi-smoke]"
-    docker exec avp-pypi-smoke sh -c 'cat /etc/agent-vault-proxy-version 2>/dev/null; pip show keys-on-the-wire 2>/dev/null | head -3' >&2 || true
+    docker exec avp-pypi-smoke sh -c 'cat /etc/kow-version 2>/dev/null; pip show keys-on-the-wire 2>/dev/null | head -3' >&2 || true
     red "[avp container logs (last 80 lines)]"
     docker compose logs --no-color --tail=80 avp >&2 || true
     red "[audit log inside avp-pypi-smoke (last 40 lines)]"
-    docker exec avp-pypi-smoke sh -c 'tail -40 /var/log/agent-vault-proxy/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
+    docker exec avp-pypi-smoke sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
     red "[bindings.yaml as mounted]"
-    docker exec avp-pypi-smoke sh -c 'cat /etc/agent-vault-proxy/bindings.yaml 2>&1 | head -40' >&2 || true
+    docker exec avp-pypi-smoke sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
     # NEVER cat secrets.yml. Stat-only diagnostic — confirms presence,
     # ownership, mode without ever logging the value. Same discipline
     # as docker-e2e/run.sh.
     red "[secrets.yml stat (value never logged)]"
-    docker exec avp-pypi-smoke sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/agent-vault-proxy/secrets.yml 2>&1' >&2 || true
+    docker exec avp-pypi-smoke sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
     red "----- END DIAGNOSTICS -----"
 }
 
@@ -272,7 +272,7 @@ green "  ✓ upstream received the real secret; placeholder did not leak"
 # Audit-log assertion: inject_decision allowed for TEST_API_KEY.
 AUDIT_ALLOWED=$(docker exec avp-pypi-smoke sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_API_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_ALLOWED=""
 if [ -z "$AUDIT_ALLOWED" ]; then
     red "POS: no inject_decision: allowed entry for TEST_API_KEY in audit log"
@@ -324,7 +324,7 @@ fi
 # v0.4.2 changelog. tests/docker-e2e/run.sh already greps both shapes.
 AUDIT_DENIED=$(docker exec avp-pypi-smoke sh -c '
   grep -E "\"decision\":\"denied\"|\"decision\":\"forwarded_unmodified\"|\"type\":\"deny\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_DENIED=""
 if [ -z "$AUDIT_DENIED" ]; then
     red "NEG: no deny/inject_decision-denied/forwarded_unmodified entry in audit log for the unbound destination"

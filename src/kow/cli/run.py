@@ -1,10 +1,10 @@
-"""``kow run`` / ``avp sandvault`` — launch a command with kow env routing.
+"""``kow run`` / ``kow sandvault`` — launch a command with kow env routing.
 
 Sets the four kow env vars (HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE,
 NODE_USE_ENV_PROXY) in the spawned process only — the host shell never
-inherits them. Also auto-loads placeholder exports from ``~/.config/avp/env``
+inherits them. Also auto-loads placeholder exports from ``~/.config/kow/env``
 (written by ``kow env``) so the host shell can stay free of placeholder env
-vars too. Optional ``--sandvault`` (or the ``avp sandvault`` alias)
+vars too. Optional ``--sandvault`` (or the ``kow sandvault`` alias)
 additionally wraps the launch in the SandVault macOS sandbox tool.
 """
 
@@ -17,11 +17,15 @@ import shutil
 import sys
 from pathlib import Path
 
-_LINUX_CA = Path("/etc/agent-vault-proxy/ca.pem")
-_MACOS_CA = Path("/usr/local/etc/agent-vault-proxy/ca.pem")
+from kow import _paths
+
+_LINUX_CA = _paths.resolve(_paths.LINUX_CONFDIR / "ca.pem")
+_MACOS_CA = _paths.resolve(_paths.MACOS_CONFDIR / "ca.pem")
 _DEFAULT_PROXY = "http://127.0.0.1:14322"
 _LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
-_DEFAULT_ENV_FILE = "~/.config/avp/env"
+# Resolved through cli.env.default_env_path() so the pre-rename
+# ~/.config/kow/env keeps working (ADR-0045).
+_DEFAULT_ENV_FILE = "~/.config/kow/env"
 
 # Matches lines emitted by ``kow env``: ``export NAME='value'`` with a
 # single-quoted, metachar-free value. We do not run the file through a shell.
@@ -47,7 +51,7 @@ def _proxy_is_loopback(proxy_url: str) -> bool:
 def _warn_env_file_perms(path: Path) -> None:
     """Defense-in-depth: warn (don't refuse) if the user-owned env file is
     not 0600 and self-owned. Threat is local — anyone who can write
-    ``~/.config/avp/env`` already has code-execution as the user — but a
+    ``~/.config/kow/env`` already has code-execution as the user — but a
     loud warning catches honest misconfiguration."""
     try:
         st = path.lstat()
@@ -221,7 +225,7 @@ def register_run_subparser(parent_subparsers: argparse._SubParsersAction) -> Non
         description=(
             "Set HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, and "
             "NODE_USE_ENV_PROXY for CMD only — the host shell never inherits "
-            "them. Also load placeholder exports from ~/.config/avp/env "
+            "them. Also load placeholder exports from ~/.config/kow/env "
             "(written by `kow env`) so the host shell can stay free of "
             "placeholder vars too. Use `--` before CMD to disambiguate flags."
         ),

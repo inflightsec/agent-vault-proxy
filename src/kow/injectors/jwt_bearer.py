@@ -140,7 +140,7 @@ class JwtResolver:
             claims.update(injector.extra_claims)
 
         try:
-            token = encode(payload=claims, key=key, algorithm=injector.algorithm)
+            token = encode(payload=claims, key=key.reveal(), algorithm=injector.algorithm)
         except Exception as e:  # noqa: BLE001  (bad key / algorithm mismatch)
             _log.exception("jwt minting failed for %s: %s", secret_name, type(e).__name__)
             _deny(

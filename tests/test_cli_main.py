@@ -1,6 +1,6 @@
 """``avp`` CLI dispatcher — argparse wiring for the operator subcommands.
 
-The daemon entry point is ``agent-vault-proxy`` (mitmdump). ``avp`` is the
+The daemon entry point is ``kow`` (mitmdump). ``avp`` is the
 separate operator CLI (``avp env``, ``avp doctor``). This tests only the
 arg parsing/dispatch, not the per-subcommand behaviour (covered in
 test_cli_env / test_cli_doctor).

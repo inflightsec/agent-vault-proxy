@@ -1,6 +1,6 @@
 # Docker end-to-end harness
 
-A scripted integration test that builds the `agent-vault-proxy` Docker image, stands it up next to an HTTP echo upstream on an isolated bridge network, and proves the substitution path works end-to-end on the wire.
+A scripted integration test that builds the `kow` Docker image, stands it up next to an HTTP echo upstream on an isolated bridge network, and proves the substitution path works end-to-end on the wire.
 
 What it actually tests:
 

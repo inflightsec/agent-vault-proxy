@@ -22,6 +22,10 @@ from mitmproxy import http
 from kow._derived_token_cache import KeyInputs
 from kow.backends import BackendUnavailableError, SecretNotFoundError
 from kow.config import GithubAppInjector
+from kow.denials import (
+    GithubAppExchangeFailedError,
+    GithubAppKeyUnavailableError,
+)
 from kow.injectors._token_transport import TokenResult, post
 from kow.injectors.jwt_bearer import encode as jwt_encode
 
@@ -38,11 +42,6 @@ _APP_JWT_IAT_SKEW_SECONDS = 60
 _APP_JWT_TTL_SECONDS = 480
 # Installation tokens last ~1h; fall back conservatively if expires_at is absent.
 _INSTALLATION_TOKEN_FALLBACK_SECONDS = 3300
-
-
-class _ExchangeFailedError(Exception):
-    def __init__(self, result: TokenResult) -> None:
-        self.result = result
 
 
 def _installations_url(injector: GithubAppInjector) -> str:
@@ -151,7 +150,7 @@ class GithubAppResolver:
             token_url=_installations_url(injector),
             scopes=None,
             client_id_value=f"{injector.app_id}:{injector.installation_id}",
-            refresh_token_value=hashlib.sha256(private_key.encode("utf-8")).hexdigest(),
+            refresh_token_value=hashlib.sha256(private_key.reveal().encode("utf-8")).hexdigest(),
         )
         cached = token_cache.get(cache_inputs)
         if cached is not None:
@@ -172,17 +171,17 @@ class GithubAppResolver:
         holder: list[TokenResult] = []
 
         def _fetch() -> tuple[str, float]:
-            result = exchange(injector, private_key)
+            result = exchange(injector, private_key.reveal())
             holder.append(result)
             if result.outcome != "success":
-                raise _ExchangeFailedError(result)
+                raise GithubAppExchangeFailedError(result)
             assert result.token is not None
             assert result.expires_at is not None
             return result.token, result.expires_at
 
         try:
             token = token_cache.dedup_or_fetch(cache_inputs, _fetch)
-        except _ExchangeFailedError as exc:
+        except GithubAppExchangeFailedError as exc:
             result = exc.result
         else:
             if holder:
@@ -214,7 +213,7 @@ class GithubAppResolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: github app token exchange failed\n",
+            GithubAppExchangeFailedError.client_message,
             {"Content-Type": "text/plain"},
         )
 
@@ -294,6 +293,6 @@ class GithubAppResolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: github app private key unavailable\n",
+            GithubAppKeyUnavailableError.client_message,
             {"Content-Type": "text/plain"},
         )

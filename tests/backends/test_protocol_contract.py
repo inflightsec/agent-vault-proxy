@@ -18,6 +18,7 @@ from kow.backends import (
     FetchContext,
     SecretsBackend,
 )
+from kow.secret import Secret
 
 
 def test_registry_has_at_least_bws() -> None:
@@ -54,8 +55,8 @@ def test_register_backend_rejects_duplicate() -> None:
 
     # The 'bws' backend is already registered at module import time.
     class FakeBackend:
-        def fetch(self, name: str, ctx=None) -> str:
-            return "x"
+        def fetch(self, name: str, ctx=None) -> Secret:
+            return Secret("x")
 
     class FakeConfig:
         pass
@@ -68,8 +69,8 @@ def test_register_backend_normalizes_case(isolated_registry) -> None:
     from kow.backends import register_backend
 
     class FakeBackend:
-        def fetch(self, name: str, ctx=None) -> str:
-            return "x"
+        def fetch(self, name: str, ctx=None) -> Secret:
+            return Secret("x")
 
     class FakeConfig:
         pass
@@ -87,8 +88,8 @@ def test_register_backend_nfkc_normalizes_unicode(isolated_registry) -> None:
     from kow.backends import register_backend
 
     class FakeBackend:
-        def fetch(self, name: str, ctx=None) -> str:
-            return "x"
+        def fetch(self, name: str, ctx=None) -> Secret:
+            return Secret("x")
 
     class FakeConfig:
         pass
@@ -120,7 +121,7 @@ def test_register_backend_rejects_empty_name(isolated_registry) -> None:
 
     class FakeBackend:
         def fetch(self, name, ctx=None):
-            return "x"
+            return Secret("x")
 
     class FakeConfig:
         pass
@@ -139,7 +140,7 @@ def test_register_backend_rejects_non_string_name(isolated_registry) -> None:
 
     class FakeBackend:
         def fetch(self, name, ctx=None):
-            return "x"
+            return Secret("x")
 
     class FakeConfig:
         pass

@@ -52,6 +52,10 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from kow.backends._scope import HttpError as _HttpError
+from kow.backends._scope import assert_in_scope, refuse_or_warn
+from kow.secret import Secret
+
 _log = logging.getLogger("kow.backends.gsm")
 
 _API_ROOT = "https://secretmanager.googleapis.com/v1"
@@ -119,6 +123,9 @@ class GsmConfig(BaseModel):
     version_alias: str = "latest"
     # Namespace: only secrets whose id starts with this prefix are in scope
     # (client-side list filter + the self_check boundary). Optional.
+    # END IT ON A SEPARATOR. Scoping is a prefix test with no notion of a
+    # namespace boundary, so 'app' also admits 'application-prod'; 'kow-'
+    # bounds it. A separator-less prefix raises a startup preflight warning.
     secret_prefix: str | None = None
 
     # --- Auth: KEYLESS BY DESIGN. No service_account_key_path field exists. ---
@@ -149,7 +156,7 @@ class GsmConfig(BaseModel):
         if self.self_check == "deny" and not self.secret_prefix:
             raise ValueError(
                 "self_check: deny requires secret_prefix to bound the namespace it "
-                "guards (e.g. secret_prefix: 'avp-<owner>-'). Set it, or choose "
+                "guards (e.g. secret_prefix: 'kow-<owner>-'). Set it, or choose "
                 "self_check: warn|off to opt out of the boot guard."
             )
         return self
@@ -169,16 +176,6 @@ class GsmConfig(BaseModel):
                 "number — no slashes, query, fragment, or whitespace."
             )
         return v
-
-
-class _HttpError(Exception):
-    """Internal: an HTTP response with a non-2xx status. Carries the code and
-    parsed body so the caller maps it to a protocol exception."""
-
-    def __init__(self, status: int, body: dict[str, Any] | None) -> None:
-        super().__init__(f"HTTP {status}")
-        self.status = status
-        self.body = body
 
 
 class GsmBackend:
@@ -227,16 +224,9 @@ class GsmBackend:
         """Defence-in-depth: even if IAM is broader than intended, refuse to
         touch a name outside the configured ``secret_prefix`` namespace — the
         same deny-if-broad posture as self_check, at the access boundary."""
-        prefix = self._config.secret_prefix if self._config is not None else None
-        if prefix and not name.startswith(prefix):
-            from kow.backends import SecretNotFoundError
+        assert_in_scope(name, self._config.secret_prefix if self._config is not None else None)
 
-            raise SecretNotFoundError(
-                f"secret {name!r} is outside secret_prefix {prefix!r}; refusing to "
-                "fetch out-of-namespace (defence-in-depth)"
-            )
-
-    def fetch(self, name: str, ctx: Any = None) -> str:  # noqa: ARG002 — ctx unused
+    def fetch(self, name: str, ctx: Any = None) -> Secret:  # noqa: ARG002 — ctx unused
         self._ensure_ready()
         self._assert_in_scope(name)
         status, body = self._request(
@@ -253,7 +243,7 @@ class GsmBackend:
         try:
             # validate=True rejects non-alphabet bytes instead of silently
             # discarding them — a credential proxy must not accept mangled bytes.
-            return base64.b64decode(data, validate=True).decode("utf-8")
+            return Secret(base64.b64decode(data, validate=True).decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as e:
             from kow.backends import BackendUnavailableError
 
@@ -262,7 +252,7 @@ class GsmBackend:
                 f"GSM secret '{name}' payload is not valid base64/UTF-8: {type(e).__name__}"
             ) from None
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         """Return ``(value, note)``. The note is the secret's ``avp-binding``
         annotation (bare host or flat-YAML blob) or ``None`` when absent/blank.
         Served from the list cache when present, else via a metadata GET."""
@@ -470,11 +460,7 @@ class GsmBackend:
     def _refuse_or_warn(self, mode: str, msg: str) -> None:
         """Shared self_check failure branch: deny → raise (refuse to start);
         warn → log and continue. ``mode`` is never ``off`` here."""
-        from kow.backends import BackendUnavailableError
-
-        if mode == "deny":
-            raise BackendUnavailableError(f"{msg} [self_check=deny → refusing to start]")
-        _log.warning("%s [self_check=warn → continuing]", msg)
+        refuse_or_warn(mode, msg, _log)
 
     def _project_has_broad_access(self) -> bool:
         """True iff the identity holds ``secretmanager.versions.access`` at the

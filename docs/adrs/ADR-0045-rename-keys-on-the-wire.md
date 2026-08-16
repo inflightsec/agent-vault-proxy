@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-08-06
+---
+
 # ADR-0045: Rename agent-vault-proxy → keys-on-the-wire (CLI `avp` → `kow`)
 
 - **Status:** Accepted

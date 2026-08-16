@@ -28,8 +28,8 @@ bwrap \
   --die-with-parent \
   --setenv HOME "$HOME" \
   --setenv HTTPS_PROXY        http://127.0.0.1:14322 \
-  --setenv NODE_EXTRA_CA_CERTS /etc/agent-vault-proxy/ca.pem \
-  --setenv SSL_CERT_FILE       /etc/agent-vault-proxy/ca.pem \
+  --setenv NODE_EXTRA_CA_CERTS /etc/kow/ca.pem \
+  --setenv SSL_CERT_FILE       /etc/kow/ca.pem \
   --setenv NODE_USE_ENV_PROXY  1 \
   -- claude
 ```

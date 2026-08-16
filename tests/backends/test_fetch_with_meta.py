@@ -45,14 +45,15 @@ def test_static_backend_returns_none_note_via_helper(tmp_path: Path) -> None:
     p.write_text("secrets:\n  K: v\n")
     p.chmod(0o600)
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(p)))
-    assert fetch_with_meta(backend, "K") == ("v", None)
+    value, note = fetch_with_meta(backend, "K")
+    assert (value.reveal(), note) == ("v", None)
 
 
 def test_bws_backend_returns_value_and_note() -> None:
     sdk = _mock_sdk_client({"FOO": ("real-value", "host: api.example.com")})
     backend = BitwardenBackend(sdk_client=sdk, organization_id="org-1")
     value, note = backend.fetch_with_meta("FOO")
-    assert value == "real-value"
+    assert value.reveal() == "real-value"
     assert note == "host: api.example.com"
 
 
@@ -62,7 +63,7 @@ def test_bws_backend_empty_note_becomes_none() -> None:
     sdk = _mock_sdk_client({"FOO": ("real-value", "")})
     backend = BitwardenBackend(sdk_client=sdk, organization_id="org-1")
     value, note = backend.fetch_with_meta("FOO")
-    assert value == "real-value"
+    assert value.reveal() == "real-value"
     assert note is None
 
 
@@ -92,7 +93,7 @@ def test_bws_fetch_still_returns_only_value() -> None:
     """The legacy fetch() path is unchanged — value only, no behavior drift."""
     sdk = _mock_sdk_client({"FOO": ("real-value", "host: api.example.com")})
     backend = BitwardenBackend(sdk_client=sdk, organization_id="org-1")
-    assert backend.fetch("FOO") == "real-value"
+    assert backend.fetch("FOO").reveal() == "real-value"
 
 
 def test_fetch_with_meta_helper_prefers_backend_method() -> None:
@@ -100,4 +101,5 @@ def test_fetch_with_meta_helper_prefers_backend_method() -> None:
     has one (bws), and falls back to (fetch(), None) when it doesn't."""
     sdk = _mock_sdk_client({"FOO": ("real-value", "host: api.example.com")})
     backend = BitwardenBackend(sdk_client=sdk, organization_id="org-1")
-    assert fetch_with_meta(backend, "FOO") == ("real-value", "host: api.example.com")
+    value, note = fetch_with_meta(backend, "FOO")
+    assert (value.reveal(), note) == ("real-value", "host: api.example.com")

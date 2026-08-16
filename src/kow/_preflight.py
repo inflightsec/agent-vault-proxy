@@ -4,7 +4,7 @@ Each check returns a list of warning strings (possibly empty). The addon
 runs `run_preflight(config)` from `running()` — once, before serving
 traffic and BEFORE writing the proxy_restart audit event — and emits any
 warnings to stderr + logger.warning so they appear in `docker compose
-logs` AND `journalctl -u keys-on-the-wire`.
+logs` AND `journalctl -u kow`.
 
 By default these are NON-FATAL nags. The proxy still starts. The goal is
 to surface "you're running in a way the docs flagged as a footgun" so
@@ -120,7 +120,7 @@ def check_bws_token_via_env_in_container() -> list[str]:
     return [
         "INSECURE: BWS_ACCESS_TOKEN is set as an environment variable inside "
         "a container — it will leak via `docker inspect` and /proc/<pid>/environ. "
-        "Mount the token as a file at /etc/agent-vault-proxy/bws-token and remove "
+        "Mount the token as a file at /etc/kow/bws-token and remove "
         "the env var. See docs/docker.md."
     ]
 
@@ -243,6 +243,31 @@ def check_loose_bindings_on_sensitive_hosts(config: Config) -> list[str]:
     return msgs
 
 
+def check_secret_prefix_boundary(config: Config) -> list[str]:
+    """``secret_prefix`` is a plain ``startswith`` test with no notion of a
+    namespace boundary, so a prefix ending on an alphanumeric admits sibling
+    namespaces: ``app`` also matches ``application-prod``. Warn — the guard
+    still works, it is just wider than the operator almost certainly meant.
+
+    Advisory by design (same genre as the loose-binding warning): a wide prefix
+    is a working config, not a broken one, and a running proxy should not die
+    over it. Operators who want hard-fail set ``preflight.fail_on_warning``.
+    """
+    backend = getattr(config, "backend", None)
+    if backend is None:
+        return []
+    prefix = getattr(backend._validated_config, "secret_prefix", None)
+    if not prefix or not prefix[-1].isalnum():
+        return []
+    return [
+        f"WIDE SCOPE: backend secret_prefix {prefix!r} does not end on a separator. "
+        "Scoping is a prefix test, so it admits every name merely STARTING with "
+        "those characters, not just that namespace — a prefix of 'app' also admits "
+        f"'application-prod'. End it on a separator ({prefix + '/'!r} or "
+        f"{prefix + '-'!r}) to bound it to one namespace."
+    ]
+
+
 def run_preflight(config: Config) -> list[str]:
     """Aggregate all checks. Returns the combined warning list."""
     msgs: list[str] = []
@@ -250,6 +275,7 @@ def run_preflight(config: Config) -> list[str]:
     msgs.extend(check_audit_log_append_only(config.audit.path))
     msgs.extend(check_root_uid_in_container())
     msgs.extend(check_loose_bindings_on_sensitive_hosts(config))
+    msgs.extend(check_secret_prefix_boundary(config))
     return msgs
 
 
@@ -275,7 +301,7 @@ def emit_preflight(config: Config, *, force: bool = False) -> None:
     logger = logging.getLogger("kow.preflight")
     banner = "═" * 70
     print(banner, file=sys.stderr)
-    print(f"agent-vault-proxy: {len(msgs)} insecure-configuration warning(s):", file=sys.stderr)
+    print(f"kow: {len(msgs)} insecure-configuration warning(s):", file=sys.stderr)
     for m in msgs:
         print(f"  - {m}", file=sys.stderr)
         logger.warning(m)

@@ -49,7 +49,7 @@ class TestBitwardenBackendContract(ProtocolContract):
 def test_fetch_returns_value_from_sdk() -> None:
     sdk = _mock_sdk_client({"ANTHROPIC_API_KEY": "real-anthropic-secret"})
     backend = BitwardenBackend(sdk_client=sdk, organization_id="org-1")
-    assert backend.fetch("ANTHROPIC_API_KEY") == "real-anthropic-secret"
+    assert backend.fetch("ANTHROPIC_API_KEY").reveal() == "real-anthropic-secret"
 
 
 def test_fetch_raises_secret_not_found_for_missing_name() -> None:

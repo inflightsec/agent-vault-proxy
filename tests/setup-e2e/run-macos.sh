@@ -85,7 +85,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     if printf '%s' "$plan" | grep -q "launchctl"; then
         red "plan included launchctl activation under --no-service"; fail=1
     fi
-    if [ -e /usr/local/etc/agent-vault-proxy ]; then
+    if [ -e /usr/local/etc/kow ]; then
         red "dry-run mutated the host"; fail=1
     fi
 
@@ -100,11 +100,11 @@ command -v bats >/dev/null || { red "bats not found — brew install bats-core."
 teardown_host() {
     # Clear the append-only flag before removing the audit log, then drop
     # everything `avp setup` created. Only ever touches AVP's own paths.
-    sudo chflags nosappnd /usr/local/var/log/agent-vault-proxy/audit.jsonl 2>/dev/null || true
-    sudo rm -rf /usr/local/etc/agent-vault-proxy \
-        /usr/local/var/lib/agent-vault-proxy \
-        /usr/local/var/log/agent-vault-proxy \
-        /Library/LaunchDaemons/io.inflightsec.agent-vault-proxy.plist
+    sudo chflags nosappnd /usr/local/var/log/kow/audit.jsonl 2>/dev/null || true
+    sudo rm -rf /usr/local/etc/kow \
+        /usr/local/var/lib/kow \
+        /usr/local/var/log/kow \
+        /Library/LaunchDaemons/io.inflightsec.kow.plist
     sudo dscl . -delete /Users/_avp 2>/dev/null || true
     sudo dscl . -delete /Groups/_avp 2>/dev/null || true
 }
@@ -121,8 +121,8 @@ teardown() {
 }
 
 if [ "$ASSUME_YES" -ne 1 ]; then
-    yellow "This provisions agent-vault-proxy on THIS Mac for real: it creates the"
-    yellow "_avp service user and /usr/local/...agent-vault-proxy files, then deletes"
+    yellow "This provisions kow on THIS Mac for real: it creates the"
+    yellow "_avp service user and /usr/local/...kow files, then deletes"
     yellow "them again at the end. Do not run it on a Mac with a real avp install."
     read -r -p "Continue? [y/N] " reply
     case "$reply" in [yY]*) ;; *) echo "aborted."; exit 0 ;; esac

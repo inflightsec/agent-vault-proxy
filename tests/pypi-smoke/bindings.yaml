@@ -4,7 +4,7 @@ version: 1
 # upstream echo container as a real Bearer token. The echo container
 # responds with the request headers in its JSON body, which the test
 # client parses to confirm the substitution actually happened on the
-# wire — against a PyPI-installed agent-vault-proxy, not a locally
+# wire — against a PyPI-installed kow, not a locally
 # built one.
 secrets:
   TEST_API_KEY:
@@ -28,7 +28,7 @@ cache:
   jitter_seconds: 5
 
 audit:
-  path: /var/log/agent-vault-proxy/audit.jsonl
+  path: /var/log/kow/audit.jsonl
   fail_on_unwritable: true
 
 # Quiet preflight: documented happy path shouldn't log noise. Strict
@@ -42,4 +42,4 @@ backend:
   type: static
   config:
     type: static
-    path: /etc/agent-vault-proxy/secrets.yml
+    path: /etc/kow/secrets.yml

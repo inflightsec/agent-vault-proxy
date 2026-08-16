@@ -27,7 +27,7 @@ If GitHub's reporting flow is unavailable to you, open a *minimal* public issue 
 
 A useful report has:
 
-- **Affected version** (`pip show agent-vault-proxy` or commit SHA)
+- **Affected version** (`pip show kow` or commit SHA)
 - **Type of issue** (e.g., placeholder substitution bypass, audit log integrity, secret leak to logs, sandbox escape, supply-chain concern)
 - **Reproduction steps** - minimal, deterministic, ideally with a config snippet and a curl/python command
 - **Impact**, what an attacker gains, under what trust assumptions

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ============================================================
-# agent-vault-proxy — hardened multi-stage build
+# keys-on-the-wire (kow) — hardened multi-stage build
 # ============================================================
 #
 # Base image pin: regenerate before each release with
@@ -36,8 +36,8 @@ COPY pyproject.toml requirements.lock README.md LICENSE ./
 # Create the runtime venv (ships to runtime stage). Put the `build` tool
 # itself in a SEPARATE throwaway venv so build tooling doesn't leak into
 # the runtime image.
-RUN python -m venv /opt/avp/.venv \
- && /opt/avp/.venv/bin/pip install --upgrade --no-cache-dir pip \
+RUN python -m venv /opt/kow/.venv \
+ && /opt/kow/.venv/bin/pip install --upgrade --no-cache-dir pip \
  && python -m venv /tmp/build-venv \
  && /tmp/build-venv/bin/pip install --no-cache-dir --only-binary :all: build
 
@@ -51,7 +51,7 @@ RUN python -m venv /opt/avp/.venv \
 # `--no-deps` and cannot pull anything fresh. `--only-binary :all:`
 # refuses sdists, blocking install-time script execution from a
 # compromised dependency.
-RUN /opt/avp/.venv/bin/pip install \
+RUN /opt/kow/.venv/bin/pip install \
         --no-cache-dir \
         --require-hashes \
         --only-binary :all: \
@@ -66,7 +66,7 @@ COPY src/ ./src/
 # redundant given `--no-deps` but kept for defense-in-depth in case
 # anyone refactors this step later.
 RUN /tmp/build-venv/bin/python -m build --wheel --outdir /build/dist . \
- && /opt/avp/.venv/bin/pip install \
+ && /opt/kow/.venv/bin/pip install \
         --no-cache-dir \
         --no-deps \
         --only-binary :all: \
@@ -87,27 +87,27 @@ RUN apt-get update \
 
 # UID 65532 is the well-known distroless convention. Picked over 1000 to
 # avoid collision with typical host operator UIDs.
-RUN groupadd --system --gid 65532 avp \
+RUN groupadd --system --gid 65532 kow \
  && useradd  --system --uid 65532 --gid 65532 \
-             --home-dir /var/lib/agent-vault-proxy \
-             --shell /usr/sbin/nologin avp \
- && install -d -o avp  -g avp  -m 0750 /var/lib/agent-vault-proxy \
- && install -d -o avp  -g avp  -m 0750 /var/log/agent-vault-proxy \
- && install -d -o root -g avp  -m 0750 /etc/agent-vault-proxy
+             --home-dir /var/lib/kow \
+             --shell /usr/sbin/nologin kow \
+ && install -d -o kow  -g kow  -m 0750 /var/lib/kow \
+ && install -d -o kow  -g kow  -m 0750 /var/log/kow \
+ && install -d -o root -g kow  -m 0750 /etc/kow
 
-COPY --from=builder --chown=root:root /opt/avp/.venv /opt/avp/.venv
+COPY --from=builder --chown=root:root /opt/kow/.venv /opt/kow/.venv
 
 # HOME drives where mitmproxy writes $HOME/.mitmproxy/ on first request.
-# Aligning HOME with /var/lib/agent-vault-proxy puts the CA on the named
+# Aligning HOME with /var/lib/kow puts the CA on the named
 # volume mounted there, so it survives container restarts.
-ENV HOME=/var/lib/agent-vault-proxy \
-    PATH="/opt/avp/.venv/bin:${PATH}" \
+ENV HOME=/var/lib/kow \
+    PATH="/opt/kow/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-USER avp:avp
-WORKDIR /var/lib/agent-vault-proxy
+USER kow:kow
+WORKDIR /var/lib/kow
 
 # tini reaps zombies and forwards SIGTERM, so `docker stop` doesn't SIGKILL
 # mid-write and truncate the audit log.
@@ -119,13 +119,13 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # from outside the host.
 CMD ["python", "-m", "kow", \
      "--listen-host", "0.0.0.0", \
-     "--set", "avp_config=/etc/agent-vault-proxy/bindings.yaml"]
+     "--set", "kow_config=/etc/kow/bindings.yaml"]
 
 # Pure-Python liveness/readiness probe — no shell, no curl/nc dep, no external
 # network. Sends a plain-HTTP request THROUGH the proxy to the reserved
 # `/healthz` sentinel host; the addon answers 200 only once config, backend
 # client, and audit writer are all live (503 "starting" before that). Stronger
 # than the old bare-TCP probe, which only proved the socket was open — not that
-# AVP could actually broker. 30s start_period covers first-run CA generation.
+# kow could actually broker. 30s start_period covers first-run CA generation.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import http.client,sys; c=http.client.HTTPConnection('127.0.0.1',14322,timeout=2); c.request('GET','http://healthz.agent-vault-proxy.invalid/healthz',headers={'Host':'healthz.agent-vault-proxy.invalid'}); sys.exit(0 if c.getresponse().status==200 else 1)"]
+    CMD ["python", "-c", "import http.client,sys; c=http.client.HTTPConnection('127.0.0.1',14322,timeout=2); c.request('GET','http://healthz.kow.invalid/healthz',headers={'Host':'healthz.kow.invalid'}); sys.exit(0 if c.getresponse().status==200 else 1)"]

@@ -1,4 +1,4 @@
-"""``agent-vault-proxy`` daemon entry point (``__main__``).
+"""``kow`` daemon entry point (``__main__``).
 
 Covers argv assembly for mitmdump and return-code passthrough. mitmdump is
 imported lazily inside ``main`` from ``mitmproxy.tools.main``, so we patch it
@@ -20,7 +20,7 @@ def test_main_assembles_mitmdump_args_and_returns_zero(monkeypatch) -> None:
         return  # mitmdump returns None on a clean exit
 
     monkeypatch.setattr("mitmproxy.tools.main.mitmdump", fake_mitmdump)
-    monkeypatch.setattr(sys, "argv", ["agent-vault-proxy", "--set", "x=1"])
+    monkeypatch.setattr(sys, "argv", ["kow", "--set", "x=1"])
 
     rc = entry.main()
 
@@ -34,5 +34,5 @@ def test_main_assembles_mitmdump_args_and_returns_zero(monkeypatch) -> None:
 
 def test_main_passes_through_nonzero_mitmdump_return(monkeypatch) -> None:
     monkeypatch.setattr("mitmproxy.tools.main.mitmdump", lambda args: 3)
-    monkeypatch.setattr(sys, "argv", ["agent-vault-proxy"])
+    monkeypatch.setattr(sys, "argv", ["kow"])
     assert entry.main() == 3

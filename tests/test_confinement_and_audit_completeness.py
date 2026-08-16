@@ -28,6 +28,7 @@ from kow.audit import AuditWriter
 from kow.backends import FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 H_PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 H_REAL = "sk-REAL-hdr-DO-NOT-LEAK-0xAAAA"
@@ -39,8 +40,8 @@ class _FakeBackend:
     def __init__(self, per_name: dict[str, str]) -> None:
         self._per_name = per_name
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return self._per_name[name]
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(self._per_name[name])
 
 
 def _build(

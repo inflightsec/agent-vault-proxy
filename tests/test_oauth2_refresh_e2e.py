@@ -560,4 +560,4 @@ backend:
     cfg = load_config(config_path)
     backend, _ = build_backend(cfg)
     assert backend is not None
-    assert backend.fetch("X") == "y"
+    assert backend.fetch("X").reveal() == "y"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Docker end-to-end harness for agent-vault-proxy.
+# Docker end-to-end harness for kow.
 #
 # Builds the image, stands up the avp container plus an HTTP echo
 # upstream on an isolated bridge network, then exercises three positive
@@ -55,7 +55,7 @@ yellow() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 red()    { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
 
 # Passed through compose's parse-time interpolation into the avp-init
-# container's heredoc, which generates /etc/agent-vault-proxy/secrets.yml
+# container's heredoc, which generates /etc/kow/secrets.yml
 # in-container. Generation (rather than a host bind mount) sidesteps the
 # Docker userns-remap case where container "root" maps to a non-root
 # host UID that can't read the operator's 0600 secrets.yml.
@@ -192,16 +192,16 @@ dump_diagnostics() {
     red "[avp container logs (mitmdump stderr — last 80 lines)]"
     docker compose logs --no-color --tail=80 avp >&2 || true
     red "[audit log inside avp-e2e (last 40 lines)]"
-    docker exec avp-e2e sh -c 'tail -40 /var/log/agent-vault-proxy/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
+    docker exec avp-e2e sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
     red "[bindings.yaml as mounted in avp-e2e]"
-    docker exec avp-e2e sh -c 'cat /etc/agent-vault-proxy/bindings.yaml 2>&1 | head -40' >&2 || true
+    docker exec avp-e2e sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
     # NEVER cat secrets.yml. Even when its value is a fake test fixture,
     # `cat secrets.yml` models a pattern that would leak real credentials
     # if copied into a production-like diagnostic path. Print stat-only
     # so the operator can confirm the file is present, owned, and at the
     # expected mode — that's the load-bearing diagnostic signal here.
     red "[secrets.yml as mounted in avp-e2e (stat only — value never logged)]"
-    docker exec avp-e2e sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/agent-vault-proxy/secrets.yml 2>&1' >&2 || true
+    docker exec avp-e2e sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
     red "[avp config + listener state]"
     docker exec avp-e2e sh -c 'ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo "(no ss/netstat)"' >&2 || true
     red "----- END DIAGNOSTICS -----"
@@ -242,11 +242,11 @@ green "  ✓ upstream received the real secret; placeholder did not leak"
 # Audit log assertion: inject_decision allowed for TEST_API_KEY
 AUDIT_LINE=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_API_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_LINE=""
 if [ -z "$AUDIT_LINE" ]; then
     red "POS: no inject_decision: allowed entry for TEST_API_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed"
@@ -298,11 +298,11 @@ green "  ✓ body-injector substituted JSON payload; placeholder did not leak"
 
 BODY_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_BODY_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || BODY_AUDIT=""
 if [ -z "$BODY_AUDIT" ]; then
     red "POS-BODY: no inject_decision: allowed entry for TEST_BODY_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for TEST_BODY_KEY"
@@ -362,11 +362,11 @@ green "  ✓ multi-injector substituted BOTH header and body; placeholder did no
 
 MULTI_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_MULTI_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || MULTI_AUDIT=""
 if [ -z "$MULTI_AUDIT" ]; then
     red "POS-MULTI: no inject_decision: allowed entry for TEST_MULTI_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for TEST_MULTI_KEY"
@@ -416,11 +416,11 @@ green "  ✓ composite header rendered the Basic credential; placeholder did not
 
 CH_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"COMPOSITE_HEADER\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || CH_AUDIT=""
 if [ -z "$CH_AUDIT" ]; then
     red "POS-COMPOSITE-HEADER: no inject_decision: allowed entry for COMPOSITE_HEADER"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for COMPOSITE_HEADER"
@@ -465,11 +465,11 @@ green "  ✓ composite body rendered the credential into JSON; placeholder did n
 
 CB_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"COMPOSITE_BODY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || CB_AUDIT=""
 if [ -z "$CB_AUDIT" ]; then
     red "POS-COMPOSITE-BODY: no inject_decision: allowed entry for COMPOSITE_BODY"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for COMPOSITE_BODY"
@@ -512,11 +512,11 @@ green "  ✓ out-of-scope request forwarded the placeholder verbatim; real secre
 
 SV_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"denied\".*\"reason\":\"binding_scope_violation\".*\"secret_name\":\"TEST_API_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || SV_AUDIT=""
 if [ -z "$SV_AUDIT" ]; then
     red "SCOPE-VIOLATION: no denied/binding_scope_violation audit entry for TEST_API_KEY"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains denied: binding_scope_violation for TEST_API_KEY"
@@ -547,11 +547,11 @@ green "  ✓ unavailable secret returned 503 (fail-closed; request never forward
 
 FC_AUDIT=$(docker exec avp-e2e sh -c '
   grep -E "\"decision\":\"denied\".*\"reason\":\"secret_unavailable.*\"secret_name\":\"FAILCLOSED_KEY\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || FC_AUDIT=""
 if [ -z "$FC_AUDIT" ]; then
     red "FAIL-CLOSED: no denied/secret_unavailable audit entry for FAILCLOSED_KEY"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains denied: secret_unavailable for FAILCLOSED_KEY"
@@ -721,22 +721,22 @@ green "  ✓ refresh-token exchanged; minted Bearer reached the upstream; placeh
 
 OA_TX=$(docker exec avp-e2e sh -c '
   grep -E "\"type\":\"token_exchange\".*\"outcome\":\"success\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || OA_TX=""
 if [ -z "$OA_TX" ]; then
     red "OAUTH2-WIRE: no token_exchange: success audit event"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains token_exchange: success"
 
 OA_ROT=$(docker exec avp-e2e sh -c '
   grep -E "\"type\":\"refresh_token_rotated\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || OA_ROT=""
 if [ -z "$OA_ROT" ]; then
     red "OAUTH2-WIRE: no refresh_token_rotated audit event"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains refresh_token_rotated (write-back attempted; static backend => write_back_unavailable)"
@@ -764,11 +764,11 @@ green "  ✓ unbound destination got 403"
 
 AUDIT_DENY=$(docker exec avp-e2e sh -c '
   grep -E "\"type\":\"deny\".*\"reason\":\"unmatched_destination\".*\"host\":\"evil.test\"" \
-    /var/log/agent-vault-proxy/audit.jsonl | tail -1
+    /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_DENY=""
 if [ -z "$AUDIT_DENY" ]; then
     red "NEG: no deny:unmatched_destination entry for evil.test in audit log"
-    docker exec avp-e2e tail -5 /var/log/agent-vault-proxy/audit.jsonl >&2 || true
+    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains the deny event"

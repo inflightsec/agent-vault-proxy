@@ -1,6 +1,6 @@
 # PyPI smoke test
 
-End-to-end smoke for the **published PyPI wheel** of `agent-vault-proxy`. Different from `tests/docker-e2e/`: that one builds from local source and tests the in-repo code; this one pip-installs from PyPI and tests the artifact users actually download.
+End-to-end smoke for the **published PyPI wheel** of `kow`. Different from `tests/docker-e2e/`: that one builds from local source and tests the in-repo code; this one pip-installs from PyPI and tests the artifact users actually download.
 
 ## What it does
 

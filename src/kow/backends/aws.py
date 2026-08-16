@@ -56,7 +56,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from kow.backends._scope import HttpError as _HttpError
+from kow.backends._scope import assert_in_scope, refuse_or_warn
 from kow.injectors.sigv4 import sign
+from kow.secret import Secret
 
 _log = logging.getLogger("kow.backends.aws")
 
@@ -115,6 +118,9 @@ class AwsConfig(BaseModel):
     region: str
     # Namespace: only secrets whose name starts with this prefix are in scope
     # (client-side list filter + the self_check boundary + fetch boundary).
+    # END IT ON A SEPARATOR. Scoping is a prefix test with no notion of a
+    # namespace boundary, so 'app' also admits 'application-prod'; 'kow/'
+    # bounds it. A separator-less prefix raises a startup preflight warning.
     secret_prefix: str | None = None
     # A read-only broker always reads the promoted version; AWSPENDING is
     # untested and may be an empty version on a failed rotation.
@@ -133,7 +139,7 @@ class AwsConfig(BaseModel):
         if self.self_check == "deny" and not self.secret_prefix:
             raise ValueError(
                 "self_check: deny requires secret_prefix to bound the namespace it "
-                "guards (e.g. secret_prefix: 'avp/<owner>/'). Set it, or choose "
+                "guards (e.g. secret_prefix: 'kow/<owner>/'). Set it, or choose "
                 "self_check: warn|off to opt out of the boot guard."
             )
         return self
@@ -168,16 +174,6 @@ class AwsConfig(BaseModel):
                 "custom promoted staging label."
             )
         return v
-
-
-class _HttpError(Exception):
-    """Internal: a non-2xx HTTP response. Carries the code + parsed body so the
-    caller maps it to a protocol exception."""
-
-    def __init__(self, status: int, body: dict[str, Any] | None) -> None:
-        super().__init__(f"HTTP {status}")
-        self.status = status
-        self.body = body
 
 
 class AwsSecretsManagerBackend:
@@ -225,16 +221,9 @@ class AwsSecretsManagerBackend:
 
     def _assert_in_scope(self, name: str) -> None:
         """Defence-in-depth: refuse to touch a name outside ``secret_prefix``."""
-        prefix = self._config.secret_prefix if self._config is not None else None
-        if prefix and not name.startswith(prefix):
-            from kow.backends import SecretNotFoundError
+        assert_in_scope(name, self._config.secret_prefix if self._config is not None else None)
 
-            raise SecretNotFoundError(
-                f"secret {name!r} is outside secret_prefix {prefix!r}; refusing to "
-                "fetch out-of-namespace (defence-in-depth)"
-            )
-
-    def fetch(self, name: str, ctx: Any = None) -> str:  # noqa: ARG002 — ctx unused
+    def fetch(self, name: str, ctx: Any = None) -> Secret:  # noqa: ARG002 — ctx unused
         self._ensure_ready()
         self._assert_in_scope(name)
         _status, body = self._call(
@@ -244,7 +233,7 @@ class AwsSecretsManagerBackend:
         body = body or {}
         secret_string = body.get("SecretString")
         if isinstance(secret_string, str):
-            return secret_string
+            return Secret(secret_string)
         # SecretBinary is a base64 blob; a broker injecting text credentials
         # doesn't handle it — fail closed rather than guess an encoding.
         from kow.backends import BackendUnavailableError
@@ -255,7 +244,7 @@ class AwsSecretsManagerBackend:
             )
         raise BackendUnavailableError(f"AWS GetSecretValue for {name!r} returned no SecretString")
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         """Return ``(value, note)``. The note is the secret's ``avp-binding`` tag
         (bare host) or, failing that, a ``# avp-binding`` marker block in the
         Description — surfaced verbatim for the notes parser, ``None`` when
@@ -408,7 +397,7 @@ class AwsSecretsManagerBackend:
             )
             return
         # A prefix with no trailing delimiter matches as a SUBSTRING, not a
-        # namespace segment (e.g. 'avp/prod' also admits 'avp/production'). Nudge
+        # namespace segment (e.g. 'kow/prod' also admits 'kow/production'). Nudge
         # — don't hard-fail (operator-controlled, GSM-parity).
         if not prefix.endswith(("/", "-", "_", ".", ":")):
             _log.warning(
@@ -504,11 +493,7 @@ class AwsSecretsManagerBackend:
         return name
 
     def _refuse_or_warn(self, mode: str, msg: str) -> None:
-        from kow.backends import BackendUnavailableError
-
-        if mode == "deny":
-            raise BackendUnavailableError(f"{msg} [self_check=deny → refusing to start]")
-        _log.warning("%s [self_check=warn → continuing]", msg)
+        refuse_or_warn(mode, msg, _log)
 
     def diagnose(self) -> list[tuple[str, str, str]]:
         """Read-only scope report for ``kow doctor --probe-aws`` — a list of

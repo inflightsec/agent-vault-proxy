@@ -14,6 +14,7 @@ from typing import Any
 
 from kow.addon import AgentVaultProxyAddon
 from kow.backends import BackendCannotListError
+from kow.secret import Secret
 
 _SALT = b"\x11" * 32
 _HOST_A = "api.aaa-example.com"
@@ -34,10 +35,10 @@ class _MutableNotesBackend:
             raise BackendCannotListError("vault unreachable")
         return list(self._secrets)
 
-    def fetch(self, name: str, ctx: Any = None) -> str:
-        return self._secrets[name][0]
+    def fetch(self, name: str, ctx: Any = None) -> Secret:
+        return Secret(self._secrets[name][0])
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         return self._secrets[name]
 
     def flush_name_map(self) -> None:

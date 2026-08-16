@@ -1,6 +1,6 @@
 # PyPI smoke-test image.
 #
-# Installs the published `agent-vault-proxy` wheel from PyPI (NOT from
+# Installs the published `kow` wheel from PyPI (NOT from
 # the local source tree) and runs it the same way the production image
 # does. Used by:
 #
@@ -45,7 +45,7 @@ ARG INSTALL_SOURCE
 # will flag differently between this smoke and prod — defeating the point.
 RUN groupadd --system --gid 65532 avp && \
     useradd  --system --uid 65532 --gid avp \
-        --home-dir /var/lib/agent-vault-proxy \
+        --home-dir /var/lib/kow \
         --shell /usr/sbin/nologin avp
 
 RUN apt-get update && \
@@ -83,24 +83,24 @@ RUN set -eu; \
 
 # Bake the installed version into an image label for diagnostics on
 # canary failures ("which version did this run actually test?").
-RUN echo "${PACKAGE_VERSION}" > /etc/agent-vault-proxy-version
-LABEL org.opencontainers.image.title="agent-vault-proxy-pypi-smoke"
-LABEL org.opencontainers.image.description="Post-publish smoke test image for agent-vault-proxy ${PACKAGE_VERSION}"
+RUN echo "${PACKAGE_VERSION}" > /etc/kow-version
+LABEL org.opencontainers.image.title="kow-pypi-smoke"
+LABEL org.opencontainers.image.description="Post-publish smoke test image for kow ${PACKAGE_VERSION}"
 
 # Stage the directory layout the proxy expects. The compose stack mounts
-# named volumes on top of /etc/agent-vault-proxy and /var/lib & /var/log
+# named volumes on top of /etc/kow and /var/lib & /var/log
 # — these mkdirs just ensure the mount points exist with the right
 # ownership before the volumes land on top.
-RUN install -d -o avp -g avp -m 0750 /etc/agent-vault-proxy && \
-    install -d -o avp -g avp -m 0750 /var/lib/agent-vault-proxy && \
-    install -d -o avp -g avp -m 0750 /var/log/agent-vault-proxy && \
-    touch /var/log/agent-vault-proxy/audit.jsonl && \
-    chown avp:avp /var/log/agent-vault-proxy/audit.jsonl && \
-    chmod 0640 /var/log/agent-vault-proxy/audit.jsonl
+RUN install -d -o avp -g avp -m 0750 /etc/kow && \
+    install -d -o avp -g avp -m 0750 /var/lib/kow && \
+    install -d -o avp -g avp -m 0750 /var/log/kow && \
+    touch /var/log/kow/audit.jsonl && \
+    chown avp:avp /var/log/kow/audit.jsonl && \
+    chmod 0640 /var/log/kow/audit.jsonl
 
 USER avp:avp
-WORKDIR /var/lib/agent-vault-proxy
-ENV HOME=/var/lib/agent-vault-proxy \
+WORKDIR /var/lib/kow
+ENV HOME=/var/lib/kow \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -111,7 +111,7 @@ EXPOSE 14322
 # point of the exercise.
 CMD ["python", "-m", "kow", \
      "--listen-host", "0.0.0.0", \
-     "--set", "avp_config=/etc/agent-vault-proxy/bindings.yaml"]
+     "--set", "kow_config=/etc/kow/bindings.yaml"]
 
 HEALTHCHECK --interval=5s --timeout=2s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 14322), timeout=2).close()"]

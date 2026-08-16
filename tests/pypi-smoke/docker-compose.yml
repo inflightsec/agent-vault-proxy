@@ -8,13 +8,13 @@
 # Driven by tests/pypi-smoke/run.sh. The harness's PACKAGE_VERSION env
 # is propagated into the build args via compose's parse-time
 # interpolation; the same value is baked into the image at
-# /etc/agent-vault-proxy-version for post-mortem diagnostics.
+# /etc/kow-version for post-mortem diagnostics.
 
 name: avp-pypi-smoke
 
 services:
 
-  # One-shot init: stages avp's /etc/agent-vault-proxy directory into a
+  # One-shot init: stages avp's /etc/kow directory into a
   # named volume with avp-owned (UID 65532) files. Same approach as the
   # docker-e2e stack — generating secrets.yml in-container side-steps
   # Docker userns-remap UID-mapping issues that would otherwise prevent
@@ -65,7 +65,7 @@ services:
         PACKAGE_VERSION: ${PACKAGE_VERSION:?run.sh must export PACKAGE_VERSION}
         PACKAGE_INDEX_URL: ${PACKAGE_INDEX_URL:-https://pypi.org/simple/}
         INSTALL_SOURCE: ${INSTALL_SOURCE:-pypi}
-    image: agent-vault-proxy:pypi-smoke
+    image: kow:pypi-smoke
     container_name: avp-pypi-smoke
     user: "65532:65532"
     read_only: true
@@ -84,9 +84,9 @@ services:
       avp-init:
         condition: service_completed_successfully
     volumes:
-      - avp-pypi-smoke-config:/etc/agent-vault-proxy:ro
-      - avp-pypi-smoke-state:/var/lib/agent-vault-proxy
-      - avp-pypi-smoke-logs:/var/log/agent-vault-proxy
+      - avp-pypi-smoke-config:/etc/kow:ro
+      - avp-pypi-smoke-state:/var/lib/kow
+      - avp-pypi-smoke-logs:/var/log/kow
     tmpfs:
       - /tmp:size=16m
     healthcheck:

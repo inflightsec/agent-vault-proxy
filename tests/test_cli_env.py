@@ -26,6 +26,7 @@ from kow.cli.env import (
     run_env,
     write_env_file,
 )
+from kow.secret import Secret
 
 _SALT = b"\x07" * 32
 
@@ -40,8 +41,8 @@ class _FakeListBackend:
     def list_secret_names(self) -> list[str]:
         return list(self._names)
 
-    def fetch(self, name: str, ctx=None) -> str:  # pragma: no cover - unused here
-        return "x"
+    def fetch(self, name: str, ctx=None) -> Secret:  # pragma: no cover - unused here
+        return Secret("x")
 
 
 # --------------------------------------------------------------------------
@@ -243,3 +244,40 @@ def test_run_env_explicit_salt_overrides_config(tmp_path) -> None:
     assert rc == 0
     assert explicit_salt.exists()
     assert not cfg_salt.exists(), "config path must be ignored when --salt is given"
+
+
+def test_env_projects_the_file_declared_placeholder(tmp_path, capsys) -> None:
+    """`kow env` must emit exactly what the daemon enforces.
+
+    In `binding_source: file` the daemon matches `spec.placeholder`. Projecting
+    a derived placeholder instead hands the agent a token the proxy does not
+    recognise, and the documented `kow env && kow run` flow silently never
+    injects — caught by the README VM leg.
+    """
+    from kow.cli.env import run_env
+
+    declared = "sk-PLACEHOLDER-declared0000111122223"
+    secrets = tmp_path / "secrets.yaml"
+    secrets.write_text('secrets:\n  DECLARED_KEY: "real-value-xyz"\n')
+    secrets.chmod(0o600)
+    cfg = tmp_path / "bindings.yaml"
+    cfg.write_text(f"""
+version: 1
+binding_source: file
+secrets:
+  DECLARED_KEY:
+    placeholder: "{declared}"
+    inject: {{header: "Authorization", format: "Bearer {{DECLARED_KEY}}"}}
+    bindings: [{{host: "api.example.com"}}]
+backend:
+  type: static
+  config:
+    type: static
+    path: {secrets}
+audit: {{path: {tmp_path / "audit.jsonl"}}}
+""")
+    rc = run_env(config_path=str(cfg), salt_path=str(tmp_path / "salt"), print_only=True)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"export DECLARED_KEY='{declared}'" in out, out
+    assert "real-value-xyz" not in out

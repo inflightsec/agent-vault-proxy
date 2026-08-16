@@ -15,7 +15,7 @@ Claude can drive AVP end-to-end **without ever holding a real secret**. The divi
 | **Restart the daemon** (`docker compose restart`, `systemctl restart`, `ans … --tags …`) | **Operator only** — security boundary, see below |
 | **Add the real secret value to Bitwarden** | **Operator only** — Claude must not see the value |
 | Rotate / revoke the BWS machine-account token | **Operator only** |
-| Read `secrets/bws-token` or `/etc/agent-vault-proxy/bws-token` | **Never** — that's the daemon's token, not for the agent |
+| Read `secrets/bws-token` or `/etc/kow/bws-token` | **Never** — that's the daemon's token, not for the agent |
 
 ### Why restart is the operator's job
 
@@ -36,7 +36,7 @@ The git-diff review *before* the operator restarts is the only thing standing be
 - Operator **restarts** after reviewing the diff.
 - Never chain the two from Claude — even for "just a one-line tweak."
 
-The same logic applies to the Ansible role's `kow_secrets` var: Claude edits the var, the operator runs `ans … --tags agent-vault-proxy`.
+The same logic applies to the Ansible role's `kow_secrets` var: Claude edits the var, the operator runs `ans … --tags kow`.
 
 **R-RESTART (binding rule).** Any automation that restarts AVP on a `bindings.yaml` change defeats the entire credential isolation model. That includes `fswatch` / `inotify` watchers, `make restart` targets Claude can invoke via shell, `post-commit` / `post-receive` git hooks, GitHub Actions auto-deploys, and "while you're in there, can you also restart so I can verify my unrelated fix?" requests where the operator restarts without re-reading the bindings diff. If diff review feels tedious enough that you want to automate it away, the fix is a better diff tool, not auto-restart. The diff *is* the security control.
 
@@ -56,7 +56,7 @@ If you touch `pyproject.toml` deps, regenerate `requirements.lock` *and* `requir
 
 ## CI failures — canonical repo + the traps we keep hitting
 
-**The canonical repo is `inflightsec/agent-vault-proxy` (`origin`).**
+**The canonical repo is `inflightsec/keys-on-the-wire` (`origin`).**
 
 Each rule below is here because we broke it.
 
@@ -64,7 +64,7 @@ Each rule below is here because we broke it.
 
 2. **Regenerate lockfiles ONLY with `scripts/regen-lockfiles.sh`.** It uses the same 7-day cooldown cutoff and tempfile semantics as `check-lockfile-drift.sh`, so the result matches the drift gate. A manual `uv pip compile` with a hand-picked `--exclude-newer` produces drift the pre-commit + CI gate rejects, and leaves stale staged churn behind. If **Claude** regenerates them in the shared NFS clone, `chmod 664` both locks afterward or the operator's `end-of-file-fixer` pre-commit hook dies with `PermissionError` (the files end up `claude`-owned and group-read-only).
 
-3. **A CI fix is not done until you have watched the run go green.** After the operator pushes, pull the live result and confirm the *specific* previously-red job is now green: `gh api "repos/inflightsec/agent-vault-proxy/actions/runs?branch=main"` → the failing run's `/jobs` → `/actions/jobs/{id}/logs`. Identify which job + step is red *before* theorizing (the scheduled `security` workflow ≠ the `test` workflow's `audit-lockfile` job — they fail for different reasons). Never declare green from the diff alone.
+3. **A CI fix is not done until you have watched the run go green.** After the operator pushes, pull the live result and confirm the *specific* previously-red job is now green: `gh api "repos/inflightsec/keys-on-the-wire/actions/runs?branch=main"` → the failing run's `/jobs` → `/actions/jobs/{id}/logs`. Identify which job + step is red *before* theorizing (the scheduled `security` workflow ≠ the `test` workflow's `audit-lockfile` job — they fail for different reasons). Never declare green from the diff alone.
 
 4. **`lockfile-drift` can fail with NO dependency change — that's the 7-day cooldown window sliding forward, not a mistake.** The gate re-resolves against `now − 7 days` on every run; when a dep releases just under the window and then ages past it, the committed lock goes stale and the pre-commit hook + CI redden even though nothing was touched. Fix is the same one command every time: `bash scripts/regen-lockfiles.sh`, then the operator commits (`chore(deps): rollforward lockfiles for 7-day cooldown`) + pushes — no version bump, this is dev/CI hygiene, not a release. Do **NOT** hand-roll `uv pip compile -o <lockfile>`: writing onto the existing lock makes uv read and *preserve* its stale pins, so it never converges (burned 3 attempts on a `ruff 0.15.19 → 0.15.20` rollforward exactly this way). `regen-lockfiles.sh` compiles to a tempfile with `--refresh` then moves it in — the only path whose bytes match the gate. Dry-run `bash scripts/check-lockfile-drift.sh` before committing to confirm it's absorbed.
 

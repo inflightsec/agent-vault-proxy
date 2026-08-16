@@ -1,6 +1,6 @@
-# Contributing to agent-vault-proxy
+# Contributing to kow
 
-Thanks for the interest. `agent-vault-proxy` is a small, security-sensitive project - the contributing rules reflect that.
+Thanks for the interest. `kow` is a small, security-sensitive project - the contributing rules reflect that.
 
 ## Before you open a PR
 
@@ -15,8 +15,8 @@ For **security vulnerabilities**, do not open a public issue or PR. Follow the [
 Recommended path — mirrors CI exactly (Python 3.12, hash-pinned deps from the committed lockfile):
 
 ```bash
-git clone https://github.com/inflightsec/agent-vault-proxy
-cd agent-vault-proxy
+git clone https://github.com/inflightsec/keys-on-the-wire
+cd kow
 bash scripts/bootstrap-venv.sh
 ```
 

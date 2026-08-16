@@ -153,7 +153,7 @@ def test_register_subparser_adds_run_and_sandvault() -> None:
     assert args.command == "run"
     assert args.argv == ["claude"]
     assert args.sandvault is False
-    assert args.env_file == "~/.config/avp/env"
+    assert args.env_file == "~/.config/kow/env"
     assert args.no_env_file is False
 
     args = parser.parse_args(["run", "--sandvault", "claude", "--print"])

@@ -23,6 +23,7 @@ from mitmproxy.test import tflow
 from kow.addon import AgentVaultProxyAddon
 from kow.backends import BackendCannotListError
 from kow.placeholders import derive_placeholder
+from kow.secret import Secret
 
 _SALT = b"\x09" * 32
 
@@ -34,10 +35,10 @@ class _FakeNotesListBackend:
     def list_secret_names(self) -> list[str]:
         return list(self._secrets)
 
-    def fetch(self, name, ctx=None) -> str:
-        return self._secrets[name][0]
+    def fetch(self, name, ctx=None) -> Secret:
+        return Secret(self._secrets[name][0])
 
-    def fetch_with_meta(self, name, ctx=None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name, ctx=None) -> tuple[Secret, str | None]:
         return self._secrets[name]
 
 
@@ -264,7 +265,7 @@ def test_file_mode_does_not_list_bws(tmp_path: Path) -> None:
             raise AssertionError("file mode must not list BWS secrets")
 
         def fetch(self, name, ctx=None):
-            return "v"
+            return Secret("v")
 
     audit_path = tmp_path / "audit.jsonl"
     ph = "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
@@ -382,9 +383,9 @@ def test_both_mode_degrades_to_file_bindings_when_backend_cannot_list(
         def list_secret_names(self) -> list[str]:
             raise BackendCannotListError("listing disabled")
 
-        def fetch(self, name, ctx=None) -> str:
+        def fetch(self, name, ctx=None) -> Secret:
             assert name == "FILE_SECRET"
-            return "real-file-secret"
+            return Secret("real-file-secret")
 
     audit_path = tmp_path / "audit.jsonl"
     placeholder = "file-PLACEHOLDER-01HXY1234567890LIST1"
@@ -422,8 +423,8 @@ def test_bws_notes_mode_degrades_to_no_bindings_without_crashing(
         def list_secret_names(self) -> list[str]:
             raise BackendCannotListError("listing disabled")
 
-        def fetch(self, name, ctx=None) -> str:
-            return "unused"
+        def fetch(self, name, ctx=None) -> Secret:
+            return Secret("unused")
 
     backend: object = _FakeNotesListBackend({"FOO": ("real", "host: api.example.com")})
     if failure_kind == "salt":

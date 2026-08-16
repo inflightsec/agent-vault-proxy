@@ -12,11 +12,11 @@
 #
 # The STRICT set (must equal pyproject) mirrors bump-version.sh's strict set:
 #   - src/kow/__init__.py   __version__ = "X.Y.Z"
-#   - docker-compose.yml                  image: inflightsec/agent-vault-proxy:X.Y.Z
+#   - docker-compose.yml                  image: inflightsec/keys-on-the-wire:X.Y.Z
 # The OPTIONAL set (verified only if present — the README intentionally uses an
-# unpinned `pipx install agent-vault-proxy`, so absence is legitimate; a STALE
+# unpinned `pipx install kow`, so absence is legitimate; a STALE
 # pin is not):
-#   - README.md                           agent-vault-proxy==X.Y.Z
+#   - README.md                           keys-on-the-wire==X.Y.Z
 #   - README.md                           git clone -b vX.Y.Z
 #
 # Exit 0 = aligned. Exit 1 = drift (prints each offender + the fix command).
@@ -32,9 +32,9 @@ if [ -z "$TAG_VER" ]; then
 fi
 
 INIT_VER=$(grep -Eo '__version__[[:space:]]*=[[:space:]]*"[^"]+"' src/kow/__init__.py 2>/dev/null | head -1 | awk -F '"' '{print $2}' || true)
-README_INSTALL_VER=$(grep -Eo 'agent-vault-proxy==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}' || true)
+README_INSTALL_VER=$(grep -Eo 'keys-on-the-wire==[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk -F= '{print $NF}' || true)
 README_CLONE_VER=$(grep -Eo 'git clone -b v[0-9]+\.[0-9]+\.[0-9]+' README.md 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//' || true)
-COMPOSE_VER=$(grep -Eo 'inflightsec/agent-vault-proxy:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)
+COMPOSE_VER=$(grep -Eo 'inflightsec/keys-on-the-wire:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)
 
 skew=0
 

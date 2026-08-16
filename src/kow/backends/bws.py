@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from kow.secret import Secret
+
 # Appended to the missing-dependency error (via backends.require `note=`).
 # Bitwarden is the one backend whose SDK is NOT open source, so we say why it
 # ships separately rather than bundled — the "why" here is legally load-bearing,
@@ -84,11 +86,11 @@ class BitwardenBackend:
         # via repr in a traceback or log). Plain class name + identity.
         return f"<{self.__class__.__name__}>"
 
-    def fetch(self, name: str, ctx: Any = None) -> str:
+    def fetch(self, name: str, ctx: Any = None) -> Secret:
         value, _note = self._fetch_data(name)
         return value
 
-    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[str, str | None]:
+    def fetch_with_meta(self, name: str, ctx: Any = None) -> tuple[Secret, str | None]:
         """Return ``(value, note)`` for ``name`` (ADR-0011 item 1).
 
         The note is the BWS secret's ``notes`` field, carrying the binding
@@ -99,7 +101,7 @@ class BitwardenBackend:
         """
         return self._fetch_data(name)
 
-    def _fetch_data(self, name: str) -> tuple[str, str | None]:
+    def _fetch_data(self, name: str) -> tuple[Secret, str | None]:
         """Shared resolve+get for fetch / fetch_with_meta. Returns the
         secret value and its normalised note (None when absent/blank)."""
         from kow.backends import (
@@ -117,9 +119,9 @@ class BitwardenBackend:
         except Exception as e:
             raise BackendUnavailableError(f"BWS get failed: {e}") from e
         # bws-sdk has no type stubs; .value / .note are Any. Cast at the
-        # boundary so the rest of the codebase keeps the Protocol's `str`
+        # boundary so the rest of the codebase keeps the Protocol's `Secret`
         # contract intact.
-        value: str = response.data.value
+        value = Secret(response.data.value)
         # .note may be absent on older SDK objects / mocks; getattr-default
         # to None. Empty/whitespace -> None (no binding, not malformed).
         raw_note = getattr(response.data, "note", None)
@@ -271,7 +273,7 @@ class BitwardenBackend:
                 {
                     "apiUrl": self._config.api_url,
                     "identityUrl": self._config.identity_url,
-                    "userAgent": "agent-vault-proxy",
+                    "userAgent": "kow",
                 }
             )
         )

@@ -11,6 +11,7 @@ from pathlib import Path
 from mitmproxy import http, tls
 from mitmproxy.addonmanager import Loader
 
+from kow import _paths
 from kow._derived_token_cache import DerivedTokenCache
 from kow._healthz import healthz_response, is_healthz_request
 from kow.audit import (
@@ -24,6 +25,11 @@ from kow.config import (
     Config,
     build_backend,
     load_config,
+)
+from kow.denials import (
+    DestinationNotBoundError,
+    SigningStateUnavailableError,
+    UnrecognizedSigningInjectorError,
 )
 from kow.handlers import (
     BodyInjectionHandler,
@@ -39,6 +45,8 @@ from kow.injectors.oauth2_refresh import OauthResolver
 from kow.injectors.sigv4 import Sigv4Resolver
 from kow.matching import git_smart_http_effective_path
 from kow.policy import (
+    HeaderIndex,
+    build_header_index,
     decide,
     destination_in_any_binding,
 )
@@ -70,6 +78,9 @@ class _ResolvedSnapshot:
     allowlist_rejected: set[str] = field(default_factory=set)
     allowlist_rejected_hosts: dict[str, set[str]] = field(default_factory=dict)
     companion_headers: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Per-request header matcher index. Derived from `config`; rebuilt
+    # wherever the snapshot is (cold load AND the ADR-0032 notes refresh).
+    header_index: HeaderIndex = field(default_factory=dict)
 
 
 def _honeytoken_names(config: Config) -> frozenset[str]:
@@ -100,6 +111,12 @@ class AgentVaultProxyAddon:
         # allowlist_rejected_hosts map instead (spec stays live).
         self._allowlist_rejected_names: set[str] = set()
         self._companion_headers: dict[str, dict[str, str]] = {}
+        # Derived per-request header matcher index (see policy.build_header_index).
+        # Keyed to the Config it was built from so it self-heals: any writer that
+        # sets self.config without going through _publish_bindings still gets a
+        # correct index rather than an empty one (which would match nothing).
+        self._header_index: HeaderIndex = {}
+        self._header_index_config: Config | None = None
         # Derived-token cache for the oauth2_refresh resolution step
         # (ADR-0017 §3 / §11). Sibling of ``self.client`` — vault secrets
         # and exchanged access tokens have incompatible flush/list/audit
@@ -132,19 +149,35 @@ class AgentVaultProxyAddon:
         self._refresh_task: asyncio.Task[None] | None = None
 
     def load(self, loader: Loader) -> None:
+        default = str(_paths.resolve(_paths.LINUX_CONFDIR / "bindings.yaml"))
+        loader.add_option(
+            name="kow_config",
+            typespec=str,
+            default=default,
+            help="Path to keys-on-the-wire bindings.yaml",
+        )
+        # Pre-rename option name (ADR-0045). A unit file or compose CMD still
+        # passing --set avp_config= keeps working; drops in 2.0.0. Empty default
+        # means "not set" — kow_config wins unless the operator set this one.
         loader.add_option(
             name="avp_config",
             typespec=str,
-            default="/etc/agent-vault-proxy/bindings.yaml",
-            help="Path to keys-on-the-wire bindings.yaml",
+            default="",
+            help="DEPRECATED alias for kow_config; set kow_config instead.",
         )
 
     def configure(self, updated: set[str]) -> None:
-        if "avp_config" not in updated and self.config is not None:
+        if not {"kow_config", "avp_config"} & updated and self.config is not None:
             return
         from mitmproxy.ctx import options
 
-        self.configure_from_path(options.avp_config)
+        legacy = getattr(options, "avp_config", "") or ""
+        if legacy:
+            _log.warning(
+                "avp_config is deprecated and will be removed in the next major "
+                "release; set kow_config instead."
+            )
+        self.configure_from_path(legacy or options.kow_config)
 
     def configure_from_path(
         self,
@@ -232,6 +265,12 @@ class AgentVaultProxyAddon:
         self._allowlist_rejected_names = snap.allowlist_rejected
         self._header_handler.allowlist_rejected_hosts = snap.allowlist_rejected_hosts
         self._companion_headers = snap.companion_headers
+        # Built HERE, not at snapshot creation: notes activation adds
+        # secrets to config afterwards, and it mutates the same Config
+        # object, so an index built earlier would be silently stale.
+        snap.header_index = build_header_index(snap.config)
+        self._header_index = snap.header_index
+        self._header_index_config = snap.config
 
         # Startup/reload visibility (2026-07-23): one INFO line so an operator can
         # confirm at a glance which secrets are injectable vs dropped, without
@@ -301,6 +340,14 @@ class AgentVaultProxyAddon:
                     "removed": sorted(old_names - new_names),
                 }
             )
+
+    def _index_for(self, config: Config) -> HeaderIndex:
+        """The header index for ``config``, rebuilt if it was never published
+        or belongs to a previous config."""
+        if self._header_index_config is not config:
+            self._header_index = build_header_index(config)
+            self._header_index_config = config
+        return self._header_index
 
     def _capture_state(
         self,
@@ -427,7 +474,7 @@ class AgentVaultProxyAddon:
             )
             flow.response = http.Response.make(
                 403,
-                b"agent-vault-proxy: destination not in any binding\n",
+                DestinationNotBoundError.client_message,
                 {"Content-Type": "text/plain"},
             )
 
@@ -486,6 +533,7 @@ class AgentVaultProxyAddon:
         # and the G6-ordered audit live in _execute_header_decision, unchanged.
         decision = decide(
             config=config,
+            header_index=self._index_for(config),
             host=target_host,
             port=flow.request.port,
             method=method,
@@ -648,7 +696,7 @@ class AgentVaultProxyAddon:
                 )
             flow.response = http.Response.make(
                 503,
-                b"agent-vault-proxy: signing state unavailable\n",
+                SigningStateUnavailableError.client_message,
                 {"Content-Type": "text/plain"},
             )
             return
@@ -695,7 +743,7 @@ class AgentVaultProxyAddon:
             )
             flow.response = http.Response.make(
                 503,
-                b"agent-vault-proxy: unrecognized signing injector\n",
+                UnrecognizedSigningInjectorError.client_message,
                 {"Content-Type": "text/plain"},
             )
 

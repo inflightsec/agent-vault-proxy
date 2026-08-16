@@ -26,11 +26,12 @@ from pathlib import Path
 
 import yaml
 
+from kow import _paths
 from kow.cli.doctor import run_doctor
 from kow.config import Config
 
-_LINUX_SERVICE_NAME = "agent-vault-proxy.service"
-_MACOS_PLIST_NAME = "io.inflightsec.agent-vault-proxy.plist"
+_LINUX_SERVICE_NAME = f"{_paths.LINUX_SERVICE_UNIT}.service"
+_MACOS_PLIST_NAME = "io.inflightsec.kow.plist"
 
 
 @dataclass(frozen=True)
@@ -86,23 +87,62 @@ class SetupPaths:
     python_exe: str
 
 
-def default_paths(os_name: str, prefix: str | None) -> SetupPaths:
-    """Return the install layout for ``os_name`` and optional staging prefix."""
-    root = Path(prefix) if prefix is not None else Path("/")
+def _legacy_install_present(os_name: str) -> bool:
+    """True iff a pre-rename confdir exists and the kow one does not."""
+    new, old = (
+        (_paths.LINUX_CONFDIR, _paths.legacy_of(_paths.LINUX_CONFDIR))
+        if os_name == "linux"
+        else (_paths.MACOS_CONFDIR, _paths.legacy_of(_paths.MACOS_CONFDIR))
+    )
+    return _paths.exists(old) and not _paths.exists(new)
+
+
+def _adopt_legacy_layout(os_name: str, prefix: str | None) -> bool:
+    """Host probe (kept out of the pure planner): adopt an existing pre-rename
+    install rather than laying a second, empty tree beside it. A staging prefix
+    is always a fresh layout."""
+    if prefix is not None or not _legacy_install_present(os_name):
+        return False
+    print(
+        "Existing agent-vault-proxy install detected — keeping its directories. "
+        "New installs use /etc/kow.",
+        file=sys.stderr,
+    )
+    return True
+
+
+def default_service_user(os_name: str, *, legacy: bool = False) -> str:
+    """Service account for ``os_name``. ``legacy=True`` keeps the pre-rename
+    account so an adopted install does not orphan its file ownership."""
     if os_name == "linux":
-        confdir = root / "etc" / "agent-vault-proxy"
-        statedir = root / "var" / "lib" / "agent-vault-proxy"
-        logdir = root / "var" / "log" / "agent-vault-proxy"
-        service_file = root / "etc" / "systemd" / "system" / _LINUX_SERVICE_NAME
-        plist_file = root / "Library" / "LaunchDaemons" / _MACOS_PLIST_NAME
+        return _paths.LEGACY_LINUX_SERVICE_USER if legacy else _paths.LINUX_SERVICE_USER
+    return _paths.LEGACY_MACOS_SERVICE_USER if legacy else _paths.MACOS_SERVICE_USER
+
+
+def default_paths(os_name: str, prefix: str | None, *, legacy: bool = False) -> SetupPaths:
+    """Return the install layout for ``os_name`` and optional staging prefix.
+
+    New installs land under ``kow``. ``legacy=True`` returns the pre-rename
+    ``agent-vault-proxy`` layout so re-running setup on an existing host adopts
+    its directories instead of laying a second, empty tree beside them. The
+    caller decides — this function stays pure and never probes the host
+    (:func:`run_setup` does the probing).
+    """
+    root = Path(prefix) if prefix is not None else Path("/")
+    leaf = _paths.LEGACY_NAME if legacy else "kow"
+
+    if os_name == "linux":
+        confdir = root / "etc" / leaf
+        statedir = root / "var" / "lib" / leaf
+        logdir = root / "var" / "log" / leaf
     elif os_name == "macos":
-        confdir = root / "usr" / "local" / "etc" / "agent-vault-proxy"
-        statedir = root / "usr" / "local" / "var" / "lib" / "agent-vault-proxy"
-        logdir = root / "usr" / "local" / "var" / "log" / "agent-vault-proxy"
-        service_file = root / "etc" / "systemd" / "system" / _LINUX_SERVICE_NAME
-        plist_file = root / "Library" / "LaunchDaemons" / _MACOS_PLIST_NAME
+        confdir = root / "usr" / "local" / "etc" / leaf
+        statedir = root / "usr" / "local" / "var" / "lib" / leaf
+        logdir = root / "usr" / "local" / "var" / "log" / leaf
     else:
         raise ValueError(f"unsupported os_name {os_name!r}")
+    service_file = root / "etc" / "systemd" / "system" / _LINUX_SERVICE_NAME
+    plist_file = root / "Library" / "LaunchDaemons" / _MACOS_PLIST_NAME
 
     mitmproxy_dir = statedir / ".mitmproxy"
     return SetupPaths(
@@ -285,8 +325,8 @@ def plan_setup(
                         argv=("systemctl", "daemon-reload"),
                     ),
                     CommandStep(
-                        description="Enable and start agent-vault-proxy.",
-                        argv=("systemctl", "enable", "--now", "agent-vault-proxy"),
+                        description="Enable and start kow.",
+                        argv=("systemctl", "enable", "--now", _paths.LINUX_SERVICE_UNIT),
                     ),
                 ),
             )
@@ -347,10 +387,8 @@ def run_setup(
     system_name = platform.system()
     if system_name == "Linux":
         os_name = "linux"
-        resolved_user = user or "avp"
     elif system_name == "Darwin":
         os_name = "macos"
-        resolved_user = user or "_avp"
     else:
         print(f"kow setup: unsupported OS {system_name!r}", file=sys.stderr)
         return 1
@@ -366,7 +404,9 @@ def run_setup(
         static = choice == "static"
         gsm = choice == "gsm"
 
-    paths = default_paths(os_name, prefix)
+    legacy = _adopt_legacy_layout(os_name, prefix)
+    resolved_user = user or default_service_user(os_name, legacy=legacy)
+    paths = default_paths(os_name, prefix, legacy=legacy)
     uid: int | None = None
     gid: int | None = None
     if os_name == "macos" and not dry_run and not _user_exists(resolved_user):
@@ -389,7 +429,7 @@ def run_setup(
         if os_name == "linux":
             print(
                 "Service was not activated; run `systemctl enable --now "
-                "keys-on-the-wire` when ready."
+                f"{_paths.LINUX_SERVICE_UNIT}` when ready."
             )
         else:
             print(
@@ -465,7 +505,7 @@ def _render_next_steps() -> str:
         "\n"
         "    kow binding new --host api.stripe.com --name STRIPE_API_KEY\n"
         "\n"
-        '  In Claude Code, skip the flags and just say: "route my Stripe key through avp".\n'
+        '  In Claude Code, skip the flags and just say: "route my Stripe key through kow".\n'
         "  Install the skill ONCE by typing these as slash-commands in the Claude Code\n"
         "  chat (they are NOT terminal commands):\n"
         "\n"
@@ -665,8 +705,8 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
               config:
                 type: gsm
                 project_id: "REPLACE-WITH-YOUR-GCP-PROJECT-NUMBER"   # <- you MUST set this
-                secret_prefix: "avp-"                 # scopes list + the self_check guard
-                # impersonate_service_account: "avp-ro@PROJECT.iam.gserviceaccount.com"
+                secret_prefix: "kow-"                 # scopes list + the self_check guard
+                # impersonate_service_account: "kow-ro@PROJECT.iam.gserviceaccount.com"
                 self_check: deny                      # refuse to start under a broad identity
                 reject_ambient_key: true              # refuse a downloaded SA key via ADC
             audit:
@@ -713,7 +753,7 @@ def _render_systemd_unit(*, user: str, group: str, paths: SetupPaths) -> str:
         Type=simple
         User={user}
         Group={group}
-        ExecStart={paths.python_exe} -m kow --set avp_config={paths.bindings_path}
+        ExecStart={paths.python_exe} -m kow --set kow_config={paths.bindings_path}
         Environment=HOME={paths.statedir}
         ReadWritePaths={paths.logdir} {paths.statedir}
         ReadOnlyPaths={paths.confdir}
@@ -747,7 +787,7 @@ def _render_systemd_unit(*, user: str, group: str, paths: SetupPaths) -> str:
 
 def _render_launchd_plist(*, user: str, group: str, paths: SetupPaths) -> str:
     payload = {
-        "Label": "io.inflightsec.agent-vault-proxy",
+        "Label": _paths.MACOS_PLIST_LABEL,
         "UserName": user,
         "GroupName": group,
         "ProgramArguments": [
@@ -755,7 +795,7 @@ def _render_launchd_plist(*, user: str, group: str, paths: SetupPaths) -> str:
             "-m",
             "kow",
             "--set",
-            f"avp_config={paths.bindings_path}",
+            f"kow_config={paths.bindings_path}",
         ],
         "EnvironmentVariables": {"HOME": paths.statedir},
         "RunAtLoad": True,
@@ -1036,6 +1076,6 @@ def _render_env_block(ca_pem: str) -> str:
         export REQUESTS_CA_BUNDLE="{ca_pem}"
         export CURL_CA_BUNDLE="{ca_pem}"
         kow env
-        set -a; . ~/.config/avp/env; set +a
+        set -a; . ~/.config/kow/env; set +a
         """
     ).rstrip()

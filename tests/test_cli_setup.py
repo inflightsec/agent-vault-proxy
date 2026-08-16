@@ -216,8 +216,8 @@ def test_plan_token_prompt() -> None:
 
 def test_plan_starter_bindings_validates_both() -> None:
     for os_name, user, audit_path in (
-        ("linux", "avp", "/var/log/agent-vault-proxy/audit.jsonl"),
-        ("macos", "_avp", "/usr/local/var/log/agent-vault-proxy/audit.jsonl"),
+        ("linux", "avp", "/var/log/kow/audit.jsonl"),
+        ("macos", "_avp", "/usr/local/var/log/kow/audit.jsonl"),
     ):
         paths, steps = _plan(os_name, user=user, uid=250, gid=250)
         bindings = _file_step(steps, paths.bindings_path)
@@ -244,8 +244,8 @@ def test_plan_static_skips_token_prompt_and_validates_bindings(os_name, user) ->
 @pytest.mark.parametrize(
     ("os_name", "user", "expected_path"),
     [
-        ("linux", "avp", "/etc/agent-vault-proxy/static-secrets.yaml"),
-        ("macos", "_avp", "/usr/local/etc/agent-vault-proxy/static-secrets.yaml"),
+        ("linux", "avp", "/etc/kow/static-secrets.yaml"),
+        ("macos", "_avp", "/usr/local/etc/kow/static-secrets.yaml"),
     ],
 )
 def test_plan_static_secrets_file_matches_bindings_secret_key(
@@ -322,7 +322,7 @@ def test_plan_systemd_unit_linux_default_activates_service() -> None:
     paths, steps = _plan("linux", user="avp")
     service = _file_step(steps, paths.service_file)
     assert ("systemctl", "daemon-reload") in [action.argv for action in service.post_actions]
-    assert ("systemctl", "enable", "--now", "agent-vault-proxy") in [
+    assert ("systemctl", "enable", "--now", "kow") in [
         action.argv for action in service.post_actions
     ]
 
@@ -332,7 +332,7 @@ def test_plan_launchd_plist_macos() -> None:
     plist = _file_step(steps, paths.plist_file)
     assert "<key>UserName</key>" in plist.content
     assert "<string>_avp</string>" in plist.content
-    assert "io.inflightsec.agent-vault-proxy" in plist.content
+    assert "io.inflightsec.kow" in plist.content
     xml.dom.minidom.parseString(plist.content)
 
 
@@ -438,7 +438,7 @@ def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
 def test_render_env_block_sources_file() -> None:
     block = setup_mod._render_env_block("/tmp/ca.pem")
     assert "eval" not in block
-    assert "kow env\nset -a; . ~/.config/avp/env; set +a" in block
+    assert "kow env\nset -a; . ~/.config/kow/env; set +a" in block
 
 
 # --- Finding 1: atomic, correct-owner token/file writes ---------------------

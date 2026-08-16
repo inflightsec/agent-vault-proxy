@@ -100,8 +100,8 @@ backend:
   config:
     type: bws  # the adapter's own pydantic model, validated separately
     organization_id: "..."
-    access_token_path: /etc/agent-vault-proxy/bws-token
-    state_path: /var/lib/agent-vault-proxy/bws-state.json
+    access_token_path: /etc/kow/bws-token
+    state_path: /var/lib/kow/bws-state.json
     # api_url + identity_url for EU cloud or self-hosted
 ```
 

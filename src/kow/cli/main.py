@@ -1,7 +1,7 @@
-"""``avp`` operator CLI entry point.
+"""``kow`` operator CLI entry point.
 
 Separate from the daemon entry point (``keys-on-the-wire`` ->
-``__main__:main``, which launches mitmdump). ``avp`` hosts the operator
+``__main__:main``, which launches mitmdump). ``kow`` hosts the operator
 verbs that manage the install: today ``kow env`` (project BWS secrets to a
 placeholder env file) and ``kow doctor`` (CA regression checks). Wired into
 ``[project.scripts]`` as ``avp``.
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from kow import _paths
 from kow.cli.binding import register_binding_subparser, run_binding
 from kow.cli.doctor import run_doctor
 from kow.cli.env import default_env_path, run_env
@@ -28,14 +29,18 @@ from kow.cli.secret import register_secret_subparser, run_secret
 from kow.cli.setup import run_setup
 from kow.placeholders import InstallSaltError
 
-_DEFAULT_CONFIG = "/etc/agent-vault-proxy/bindings.yaml"
+_DEFAULT_CONFIG = str(_paths.resolve(_paths.LINUX_CONFDIR / "bindings.yaml"))
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    from kow import __version__
+
     parser = argparse.ArgumentParser(
-        prog="avp",
+        prog="kow",
         description="keys-on-the-wire operator CLI (env projection, health checks).",
     )
+    # Documented in _healthz: the version is read on the host, never over the wire.
+    parser.add_argument("--version", action="version", version=f"kow {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     env_p = sub.add_parser(
@@ -132,7 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "setup",
         help="Install the kow service user, config, CA, and service definition.",
         description=(
-            "Perform the primary manual install for agent-vault-proxy: create the "
+            "Perform the primary manual install for kow: create the "
             "service user, lay out directories, prompt for the BWS token, write the "
             "starter bindings, generate the CA and install salt, and register the "
             "system service."
@@ -141,7 +146,7 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_p.add_argument(
         "--user",
         default=None,
-        help="Service user to create/use (default: avp on Linux, _avp on macOS).",
+        help="Service user to create/use (default: kow on Linux, _kow on macOS).",
     )
     setup_p.add_argument(
         "--dry-run",
@@ -203,7 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gcp_setup_p.add_argument(
         "--member",
         required=True,
-        help="IAM member, e.g. serviceAccount:avp-ro@PROJECT.iam.gserviceaccount.com.",
+        help="IAM member, e.g. serviceAccount:kow-ro@PROJECT.iam.gserviceaccount.com.",
     )
     gcp_setup_p.add_argument(
         "--secret",
@@ -245,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         # Graceful, no-traceback exit for the install-salt guards (perms /
         # ownership / corruption). They're operator-fixable, and a raw Python
         # traceback buries both the message and the likely "ran as root" cause.
-        print(f"avp: {exc}", file=sys.stderr)
+        print(f"kow: {exc}", file=sys.stderr)
         if exc.hint:
             print(f"\n{exc.hint}", file=sys.stderr)
         return 1
@@ -253,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         # Missing config / salt / cert path — an operator path mistake, not a
         # bug. One actionable line instead of a traceback.
         target = exc.filename or exc.strerror or exc
-        print(f"avp: file not found: {target}", file=sys.stderr)
+        print(f"kow: file not found: {target}", file=sys.stderr)
         print("Check the --config path (and that setup has run) and try again.", file=sys.stderr)
         return 1
 

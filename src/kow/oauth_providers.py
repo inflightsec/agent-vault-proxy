@@ -40,7 +40,7 @@ class ProviderPreset:
     # same refresh token on each grant by default; True = a new one each
     # time and the write-back path is the load-bearing surface.
     rotates_refresh_token: bool
-    # ADR-0042: the ``avp oauth login`` bootstrap reads these. Optional so existing
+    # ADR-0042: the ``kow oauth login`` bootstrap reads these. Optional so existing
     # oauth2_refresh presets are untouched; backfilled per concrete binding, never speculatively.
     authorization_endpoint: str | None = None
     device_authorization_endpoint: str | None = None

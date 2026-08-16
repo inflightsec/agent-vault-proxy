@@ -24,6 +24,7 @@ from kow.backends import (
     FetchContext,
     SecretsBackend,
 )
+from kow.secret import Secret
 
 
 class _StaleAfterFlushError(BackendUnavailableError):
@@ -37,7 +38,7 @@ class _StaleAfterFlushError(BackendUnavailableError):
 
 @dataclass
 class CacheEntry:
-    value: str
+    value: Secret
     # Absolute expiry deadline (time.time() basis). Each entry gets its
     # own deadline = fetched_at + ttl ± jitter, so concurrent secrets
     # don't all expire at the same wall-clock tick and stampede the backend.
@@ -62,7 +63,7 @@ class CachingSecretsClient:
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         # Singleflight: name → in-flight Future for the next fetch result.
         # Concurrent get(name) calls find the Future and block on it.
-        self._inflight: dict[str, Future[str]] = {}
+        self._inflight: dict[str, Future[Secret]] = {}
         self._lock = threading.Lock()
         # Bumped on every flush(). Leaders capture this under lock at fetch
         # start; if it differs at write-back time, an operator flush happened
@@ -72,13 +73,13 @@ class CachingSecretsClient:
         # read flows; the sticky stale cache entry is what would be the bug).
         self._generation = 0
 
-    def get(self, name: str, ctx: FetchContext | None = None) -> str:  # noqa: C901
+    def get(self, name: str, ctx: FetchContext | None = None) -> Secret:  # noqa: C901
         # Complexity inherent: singleflight + generation-counter + LRU + race
         # handling in one critical path. Splitting into helpers would obscure
         # the lock-discipline invariants.
         now = time.time()
-        waiting_on: Future[str] | None = None
-        new_fut: Future[str] | None = None
+        waiting_on: Future[Secret] | None = None
+        new_fut: Future[Secret] | None = None
         fetch_generation = 0
         with self._lock:
             entry = self._cache.get(name)
@@ -121,7 +122,7 @@ class CachingSecretsClient:
         # Operators should send signals to the process group, not a single
         # worker thread, if they want clean shutdown.
         leader_exception: BaseException | None = None
-        value: str | None = None
+        value: Secret | None = None
         cache_writable = False
         try:
             value = self._backend.fetch(name, ctx)
@@ -192,7 +193,7 @@ class CachingSecretsClient:
         self,
         names: list[str],
         ctx: FetchContext | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Secret]:
         """Atomically fetch multiple secrets under a single generation snapshot.
 
         Used by the addon's composite-binding code path. Steps map to the
@@ -220,7 +221,7 @@ class CachingSecretsClient:
         with self._lock:
             gen_start = self._generation
 
-        values: dict[str, str] = {}
+        values: dict[str, Secret] = {}
         for name in names:
             value = self.get(name, ctx)
             if not value:

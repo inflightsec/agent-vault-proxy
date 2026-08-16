@@ -13,11 +13,12 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from kow import _paths
 from kow.config import load_config
 
 _NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_LINUX_CONFIG = Path("/etc/agent-vault-proxy/bindings.yaml")
-_MACOS_CONFIG = Path("/usr/local/etc/agent-vault-proxy/bindings.yaml")
+_LINUX_CONFIG = _paths.resolve(_paths.LINUX_CONFDIR / "bindings.yaml")
+_MACOS_CONFIG = _paths.resolve(_paths.MACOS_CONFDIR / "bindings.yaml")
 
 
 class SecretNameInput(BaseModel):
@@ -190,7 +191,7 @@ def run_secret_add(name: str, config_path: str, from_stdin: bool) -> int:
     secrets[name] = _read_stdin_value() if from_stdin else _prompt_value()
     _write_secrets_atomic(path, secrets)
     print(f"✓ added secret {name!r}", file=sys.stderr)
-    print("  next: run `kow env` to refresh ~/.config/avp/env", file=sys.stderr)
+    print("  next: run `kow env` to refresh ~/.config/kow/env", file=sys.stderr)
     return 0
 
 
@@ -225,7 +226,7 @@ def run_secret_rotate(name: str, config_path: str) -> int:
     secrets[name] = _prompt_value()
     _write_secrets_atomic(path, secrets)
     print(f"✓ rotated secret {name!r}", file=sys.stderr)
-    print("  next: run `kow env` to refresh ~/.config/avp/env", file=sys.stderr)
+    print("  next: run `kow env` to refresh ~/.config/kow/env", file=sys.stderr)
     return 0
 
 

@@ -308,7 +308,7 @@ def test_secret_without_nested_subcommand_prints_help(capsys) -> None:
     rc = run_secret(Namespace(secret_command=None, _secret_parser=secret_parser))
 
     assert rc == 2
-    assert "usage: avp secret" in capsys.readouterr().err
+    assert "usage: kow secret" in capsys.readouterr().err
 
 
 def test_mutating_ops_fail_when_static_file_not_writable(tmp_path: Path, monkeypatch) -> None:

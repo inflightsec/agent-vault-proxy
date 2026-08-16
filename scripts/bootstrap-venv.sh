@@ -7,7 +7,7 @@
 #   1. Lockfile is `--require-hashes` (supply-chain mitigation — every dep
 #      pinned to an upstream sha256). Good.
 #   2. The project itself is local source — there IS no upstream hash for
-#      `file:///path/to/agent-vault-proxy`, so `uv pip sync` and
+#      `file:///path/to/kow`, so `uv pip sync` and
 #      `uv pip install -e ".[dev]"` both fail in `--require-hashes` mode.
 #
 # Solution: install hash-pinned deps first (lockfile), then install the

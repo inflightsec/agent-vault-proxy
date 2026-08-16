@@ -64,8 +64,8 @@ Changelog = "https://github.com/inflightsec/keys-on-the-wire/blob/main/CHANGELOG
 [project.optional-dependencies]
 # Bitwarden Secrets Manager backend. Separate because bitwarden-sdk is under
 # the proprietary Bitwarden SDK License, not Apache-2.0. Install with
-#   pip install 'agent-vault-proxy[bitwarden]'
-#   pipx inject agent-vault-proxy bitwarden-sdk   # if AVP was installed via pipx
+#   pip install 'keys-on-the-wire[bitwarden]'
+#   pipx inject keys-on-the-wire bitwarden-sdk   # if kow was installed via pipx
 bitwarden = [
     "bitwarden-sdk>=2.0",
 ]

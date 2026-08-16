@@ -29,7 +29,7 @@ _GH = [
     "--env-var",
     "GITHUB_PERSONAL_ACCESS_TOKEN",
 ]
-_CA = "/etc/agent-vault-proxy/mitmproxy-ca-cert.pem"
+_CA = "/etc/kow/mitmproxy-ca-cert.pem"
 
 
 def _run(argv, capsys):

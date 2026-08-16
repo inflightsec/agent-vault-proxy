@@ -42,7 +42,7 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
 ### Observability
 - **Metrics endpoint** — the `/healthz` liveness/readiness probe has shipped
   (a request through the proxy to the reserved
-  `healthz.agent-vault-proxy.invalid/healthz` sentinel returns `200` once kow
+  `healthz.kow.invalid/healthz` sentinel returns `200` once kow
   is fully configured, `503` while starting; the Docker healthcheck uses it).
   Still missing a Prometheus-style metrics surface (exchange counts, cache hit
   rate, deny reasons).

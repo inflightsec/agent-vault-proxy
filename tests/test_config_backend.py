@@ -33,7 +33,7 @@ def test_v03_backend_block_parses() -> None:
                 "config": {
                     "type": "bws",
                     "organization_id": "org-1",
-                    "access_token_path": "/etc/agent-vault-proxy/bws-token",
+                    "access_token_path": "/etc/kow/bws-token",
                 },
             }
         }

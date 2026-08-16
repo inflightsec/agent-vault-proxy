@@ -46,6 +46,11 @@ from kow.backends import (
     SecretNotFoundError,
 )
 from kow.config import Oauth2RefreshInjector, SecretSpec
+from kow.denials import (
+    OauthExchangeFailedError,
+    OauthInputFetchFailedError,
+    OauthInputUnavailableError,
+)
 from kow.injectors._token_transport import transport_open
 
 if TYPE_CHECKING:
@@ -88,19 +93,6 @@ def _sanitize_error_description(text: str) -> str:
     return cleaned[:_MAX_ERROR_DESCRIPTION]
 
 
-class OauthExchangeFailedError(Exception):
-    """Internal sentinel raised inside the derived-token cache's
-    ``dedup_or_fetch`` callback when a token exchange returned a
-    non-success outcome. The dedup machinery propagates exceptions to
-    every waiter; carrying the :class:`ExchangeResult` here lets the
-    leader surface the categorised outcome for the audit without
-    re-running the exchange."""
-
-    def __init__(self, result: ExchangeResult) -> None:
-        super().__init__(result.outcome)
-        self.result = result
-
-
 @dataclass(frozen=True)
 class ExchangeResult:
     """One token-exchange attempt's outcome.
@@ -130,7 +122,7 @@ class ExchangeResult:
 # Shared executor for the async path. ``run_in_executor(None, ...)``
 # would use the default loop executor, but we want a small dedicated
 # pool so a refresh-storm at boot doesn't starve other loop-side work.
-_SHARED_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="avp-oauth-exchange")
+_SHARED_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="kow-oauth-exchange")
 
 
 def _transport_open(req: urllib.request.Request, timeout: float) -> Any:
@@ -192,7 +184,7 @@ def exchange(  # noqa: C901  # SSRF + retry + redirect-check branches inherent t
     # ``Python-urllib/3.X`` (some providers block stock urllib UA outright,
     # producing confusing 4xx; identifying kow also helps providers
     # whitelist explicitly when needed).
-    headers["User-Agent"] = "agent-vault-proxy/oauth2-refresh"
+    headers["User-Agent"] = "kow/oauth2-refresh"
     req = urllib.request.Request(  # noqa: S310  # nosec
         str(spec.token_url),
         data=body,
@@ -453,7 +445,7 @@ class OauthResolver:
             )
             flow.response = http.Response.make(
                 503,
-                b"agent-vault-proxy: oauth2 input secret unavailable\n",
+                OauthInputUnavailableError.client_message,
                 {"Content-Type": "text/plain"},
             )
             return
@@ -475,7 +467,7 @@ class OauthResolver:
             )
             flow.response = http.Response.make(
                 503,
-                b"agent-vault-proxy: oauth2 input secret fetch failed\n",
+                OauthInputFetchFailedError.client_message,
                 {"Content-Type": "text/plain"},
             )
             return
@@ -484,8 +476,8 @@ class OauthResolver:
             binding_name=secret_name,
             token_url=str(oauth_injector.token_url),
             scopes=oauth_injector.scopes,
-            client_id_value=client_id_value,
-            refresh_token_value=refresh_token_value,
+            client_id_value=client_id_value.reveal(),
+            refresh_token_value=refresh_token_value.reveal(),
         )
 
         # Cache hit short-circuits the exchange entirely — no
@@ -516,9 +508,9 @@ class OauthResolver:
         def _fetch_for_cache() -> tuple[str, float]:
             result = exchange(
                 oauth_injector,
-                client_id_value,
-                client_secret_value,
-                refresh_token_value,
+                client_id_value.reveal(),
+                client_secret_value.reveal(),
+                refresh_token_value.reveal(),
             )
             exchange_result_holder.append(result)
             if result.outcome != "success":
@@ -563,7 +555,7 @@ class OauthResolver:
                         secret_name=secret_name,
                         oauth_injector=oauth_injector,
                         new_refresh_token=result.new_refresh_token,
-                        old_refresh_token=refresh_token_value,
+                        old_refresh_token=refresh_token_value.reveal(),
                     )
             self._inject_header(
                 flow=flow,
@@ -601,7 +593,7 @@ class OauthResolver:
         )
         flow.response = http.Response.make(
             503,
-            b"agent-vault-proxy: oauth2 token exchange failed\n",
+            OauthExchangeFailedError.client_message,
             {"Content-Type": "text/plain"},
         )
 

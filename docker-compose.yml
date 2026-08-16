@@ -1,4 +1,4 @@
-# agent-vault-proxy — hardened Docker Compose
+# keys-on-the-wire (kow) — hardened Docker Compose
 #
 # Walkthrough, threat model, and rationale: docs/docker.md
 #
@@ -6,14 +6,24 @@
 #   1. mkdir -p secrets && (umask 077; read -rs token; printf '%s' "$token" > secrets/bws-token)
 #   2. cp bindings.example.yaml bindings.yaml && $EDITOR bindings.yaml
 #   3. docker compose build
+#
+# UPGRADING FROM 1.0.0 (kow paths):
+#   The volumes and in-container paths moved from kow to kow.
+#   The CA private key lives in the state volume — DO NOT let it regenerate,
+#   or every client pinned to the old CA breaks. Migrate the data first:
+#     docker volume create kow-state && docker volume create kow-logs
+#     docker run --rm -v kow-state:/from -v kow-state:/to \
+#       alpine sh -c 'cd /from && cp -a . /to'
+#     docker run --rm -v kow-logs:/from -v kow-logs:/to \
+#       alpine sh -c 'cd /from && cp -a . /to'
 
 services:
-  avp:
+  kow:
     build:
       context: .
       dockerfile: Dockerfile
-    image: inflightsec/agent-vault-proxy:1.0.0
-    container_name: agent-vault-proxy
+    image: inflightsec/keys-on-the-wire:1.0.0
+    container_name: kow
 
     # Loopback-only host publish. The 127.0.0.1 prefix is critical — without
     # it, the port publishes on every host interface including any public IP.
@@ -28,19 +38,19 @@ services:
     volumes:
       # Persistent state: mitmproxy CA + bws-sdk auth state.
       # CONTAINS THE CA PRIVATE KEY — back up + restrict accordingly.
-      - avp-state:/var/lib/agent-vault-proxy
+      - kow-state:/var/lib/kow
 
       # Persistent audit log. See docs/docker.md §4 for the chattr +a
       # init step (applied via a separate privileged short-lived container).
-      - avp-logs:/var/log/agent-vault-proxy
+      - kow-logs:/var/log/kow
 
       # User-provided binding config, read-only into the container.
-      - ./bindings.yaml:/etc/agent-vault-proxy/bindings.yaml:ro
+      - ./bindings.yaml:/etc/kow/bindings.yaml:ro
 
       # BWS token as a file bind-mount, NEVER as an env var (envs leak to
       # `docker inspect` and operator shell history). Path matches the
       # bare-metal install so bindings.yaml is portable between methods.
-      - ./secrets/bws-token:/etc/agent-vault-proxy/bws-token:ro
+      - ./secrets/bws-token:/etc/kow/bws-token:ro
 
     cap_drop:
       - ALL
@@ -57,7 +67,7 @@ services:
     restart: unless-stopped
 
     networks:
-      - avp-net
+      - kow-net
 
     logging:
       driver: json-file
@@ -65,22 +75,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
-# avp-state contains the mitmproxy CA PRIVATE key (mode 0700 inside the
+# kow-state contains the mitmproxy CA PRIVATE key (mode 0700 inside the
 # container). On Linux the named volume's backing path is under
-# /var/lib/docker/volumes/agent-vault-proxy-state/_data/ — readable by root
+# /var/lib/docker/volumes/kow-state/_data/ — readable by root
 # and anyone in the `docker` group. See docs/docker.md threat model.
 volumes:
-  avp-state:
-    name: agent-vault-proxy-state
-  avp-logs:
-    name: agent-vault-proxy-logs
+  kow-state:
+    name: kow-state
+  kow-logs:
+    name: kow-logs
 
 # Dedicated single-tenant bridge. CRITICAL: do NOT add other services to
 # this network. The proxy binds 0.0.0.0:14322 inside the container; a
 # sibling on the same docker network would reach it directly, bypassing
-# the host's 127.0.0.1 publish constraint. Keep avp-net empty except for
+# the host's 127.0.0.1 publish constraint. Keep kow-net empty except for
 # the proxy itself.
 networks:
-  avp-net:
+  kow-net:
     driver: bridge
-    name: agent-vault-proxy-net
+    name: kow-net

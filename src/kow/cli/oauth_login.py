@@ -1,4 +1,4 @@
-"""``avp oauth login`` — interactive OAuth authorization-code bootstrap (ADR-0042).
+"""``kow oauth login`` — interactive OAuth authorization-code bootstrap (ADR-0042).
 
 Mints the *first* refresh token via a one-time human browser consent and populates the
 vault secret the ``oauth2_refresh`` binding (ADR-0017) reads. Two acquisition flows:
@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from kow import _paths
 from kow._ssrf_guard import SsrfBlockedError, check_url_not_internal
 from kow.backends import (
     BackendUnavailableError,
@@ -51,7 +52,7 @@ from kow.injectors.oauth2_refresh import is_well_formed_refresh_token
 from kow.oauth_providers import PROVIDER_PRESETS
 from kow.placeholders import PLACEHOLDER_PREFIX
 
-_UA = "agent-vault-proxy/oauth-login"
+_UA = "kow/oauth-login"
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"  # noqa: S105 — grant name, not a secret
 _LOOPBACK_TIMEOUT_SECONDS = 300
 
@@ -62,7 +63,7 @@ class OAuthFlowError(Exception):
 
 
 def _die(msg: str) -> int:
-    print(f"avp oauth: {msg}", file=sys.stderr)
+    print(f"kow oauth: {msg}", file=sys.stderr)
     return 1
 
 
@@ -265,10 +266,10 @@ def _loopback_flow(
 
         opened = webbrowser.open(auth_url)
         if opened:
-            print("avp oauth: opened your browser to consent...", file=sys.stderr)
+            print("kow oauth: opened your browser to consent...", file=sys.stderr)
         else:
             print(
-                f"avp oauth: no browser could be opened. Visit this URL to consent:\n  {auth_url}",
+                f"kow oauth: no browser could be opened. Visit this URL to consent:\n  {auth_url}",
                 file=sys.stderr,
             )
 
@@ -383,12 +384,12 @@ def _device_flow(  # noqa: C901 — RFC 8628 poll states (pending/slow_down/deni
     complete = start.get("verification_uri_complete")
 
     print(
-        f"avp oauth: on any device, visit {_clean(verification_uri)} "
+        f"kow oauth: on any device, visit {_clean(verification_uri)} "
         f"and enter code: {_clean(user_code)}",
         file=sys.stderr,
     )
     if isinstance(complete, str) and urlparse(complete).scheme == "https":
-        print(f"avp oauth: or open directly: {_clean(complete)}", file=sys.stderr)
+        print(f"kow oauth: or open directly: {_clean(complete)}", file=sys.stderr)
 
     poll = {"grant_type": _DEVICE_GRANT, "device_code": device_code, "client_id": client_id}
     poll_headers = _client_auth(poll, client_id, client_secret, client_auth_basic)
@@ -433,17 +434,19 @@ def _populate_secret(backend: Any, name: str, refresh_token: str, *, force: bool
     except Exception as exc:  # noqa: BLE001 — any backend error; never echo its message
         return _die(f"backend error reading {name!r}: {type(exc).__name__}")
 
-    current = current or ""
-    if _looks_live(current) and not force:
+    # Plaintext boundary: the preconditioned write and the live-token guard
+    # both need the bytes. Nothing above this line does.
+    current_value = current.reveal() if current is not None else ""
+    if _looks_live(current_value) and not force:
         return _die(
             f"vault secret {name!r} already holds a live token; pass --force to overwrite "
             "(this re-consents and invalidates the previous grant)"
         )
 
     try:
-        update_secret(backend, name, refresh_token, expected_current_value=current)
+        update_secret(backend, name, refresh_token, expected_current_value=current_value)
     except BackendWriteConflictError:
-        return _die(f"vault secret {name!r} changed since it was read; re-run `avp oauth login`")
+        return _die(f"vault secret {name!r} changed since it was read; re-run `kow oauth login`")
     except (BackendUnavailableError, SecretNotFoundError) as exc:
         return _die(f"could not write {name!r}: {type(exc).__name__}")
     except Exception as exc:  # noqa: BLE001 — never echo a backend message (may carry value)
@@ -451,10 +454,10 @@ def _populate_secret(backend: Any, name: str, refresh_token: str, *, force: bool
 
     print(name)  # stdout: the populated secret name only, never the value
     print(
-        f"avp oauth: populated vault secret {name!r} with a fresh refresh token.", file=sys.stderr
+        f"kow oauth: populated vault secret {name!r} with a fresh refresh token.", file=sys.stderr
     )
     print(
-        "avp oauth: bootstrap this refresh secret on ONE host only — sharing it across "
+        "kow oauth: bootstrap this refresh secret on ONE host only — sharing it across "
         "hosts strands the others on rotation (ADR-0042 §6).",
         file=sys.stderr,
     )
@@ -508,7 +511,7 @@ def run_oauth(args: argparse.Namespace) -> int:  # noqa: C901 — flow-select + 
     if not (0 <= args.callback_port <= 65535):
         return _die("--callback-port must be between 0 and 65535")
 
-    print(f"avp oauth: bootstrapping binding {args.binding!r}...", file=sys.stderr)
+    print(f"kow oauth: bootstrapping binding {args.binding!r}...", file=sys.stderr)
 
     preset = PROVIDER_PRESETS.get(args.provider) if args.provider else None
     client_auth_basic = bool(preset and preset.client_auth_method == "basic")
@@ -683,7 +686,7 @@ def register_oauth_subparser(parent_subparsers: argparse._SubParsersAction) -> N
     )
     login_p.add_argument(
         "--config",
-        default="/etc/agent-vault-proxy/bindings.yaml",
+        default=str(_paths.resolve(_paths.LINUX_CONFDIR / "bindings.yaml")),
         help="Path to bindings.yaml (for the backend).",
     )
     login_p.add_argument(

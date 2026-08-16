@@ -34,6 +34,7 @@ from kow.backends import BackendUnavailableError, FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
 from kow.injectors.body import _BodyReplacer
+from kow.secret import Secret
 
 BODY_PLACEHOLDER = "tok_PLACEHOLDER_01HXY1234567890ABC"  # 35 chars
 BODY_REAL = "tok-real-XYZ"
@@ -53,10 +54,10 @@ class _FakeBackend:
         self._per_name = per_name or {}
         self._fail_names = fail_names or set()
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         if name in self._fail_names:
             raise BackendUnavailableError(f"simulated outage for {name}")
-        return self._per_name[name]
+        return Secret(self._per_name[name])
 
 
 def _make_client(
@@ -475,9 +476,9 @@ def test_body_injector_lazy_fetch_no_call_when_placeholder_absent(tmp_path: Path
     call_log: list[str] = []
 
     class _RecordingBackend:
-        def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+        def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
             call_log.append(name)
-            return BODY_REAL
+            return Secret(BODY_REAL)
 
     addon.client = CachingSecretsClient(
         _RecordingBackend(), ttl_seconds=300, jitter_seconds=0, max_entries=100

@@ -13,6 +13,7 @@ from kow.audit import AuditWriter
 from kow.backends import BackendUnavailableError, FetchContext
 from kow.caching import CachingSecretsClient
 from kow.config import load_config
+from kow.secret import Secret
 
 PLACEHOLDER = "sk-ant-PLACEHOLDER-01HXY1234567890ABCDEFGH"
 OPENAI_PLACEHOLDER = "sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
@@ -35,10 +36,10 @@ class _FakeBackend:
         self._fail = fail
         self._per_name = per_name or {}
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         if self._fail:
             raise BackendUnavailableError("simulated outage")
-        return self._per_name.get(name, self._value)
+        return Secret(self._per_name.get(name, self._value))
 
 
 def _make_client(
@@ -260,7 +261,7 @@ def test_requestheaders_fails_closed_on_unexpected_backend_exception(tmp_path: P
     addon, audit_path = _build_addon(tmp_path)
 
     class _ExplodingBackend:
-        def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+        def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
             raise PermissionError(f"simulated bind-mount perm denial for {name!r}")
 
     addon.client = CachingSecretsClient(
@@ -471,11 +472,11 @@ class _CompositeFakeBackend:
         self.store = store
         self.fetched: list[str] = []
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
         self.fetched.append(name)
         if name not in self.store:
             raise BackendUnavailableError(f"no such secret {name!r}")
-        return self.store[name]
+        return Secret(self.store[name])
 
 
 def _build_composite_addon(

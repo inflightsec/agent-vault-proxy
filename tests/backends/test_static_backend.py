@@ -21,7 +21,7 @@ def test_fetch_returns_value(tmp_path: Path) -> None:
         "secrets:\n  OPENAI_API_KEY: sk-real-value-1\n",
     )
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(p)))
-    assert backend.fetch("OPENAI_API_KEY") == "sk-real-value-1"
+    assert backend.fetch("OPENAI_API_KEY").reveal() == "sk-real-value-1"
 
 
 def test_fetch_missing_name_raises(tmp_path: Path) -> None:
@@ -33,7 +33,7 @@ def test_fetch_missing_name_raises(tmp_path: Path) -> None:
 
 def test_fetch_inline_secrets_works() -> None:
     backend = StaticSecretsBackend(secrets={"K": "v"})
-    assert backend.fetch("K") == "v"
+    assert backend.fetch("K").reveal() == "v"
 
 
 def test_world_readable_file_rejected(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_values_coerced_to_str(tmp_path: Path) -> None:
     header substitution doesn't trip on a non-string value."""
     p = _write_secrets(tmp_path, "secrets:\n  PORT_TOKEN: 12345\n")
     backend = StaticSecretsBackend(config=StaticSecretsConfig(type="static", path=str(p)))
-    assert backend.fetch("PORT_TOKEN") == "12345"
+    assert backend.fetch("PORT_TOKEN").reveal() == "12345"
 
 
 def test_unreadable_file_raises_backend_unavailable(tmp_path: Path) -> None:

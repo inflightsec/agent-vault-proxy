@@ -306,7 +306,12 @@ def _probe_exchange(
             "SKIP",
             f"skipping live exchange (input re-fetch failed: {type(e).__name__})",
         )
-    result = exchange(injector, client_id_value, client_secret_value, refresh_token_value)
+    result = exchange(
+        injector,
+        client_id_value.reveal(),
+        client_secret_value.reveal(),
+        refresh_token_value.reveal(),
+    )
     if result.outcome != "success":
         msg = f"token endpoint outcome: {result.outcome}"
         if result.error_description is not None:

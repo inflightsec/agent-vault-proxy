@@ -13,7 +13,7 @@ This is the operator-facing half of the "edit only Bitwarden" workflow
    (see :mod:`kow.placeholders`) — the SAME derivation the
    daemon uses, so the env file and the daemon's enforced map agree.
 5. Writes ``export NAME='<placeholder>'`` lines, single-quoted, to a 0600
-   file (default ``~/.config/avp/env``).
+   file (default ``~/.config/kow/env``).
 
 Security posture:
 
@@ -36,6 +36,8 @@ import stat
 import sys
 from pathlib import Path
 
+from kow import _paths
+
 # A secret name must be a POSIX-shell-safe identifier: leading letter or
 # underscore, then letters/digits/underscores. This is intentionally
 # STRICTER than what BWS allows in a secret name — anything outside this
@@ -43,12 +45,19 @@ from pathlib import Path
 # the env file always agree on the exact name.
 VALID_SECRET_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# Default env-file location for simple mode. ``~/.config/avp/env``.
-_DEFAULT_ENV_PATH = "~/.config/avp/env"
+# Default env-file location for simple mode. ``~/.config/kow/env``, falling
+# back to the pre-rename ``~/.config/avp/env`` when that is the one the
+# operator already has (ADR-0045; fallback drops in 2.0.0).
+_DEFAULT_ENV_PATH = "~/.config/kow/env"
+_LEGACY_ENV_PATH = "~/.config/avp/env"
 
 
 def default_env_path() -> Path:
-    return Path(_DEFAULT_ENV_PATH).expanduser()
+    new = Path(_DEFAULT_ENV_PATH).expanduser()
+    if _paths.exists(new):
+        return new
+    legacy = Path(_LEGACY_ENV_PATH).expanduser()
+    return legacy if _paths.exists(legacy) else new
 
 
 def list_secret_names(backend: object) -> list[str]:
@@ -175,7 +184,13 @@ def run_env(
     # the projected env matches what the daemon actually enforces. A backend
     # that can't serve notes degrades to derived-only with a warning rather
     # than failing the whole projection.
-    stored: dict[str, str] = {}
+    # File-declared placeholders come FIRST: in `binding_source: file` the
+    # daemon enforces exactly `spec.placeholder`, so projecting a derived one
+    # would hand the agent a token the proxy does not recognise — the
+    # documented `kow env && kow run` flow would silently never inject.
+    stored: dict[str, str] = {
+        name: spec.placeholder for name, spec in config.secrets.items() if spec.placeholder
+    }
     try:
         from kow.backends import list_secret_notes
         from kow.notes_binding import stored_placeholder_from_note
@@ -183,7 +198,9 @@ def run_env(
         notes = list_secret_notes(backend)
         for name, note in notes.items():
             pinned = stored_placeholder_from_note(note)
-            if pinned is not None:
+            # A file declaration is authoritative for the secrets it names;
+            # note pins fill in the rest (ADR-0029).
+            if pinned is not None and name not in stored:
                 stored[name] = pinned
     except Exception as e:  # noqa: BLE001 — degrade, don't brick the projection
         print(

@@ -621,13 +621,13 @@ def test_token_type_omitted_accepted_with_warning(
     assert result.access_token == "at-A"
 
 
-def test_request_carries_avp_user_agent(
+def test_request_carries_kow_user_agent(
     spec_body_post: Oauth2RefreshInjector,
 ) -> None:
-    """AVP identifies itself rather than shipping the default
+    """kow identifies itself rather than shipping the default
     ``Python-urllib/3.X`` (some providers block stock urllib UA outright
-    with confusing 4xx errors; identifying AVP also helps providers
-    whitelist explicitly when needed)."""
+    with confusing 4xx errors; identifying kow also helps providers
+    whitelist explicitly when needed). Renamed with the project (ADR-0045)."""
     captured: list[str | None] = []
 
     def side_effect(req: Any, timeout: float | None = None) -> _FakeResponse:
@@ -636,7 +636,7 @@ def test_request_carries_avp_user_agent(
 
     with patch("kow.injectors.oauth2_refresh._transport_open", side_effect=side_effect):
         exchange(spec_body_post, "cid", "csec", "rtok")
-    assert captured == ["agent-vault-proxy/oauth2-refresh"]
+    assert captured == ["kow/oauth2-refresh"]
 
 
 def test_parse_error_sanitizes_and_caps_provider_error_description() -> None:

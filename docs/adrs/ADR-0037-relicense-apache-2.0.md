@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-07-26
+---
+
 # ADR-0037: Relicense from MIT to Apache-2.0
 
 - **Status:** Accepted

@@ -26,11 +26,12 @@ import stat
 import sys
 from pathlib import Path
 
+from kow import _paths
 from kow.config import build_backend, load_config
 
-# Default CA locations under the systemd confdir (HOME=/var/lib/agent-vault-proxy).
+# Default CA locations under the systemd statedir (HOME=/var/lib/kow).
 # mitmproxy writes the CA on first proxied request to $HOME/.mitmproxy/.
-_DEFAULT_CONFDIR = "/var/lib/agent-vault-proxy/.mitmproxy"
+_DEFAULT_CONFDIR = str(_paths.resolve(_paths.LINUX_STATEDIR / ".mitmproxy"))
 _CA_CERT_BASENAME = "mitmproxy-ca-cert.pem"  # public cert (world-readable OK)
 _CA_KEY_BASENAME = "mitmproxy-ca.pem"  # PRIVATE key (must stay 0600)
 

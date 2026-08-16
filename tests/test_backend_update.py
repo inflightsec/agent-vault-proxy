@@ -27,6 +27,7 @@ from kow.backends import (
 )
 from kow.backends.bws import BitwardenBackend
 from kow.backends.static import StaticSecretsBackend
+from kow.secret import Secret
 
 # ---------------------------------------------------------------------------
 # Dispatch helper — read-only fallback + writable forwarding
@@ -40,8 +41,8 @@ class _WritableFake:
         self._store = store
         self.last_update: tuple[str, str, FetchContext | None] | None = None
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return self._store[name]
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(self._store[name])
 
     def update(self, name: str, value: str, ctx: FetchContext | None = None) -> None:
         self.last_update = (name, value, ctx)
@@ -54,8 +55,8 @@ class _ReadOnlyFake:
     def __init__(self, store: dict[str, str]) -> None:
         self._store = store
 
-    def fetch(self, name: str, ctx: FetchContext | None = None) -> str:
-        return self._store[name]
+    def fetch(self, name: str, ctx: FetchContext | None = None) -> Secret:
+        return Secret(self._store[name])
 
 
 def test_update_secret_dispatches_to_backend_when_present() -> None:
@@ -65,7 +66,7 @@ def test_update_secret_dispatches_to_backend_when_present() -> None:
     ctx = FetchContext(request_id="req-A")
     update_secret(backend, "FOO", "v2", ctx)
     assert backend.last_update == ("FOO", "v2", ctx)
-    assert backend.fetch("FOO") == "v2"
+    assert backend.fetch("FOO").reveal() == "v2"
 
 
 def test_update_secret_raises_for_read_only_backend() -> None:

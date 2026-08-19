@@ -129,6 +129,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "docker: end-to-end test that requires a running Docker daemon (skipped by default)",
+    "attacks: adversarial exfil-regression exploit in the attack gallery (see tests/attacks/README.md)",
 ]
 # Skip the docker-e2e suite by default. CI's `e2e-docker` job opts in
 # via the dedicated `bash tests/docker-e2e/run.sh` invocation; local

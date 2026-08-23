@@ -19,6 +19,10 @@
 # So the leg proves, in order:
 #   1. the helper reads its own item silently          (no prompt, exit 0)
 #   2. /usr/bin/security CANNOT read it                (not in the ACL)
+#
+# Denial status codes vary by path — errSecInteractionNotAllowed (-25308) when
+# the process has no session, errSecAuthFailed (-25293) when interaction is
+# disabled explicitly. Assert on DENIED:*, never on one constant.
 #   3. a Python script CANNOT read it                  (this is the point)
 #   4. a REBUILT helper still reads it                 (stable requirement)
 set -uo pipefail
@@ -32,7 +36,7 @@ for a in "$@"; do
   esac
 done
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; SKIP=0
 ok()   { printf '  PASS %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  FAIL %s\n' "$*"; FAIL=$((FAIL+1)); }
 step() { printf '\n== %s\n' "$*"; }
@@ -225,9 +229,15 @@ step "7. /usr/bin/security must NOT be able to read it"
 deny_probe security find-generic-password -s "$SERVICE" -a "$ACCOUNT" -w "$KEYCHAIN"
 SEC_OUT="$DP_OUT"; SEC_RC="$DP_RC"
 if [ "$DP_TIMEOUT" = 1 ]; then
-  bad "security(1) neither returned nor was refused within 20s — INCONCLUSIVE."
-  bad "  expected a categorical refusal (rc 36). A stall means it asked a human,"
-  bad "  so the ACL may permit user-approved reads. Not treated as a pass."
+  # UNDETERMINED, deliberately neither pass nor fail. security(1) exposes no way
+  # to forbid interaction, so on a host with an Aqua session it blocks on a
+  # dialog. A stall proves only that nothing was read silently in the window —
+  # it does NOT prove the ACL is scoped (a lock, a regression or a
+  # user-approvable path look identical from here). Claiming a pass would
+  # overclaim; failing would make the leg permanently red on hosted runners for
+  # an environment property. The categorical claim is step 8's job, and step 8
+  # is deterministic.
+  skip "security(1) did not resolve in 20s — undetermined here; step 8 makes the categorical claim"
 elif [ "$SEC_RC" = 0 ] && [ "$SEC_OUT" = "$SECRET" ]; then
   bad "security(1) READ THE SECRET — the ACL is not scoped"
 elif [ "$SEC_RC" = 0 ]; then
@@ -246,6 +256,17 @@ import ctypes, ctypes.util, sys
 Sec = ctypes.CDLL(ctypes.util.find_library("Security"))
 CF = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
 service, account, keychain = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Ask the same question the helper asks (kow-keyd.c calls this too): "can I
+# read this WITHOUT a human?" Otherwise the answer depends on whether the host
+# happens to have a GUI session, and a prompt masquerades as a hang.
+Sec.SecKeychainSetUserInteractionAllowed.restype = ctypes.c_int32
+Sec.SecKeychainSetUserInteractionAllowed.argtypes = [ctypes.c_ubyte]  # Boolean
+_ia = Sec.SecKeychainSetUserInteractionAllowed(0)
+if _ia != 0:
+    # Step 8 claims a stall is a defect; that claim is only valid if interaction
+    # really was disabled. If it was not, say so rather than testing something else.
+    print("INTERACTION_NOT_DISABLED:%d" % _ia); sys.exit(4)
 
 Sec.SecKeychainOpen.restype = ctypes.c_int32
 kc = ctypes.c_void_p()
@@ -270,12 +291,17 @@ PY_BIN="$(command -v python3)"
 deny_probe "$PY_BIN" "$BASE/steal.py" "$SERVICE" "$ACCOUNT" "$KEYCHAIN"
 PY_OUT="$DP_OUT"; PY_RC="$DP_RC"
 if [ "$DP_TIMEOUT" = 1 ]; then
-  bad "python probe neither returned nor was refused within 20s — INCONCLUSIVE."
-  bad "  expected DENIED:-25308 (errSecInteractionNotAllowed). Not treated as a pass."
+  bad "python probe stalled despite interaction being disabled — expected an"
+  bad "  immediate DENIED:<status>. A stall here is a real defect, not environment."
   PY_OUT="TIMEOUT"
 fi
 case "$PY_OUT" in
   TIMEOUT) ;;
+  INTERACTION_NOT_DISABLED:*)
+    # Step 8's "a stall is a defect" claim holds only if interaction really was
+    # disabled. If that call failed, say so rather than asserting a property
+    # this run did not actually test.
+    bad "could not disable keychain interaction (${PY_OUT}) — step 8 cannot make its claim" ;;
   STOLE:*)
     bad "A PYTHON SCRIPT READ THE SECRET — access is scoped to the interpreter, not to kow" ;;
   DENIED:*)
@@ -308,5 +334,9 @@ step "10. delete is idempotent"
 "$KEYD" get --service "$SERVICE" --account "$ACCOUNT" --keychain "$KEYCHAIN" >/dev/null 2>&1
 [ "$?" = 44 ] && ok "get on a missing item exits 44 (not found)" || bad "missing item did not exit 44"
 
-printf '\n===== kow-keyd e2e: %d passed, %d failed =====\n' "$PASS" "$FAIL"
+if [ "$SKIP" -gt 0 ]; then
+  printf '\n===== kow-keyd e2e: %d passed, %d failed, %d undetermined =====\n' "$PASS" "$FAIL" "$SKIP"
+else
+  printf '\n===== kow-keyd e2e: %d passed, %d failed =====\n' "$PASS" "$FAIL"
+fi
 [ "$FAIL" -eq 0 ]

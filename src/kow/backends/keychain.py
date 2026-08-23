@@ -444,7 +444,9 @@ class KeychainBackend:
         except subprocess.TimeoutExpired:
             raise BackendUnavailableError(
                 f"`security {cmd[0]}` timed out after {self._config.timeout_seconds}s "
-                "(a GUI unlock prompt with nobody to answer it looks exactly like this)"
+                "(a GUI unlock prompt with nobody to answer it looks exactly like this); "
+                f"unlock it with `security unlock-keychain {self._config.keychain or ''}`".rstrip()
+                + " and retry"
             ) from None
         except OSError as e:
             raise BackendUnavailableError(
@@ -475,7 +477,10 @@ class KeychainBackend:
             )
         except subprocess.TimeoutExpired:
             raise BackendUnavailableError(
-                f"`security {cmd[0]}` timed out after {self._config.timeout_seconds}s"
+                f"`security {cmd[0]}` timed out after {self._config.timeout_seconds}s "
+                "(most likely a GUI unlock prompt with nobody to answer it); "
+                f"unlock it with `security unlock-keychain {self._config.keychain or ''}`".rstrip()
+                + " and retry"
             ) from None
         except OSError as e:
             raise BackendUnavailableError(

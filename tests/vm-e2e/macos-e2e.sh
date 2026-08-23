@@ -338,8 +338,8 @@ K_BASE=""; K_PROXY_PID=""; K_KEYCHAIN=""
 K_SERVICE=kow-e2e
 
 cleanup_keychain() {
-  [ -n "$K_PROXY_PID" ] && kill "$K_PROXY_PID" 2>/dev/null
-  [ -n "$ECHO_PID" ] && kill "$ECHO_PID" 2>/dev/null
+  if [ -n "$K_PROXY_PID" ]; then kill "$K_PROXY_PID" 2>/dev/null; wait "$K_PROXY_PID" 2>/dev/null; fi
+  stop_echo_upstream
   if [ -n "$K_KEYCHAIN" ] && [ "$KEEP" != "1" ]; then
     security delete-keychain "$K_KEYCHAIN" 2>/dev/null
     if [ -e "$K_KEYCHAIN" ]; then

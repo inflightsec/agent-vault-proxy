@@ -38,6 +38,14 @@ clang -O2 -Wall -Wextra -Werror -o "$OUT" "$HERE/kow-keyd.c" \
 # The entitlement is what the data-protection keychain checks. It is only
 # meaningful with a Team ID, so an unsigned or self-signed build simply omits it
 # and uses the file-based keychain instead.
+#
+# THE GROUP MUST STAY kow-SPECIFIC. macOS grants access to EVERY binary signed
+# with a matching access group — the group, not the binary, is the unit of
+# access. So a bare team group (TEAMID.com.dataminelab) would let every other
+# tool signed by the same team read kow's credentials, and one Developer ID
+# typically signs several products. Narrow it to this product and keep it
+# narrow; "simplifying" this to a shared group silently widens the boundary to
+# every binary the team ever ships.
 ENTITLEMENTS=""
 if [ -n "$TEAM_ID" ]; then
   ENTITLEMENTS="$HERE/kow-keyd.entitlements"

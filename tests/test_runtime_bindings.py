@@ -17,26 +17,9 @@ from __future__ import annotations
 
 from kow.placeholders import derive_placeholder
 from kow.runtime_bindings import resolve_runtime_bindings
-from kow.secret import Secret
+from tests.fakes import FakeNotesListBackend as _FakeNotesListBackend
 
 _SALT = b"\x05" * 32
-
-
-class _FakeNotesListBackend:
-    """Backend with list + fetch_with_meta for runtime resolution tests."""
-
-    def __init__(self, secrets: dict[str, tuple[str, str | None]]) -> None:
-        # name -> (value, note)
-        self._secrets = secrets
-
-    def list_secret_names(self) -> list[str]:
-        return list(self._secrets)
-
-    def fetch(self, name, ctx=None) -> Secret:
-        return Secret(self._secrets[name][0])
-
-    def fetch_with_meta(self, name, ctx=None) -> tuple[Secret, str | None]:
-        return self._secrets[name]
 
 
 def _load_file_config(tmp_path, secret_name: str, placeholder: str, host: str):

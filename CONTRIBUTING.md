@@ -16,7 +16,7 @@ Recommended path — mirrors CI exactly (Python 3.12, hash-pinned deps from the 
 
 ```bash
 git clone https://github.com/inflightsec/keys-on-the-wire
-cd kow
+cd keys-on-the-wire
 bash scripts/bootstrap-venv.sh
 ```
 
@@ -28,12 +28,16 @@ Requires [`uv`](https://docs.astral.sh/uv/) on PATH (`curl -LsSf https://astral.
 
 Re-run any time you want a clean slate. `PY=python3.13 bash scripts/bootstrap-venv.sh` overrides the interpreter.
 
+If uv fetches a managed interpreter it lands under **your** home (`~/.local/share/uv/python/...`) and `.venv/bin/python` symlinks to it. On a shared or NFS checkout that venv then works only for the account that built it — everyone else gets "python not found" from the pre-commit hooks, which invoke `.venv/bin/mypy` and `.venv/bin/pytest` directly. Either have each account run the bootstrap itself, or point uv at a readable location first: `export UV_PYTHON_INSTALL_DIR=/opt/uv-pythons`.
+
 Fallback if you don't want uv:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --only-binary :all: -e '.[dev]'
 ```
+
+**Check your interpreter first — `python3 --version` must be 3.12 or 3.13.** This path uses whatever `python3` is, and the pinned dependency set has no wheels beyond 3.13; on Arch (`python3` is 3.14) it fails with "No matching distribution found for pydantic-core". If `python3` is newer, either install a supported interpreter and name it explicitly (`python3.13 -m venv .venv` — check it exists first, distros do not always ship it alongside the default), or just use the uv path above, which fetches and pins 3.12 for you without touching your system Python. That is why uv is the recommended path.
 
 `--only-binary :all:` refuses source distributions — the Python equivalent of `npm install --ignore-scripts`. This path resolves deps fresh from PyPI (no hash verification against the committed lockfile), so it's a quicker setup but doesn't reproduce CI's exact pin set.
 
@@ -69,6 +73,9 @@ pre-commit autoupdate
 # Lint + format check (CI runs the same; pre-commit runs this too)
 .venv/bin/ruff check src tests
 .venv/bin/ruff format --check src tests
+
+# Static types (also a pre-commit and CI gate — a clean pytest is not enough)
+.venv/bin/mypy src
 
 # Apply formatting
 .venv/bin/ruff format src tests

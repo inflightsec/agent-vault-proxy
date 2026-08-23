@@ -136,7 +136,11 @@ services:
     build:
       context: .
     image: kow:e2e
-    ports:
+    # !override, not a plain list: compose MERGES sequences by appending, so a
+    # bare `ports:` here keeps the base file's 127.0.0.1:14322:14322 as well and
+    # the stack fails to bind when the systemd leg already holds that port in
+    # this VM. Requires compose >= 2.24.4.
+    ports: !override
       - "127.0.0.1:${HOST_PORT}:14322"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -146,6 +150,23 @@ services:
       - kow-state:/var/lib/kow
       - kow-logs:/var/log/kow
 YAML
+# `!override` below is Compose >= 2.24.4. On older compose the file fails to
+# parse and the error looks nothing like a version problem, so say it plainly.
+if [ -n "$COMPOSE" ]; then
+  CV=$($COMPOSE version --short 2>/dev/null | tr -d 'v')
+  case "$CV" in
+    [0-9]*.[0-9]*)
+      if [ "$(printf '%s\n2.24.4\n' "$CV" | sort -V | head -1)" != "2.24.4" ]; then
+        bad "compose $CV is older than 2.24.4; the ports:!override merge tag is unsupported"
+        COMPOSE=""
+      fi ;;
+    *)
+      # Unknown version: do NOT fail open silently into a cryptic YAML parse
+      # error — say what we could not determine before trying anyway.
+      printf '  note: could not parse compose version (%s); if `up` fails to parse the\n' "${CV:-empty}"
+      printf '        override, suspect compose < 2.24.4 (ports:!override unsupported)\n' ;;
+  esac
+fi
 [ -n "$COMPOSE" ] && ( cd "$COMPOSE_DIR" && $COMPOSE up -d >/tmp/compose.log 2>&1 )
 sleep 10
 if [ -n "$COMPOSE" ] && ( cd "$COMPOSE_DIR" && $COMPOSE ps -q | grep -q . ); then

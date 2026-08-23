@@ -50,18 +50,48 @@ elif command -v brew >/dev/null 2>&1; then PREFIX="$(brew --prefix)"
 elif [ -d /opt/homebrew ]; then PREFIX=/opt/homebrew
 else PREFIX=/usr/local; fi
 
-# macOS ships Python 3.9; kow needs >=3.12. Try the brew kegs first, then PATH.
+# macOS ships Python 3.9; kow needs >=3.12.
+#
+# ORDER MATTERS — do not re-sort this newest-first. `python3` comes first so we
+# honour the interpreter the environment deliberately provisioned (CI's
+# setup-python, or a contributor's venv). Then the versions this project
+# actually ships wheels for. A newer interpreter than we support is LAST resort:
+# picking Homebrew's python@3.14 ahead of CI's 3.13 is what broke the first run
+# — pydantic-core has no arm64 wheel for it, so pip fell back to a source build
+# and failed. Newest is not safest.
+SUPPORTED_PY="3.12 3.13"
+_py_mm() { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
+_py_ok() { "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; }
+
+# TWO passes, deliberately. Reordering alone is not enough: on a Mac where
+# Homebrew links python3 to 3.14, a single ordered scan that accepts anything
+# >=3.12 still picks 3.14 and only warns afterwards — which is the exact failure
+# this is meant to prevent. Pass 1 therefore takes only an interpreter whose
+# minor version this project ships wheels for; pass 2 is the reluctant fallback.
 find_python() {
-  local c
-  for c in "${KOW_PY:-}" \
-           "$PREFIX/opt/python@3.14/bin/python3.14" \
-           "$PREFIX/opt/python@3.13/bin/python3.13" \
-           "$PREFIX/opt/python@3.12/bin/python3.12" \
-           python3.14 python3.13 python3.12 python3; do
-    [ -n "$c" ] || continue
+  local c mm
+  # An explicit KOW_PY wins outright — even an unsupported version, because
+  # reproducing a version-specific failure is exactly why someone sets it.
+  # Handled before the loop so a path containing spaces is not word-split.
+  if [ -n "${KOW_PY:-}" ]; then
+    if command -v -- "$KOW_PY" >/dev/null 2>&1 && _py_ok "$KOW_PY"; then
+      command -v -- "$KOW_PY"; return 0
+    fi
+    red "KOW_PY=$KOW_PY is not a usable python >=3.12"; return 1
+  fi
+  local candidates="python3 python3.13 python3.12
+    $PREFIX/opt/python@3.13/bin/python3.13 $PREFIX/opt/python@3.12/bin/python3.12
+    python3.14 $PREFIX/opt/python@3.14/bin/python3.14"
+  # pass 1 — a version we actually ship wheels for
+  for c in $candidates; do
     command -v -- "$c" >/dev/null 2>&1 || continue
-    "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null \
-      && { command -v -- "$c"; return 0; }
+    mm="$(_py_mm "$c")"
+    case " $SUPPORTED_PY " in *" $mm "*) command -v -- "$c"; return 0 ;; esac
+  done
+  # pass 2 — anything >=3.12; caller warns
+  for c in $candidates; do
+    command -v -- "$c" >/dev/null 2>&1 || continue
+    _py_ok "$c" && { command -v -- "$c"; return 0; }
   done
   return 1
 }
@@ -74,7 +104,17 @@ PY="$(find_python)" || {
 SRC="${KOW_SRC:-$(cd "$(dirname "$0")/../.." && pwd)}"
 [ -f "$SRC/pyproject.toml" ] || { red "no kow source tree at $SRC (set KOW_SRC)"; exit 2; }
 
-printf '%s\n' "mode=$MODE  prefix=$PREFIX  python=$PY ($("$PY" -V 2>&1 | awk '{print $2}'))  src=$SRC"
+PY_MM="$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
+printf '%s\n' "mode=$MODE  prefix=$PREFIX  python=$PY ($PY_MM)  src=$SRC"
+
+# Say this out loud rather than letting it surface 200 lines later as an
+# inscrutable wheel-build error: outside the shipped range, dependencies may
+# have no binary wheel and pip will try to compile them.
+case " $SUPPORTED_PY " in
+  *" $PY_MM "*) ;;
+  *) printf 'warning: python %s is outside this project'"'"'s supported range (%s).\n' "$PY_MM" "$SUPPORTED_PY"
+     printf 'warning: dependencies may lack wheels and fall back to a source build. Set KOW_PY to override.\n' ;;
+esac
 
 REAL_SECRET="sk-live-MACTEST-$(head -c8 /dev/urandom | xxd -p)"
 PLACEHOLDER="sk-PLACEHOLDER-mactest0000111122223333"
@@ -129,6 +169,16 @@ require_free_port() {
 # ------------------------------------------------------------ shared upstream
 
 ECHO_PID=""
+# Killing a background job makes the shell print a "Terminated: 15" banner with
+# the whole heredoc inline, which reads like a crash at the end of a passing
+# run. Reap quietly instead.
+stop_echo_upstream() {
+  [ -n "$ECHO_PID" ] || return 0
+  kill "$ECHO_PID" 2>/dev/null
+  wait "$ECHO_PID" 2>/dev/null
+  ECHO_PID=""
+}
+
 start_echo_upstream() {
   "$PY" - "$ECHO_PORT" <<'PY' >"$RUNDIR/echo.log" 2>&1 &
 import http.server, json, sys
@@ -210,8 +260,8 @@ YAML
 U_BASE=""; U_PROXY_PID=""
 
 cleanup_user() {
-  [ -n "$U_PROXY_PID" ] && kill "$U_PROXY_PID" 2>/dev/null
-  [ -n "$ECHO_PID" ] && kill "$ECHO_PID" 2>/dev/null
+  if [ -n "$U_PROXY_PID" ]; then kill "$U_PROXY_PID" 2>/dev/null; wait "$U_PROXY_PID" 2>/dev/null; fi
+  stop_echo_upstream
   [ -z "$U_BASE" ] && return
   if [ "$KEEP" = "1" ]; then printf '\nkept: %s (logs: %s)\n' "$U_BASE" "$RUNDIR"
   else rm -rf "$U_BASE"; fi
@@ -477,7 +527,7 @@ S_CONF=""; S_STATE=""; S_LOGD=""; S_OPTDIR=""
 S_PLIST=/Library/LaunchDaemons/io.inflightsec.kow.plist
 
 teardown_system() {
-  [ -n "$ECHO_PID" ] && kill "$ECHO_PID" 2>/dev/null
+  stop_echo_upstream
   [ -z "$S_CONF" ] && return
   if [ "$KEEP" = "1" ]; then printf '\nkept installed (teardown skipped; logs: %s)\n' "$RUNDIR"; return; fi
   printf '\n== teardown\n'
@@ -485,7 +535,11 @@ teardown_system() {
     || sudo launchctl unload -w "$S_PLIST" 2>/dev/null
   sudo rm -f "$S_PLIST"
   # sappnd blocks removal until it is cleared, so this must precede the rm.
-  sudo chflags -R noappnd "$S_LOGD" 2>/dev/null
+  # It must be nosappnd, NOT noappnd: sappnd is the SYSTEM append-only flag and
+  # noappnd only clears the USER one (uappnd), so the audit log stayed
+  # undeletable and the whole log dir survived teardown. Caught on a real Mac.
+  sudo chflags -R nosappnd,nouappnd "$S_LOGD" 2>/dev/null \
+    || sudo chflags -R nosappnd "$S_LOGD" 2>/dev/null
   sudo rm -rf "$S_CONF" "$S_STATE" "$S_LOGD" "$S_OPTDIR"
   sudo dseditgroup -o delete "$S_USR" >/dev/null 2>&1
   sudo dscl . -delete "/Users/$S_USR" >/dev/null 2>&1

@@ -24,22 +24,9 @@ from kow.addon import AgentVaultProxyAddon
 from kow.backends import BackendCannotListError
 from kow.placeholders import derive_placeholder
 from kow.secret import Secret
+from tests.fakes import FakeNotesListBackend as _FakeNotesListBackend
 
 _SALT = b"\x09" * 32
-
-
-class _FakeNotesListBackend:
-    def __init__(self, secrets: dict[str, tuple[str, str | None]]) -> None:
-        self._secrets = secrets
-
-    def list_secret_names(self) -> list[str]:
-        return list(self._secrets)
-
-    def fetch(self, name, ctx=None) -> Secret:
-        return Secret(self._secrets[name][0])
-
-    def fetch_with_meta(self, name, ctx=None) -> tuple[Secret, str | None]:
-        return self._secrets[name]
 
 
 def _read_audit(path: Path) -> list[dict[str, Any]]:

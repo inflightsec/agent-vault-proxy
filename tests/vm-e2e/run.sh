@@ -9,7 +9,7 @@
 #
 # Usage: bash tests/vm-e2e/run.sh [--keep] [systemd|docker|rootless|all]
 #   --keep   leave the VM running for debugging (ssh -p 2222 debian@127.0.0.1)
-#   legs     systemd (default) | tls | docker | rootless | pypi | readme | all
+#   legs     systemd (default) | tls | docker | rootless | pypi | readme | setup | all
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,10 +23,10 @@ KEEP=0; LEGS="systemd"
 for a in "$@"; do
   case "$a" in
     --keep) KEEP=1 ;;
-    systemd|docker|rootless|tls|pypi|readme|all) LEGS="$a" ;;
+    systemd|docker|rootless|tls|pypi|readme|setup|all) LEGS="$a" ;;
   esac
 done
-[ "$LEGS" = "all" ] && LEGS="systemd tls docker rootless pypi readme"
+[ "$LEGS" = "all" ] && LEGS="systemd tls docker rootless pypi readme setup"
 
 green(){ printf '\033[1;32m%s\033[0m\n' "$*"; }
 red(){ printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
@@ -138,6 +138,8 @@ for leg in $LEGS; do
               $SSH debian@127.0.0.1 'sudo bash /home/debian/guest-pypi.sh' 2>&1 | tee "$WORK/guest-pypi.log" ;;
     readme)   echo; green "### LEG: readme (walk the README quickstart)"
               $SSH debian@127.0.0.1 'bash /home/debian/guest-readme.sh' 2>&1 | tee "$WORK/guest-readme.log" ;;
+    setup)    echo; green "### LEG: setup (tests/setup-e2e in a real Docker daemon)"
+              $SSH debian@127.0.0.1 'sudo bash /home/debian/guest-setup-e2e.sh' 2>&1 | tee "$WORK/guest-setup.log" ;;
   esac
   [ "${PIPESTATUS[0]}" -ne 0 ] && RC=1
 done

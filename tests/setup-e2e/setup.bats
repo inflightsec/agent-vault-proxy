@@ -9,18 +9,22 @@ setup_file() {
         echo "must run as root (sudo bats)" >&2
         return 1
     fi
+    # Post-rename canonical layout (ADR-0045). A FRESH host — which is exactly
+    # what run.sh provisions — gets the `kow` tree; the `agent-vault-proxy`
+    # names are only adopted when that layout already exists, which it never
+    # does in a throwaway container. Keep these in step with src/kow/_paths.py.
     if [ "$(uname -s)" = "Darwin" ]; then
-        export AVP_OS=macos AVP_USER=_avp AVP_GID0=wheel
-        export AVP_CONF=/usr/local/etc/agent-vault-proxy
-        export AVP_STATE=/usr/local/var/lib/agent-vault-proxy
-        export AVP_LOG=/usr/local/var/log/agent-vault-proxy
-        export AVP_SERVICE=/Library/LaunchDaemons/io.inflightsec.agent-vault-proxy.plist
+        export AVP_OS=macos AVP_USER=_kow AVP_GID0=wheel
+        export AVP_CONF=/usr/local/etc/kow
+        export AVP_STATE=/usr/local/var/lib/kow
+        export AVP_LOG=/usr/local/var/log/kow
+        export AVP_SERVICE=/Library/LaunchDaemons/io.inflightsec.kow.plist
     else
-        export AVP_OS=linux AVP_USER=avp AVP_GID0=root
-        export AVP_CONF=/etc/agent-vault-proxy
-        export AVP_STATE=/var/lib/agent-vault-proxy
-        export AVP_LOG=/var/log/agent-vault-proxy
-        export AVP_SERVICE=/etc/systemd/system/agent-vault-proxy.service
+        export AVP_OS=linux AVP_USER=kow AVP_GID0=root
+        export AVP_CONF=/etc/kow
+        export AVP_STATE=/var/lib/kow
+        export AVP_LOG=/var/log/kow
+        export AVP_SERVICE=/etc/systemd/system/kow.service
     fi
     # Clearly fake — never put real credential material in this suite.
     export AVP_FAKE_TOKEN="avp-setup-e2e-FAKE-TOKEN-not-a-secret"
@@ -172,11 +176,11 @@ run_setup() {
         [ "$(mog "$AVP_SERVICE")" = "644 root root" ]
         grep -q "^User=$AVP_USER$" "$AVP_SERVICE"
         grep -q "^ProtectSystem=strict$" "$AVP_SERVICE"
-        [ ! -e /etc/systemd/system/multi-user.target.wants/agent-vault-proxy.service ]
+        [ ! -e /etc/systemd/system/multi-user.target.wants/kow.service ]
     else
         [ "$(mog "$AVP_SERVICE")" = "644 root wheel" ]
-        grep -q "io.inflightsec.agent-vault-proxy" "$AVP_SERVICE"
-        ! launchctl print system/io.inflightsec.agent-vault-proxy >/dev/null 2>&1
+        grep -q "io.inflightsec.kow" "$AVP_SERVICE"
+        ! launchctl print system/io.inflightsec.kow >/dev/null 2>&1
     fi
 }
 

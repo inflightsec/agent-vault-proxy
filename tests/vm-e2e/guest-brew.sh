@@ -27,15 +27,39 @@ chmod 700 "$WORK/conf/static" "$WORK/state"
 # Homebrew lives at /opt/homebrew on Apple Silicon and /usr/local on Intel, so
 # the interpreter path cannot be hardcoded. macOS itself ships 3.9; kow needs 3.12+.
 BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /usr/local)"
+# TWO passes, same rule as macos-e2e.sh: prefer a version this project ships
+# wheels for, and only then anything >=3.12. A single ordered scan still picks
+# Homebrew 3.14 wherever it is linked as python3, which is the failure this
+# exists to avoid (no arm64 pydantic-core wheel -> source build -> dead).
+SUPPORTED_PY="3.12 3.13"
+CANDIDATES="python3 python3.13 python3.12
+  $BREW_PREFIX/opt/python@3.13/bin/python3.13 $BREW_PREFIX/opt/python@3.12/bin/python3.12
+  python3.14 $BREW_PREFIX/opt/python@3.14/bin/python3.14"
 PY=""
-for c in "${KOW_PY:-}" "$BREW_PREFIX/opt/python@3.14/bin/python3.14" \
-         "$BREW_PREFIX/opt/python@3.13/bin/python3.13" \
-         "$BREW_PREFIX/opt/python@3.12/bin/python3.12" \
-         python3.14 python3.13 python3.12 python3; do
-  [ -n "$c" ] && command -v -- "$c" >/dev/null 2>&1 || continue
-  "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null \
-    && { PY="$(command -v -- "$c")"; break; }
+# An explicit override wins outright (unsupported versions included — that is a
+# legitimate way to reproduce a version-specific failure) and is never word-split.
+if [ -n "${KOW_PY:-}" ]; then
+  if command -v -- "$KOW_PY" >/dev/null 2>&1 \
+     && "$KOW_PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+    PY="$(command -v -- "$KOW_PY")"
+  else
+    echo "KOW_PY=$KOW_PY is not a usable python >=3.12" >&2; exit 2
+  fi
+fi
+[ -n "$PY" ] || for c in $CANDIDATES; do
+  command -v -- "$c" >/dev/null 2>&1 || continue
+  mm="$("$c" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
+  case " $SUPPORTED_PY " in *" $mm "*) PY="$(command -v -- "$c")"; break ;; esac
 done
+if [ -z "$PY" ]; then
+  for c in $CANDIDATES; do
+    command -v -- "$c" >/dev/null 2>&1 || continue
+    "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null \
+      && { PY="$(command -v -- "$c")"; break; }
+  done
+  [ -n "$PY" ] && printf 'warning: python %s is outside the supported range (%s); deps may lack wheels.\n' \
+    "$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)" "$SUPPORTED_PY"
+fi
 [ -n "$PY" ] || { echo "no python >=3.12 found (brew install python@3.13)" >&2; exit 2; }
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_ANALYTICS=1
 PORT=8086

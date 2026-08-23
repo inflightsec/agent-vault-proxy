@@ -7,10 +7,30 @@ With the daemon running (either install path), any HTTPS client can route throug
 export HTTPS_PROXY="http://127.0.0.1:14322"
 export HTTP_PROXY="http://127.0.0.1:14322"
 export NODE_USE_ENV_PROXY="1"   # Node 24+ ignores *_PROXY env without this
-export NODE_EXTRA_CA_CERTS="/etc/kow/ca.pem"
-export SSL_CERT_FILE="/etc/kow/ca.pem"
-export REQUESTS_CA_BUNDLE="/etc/kow/ca.pem"
-export CURL_CA_BUNDLE="/etc/kow/ca.pem"
+export NODE_EXTRA_CA_CERTS="/etc/kow/ca.pem"   # additive: Node appends to its defaults
+
+# SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE REPLACE the trust store
+# rather than adding to it. Pointing them at ca.pem alone leaves the shell
+# trusting ONLY kow's CA, which breaks every host kow does not broker (it
+# tunnels those through untouched, so the genuine upstream certificate is what
+# arrives) — `pip install` and `curl https://pypi.org` start failing with
+# "unable to get local issuer certificate". Build a bundle instead:
+mkdir -p ~/.config/kow
+
+# Point SYS_ROOTS at your platform's root store, then concatenate. Pick one:
+SYS_ROOTS=/etc/ssl/certs/ca-certificates.crt        # Debian/Ubuntu
+# SYS_ROOTS=/etc/pki/tls/certs/ca-bundle.crt        # RHEL/Fedora
+# macOS keeps no PEM bundle on disk — export from the keychains instead. Include
+# System.keychain, not just the Apple roots, or any enterprise/MDM-installed CA
+# is dropped and corporate TLS breaks:
+#   { security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain
+#     security find-certificate -a -p /Library/Keychains/System.keychain; } > /tmp/roots.pem
+# SYS_ROOTS=/tmp/roots.pem
+
+cat "$SYS_ROOTS" /etc/kow/ca.pem > ~/.config/kow/ca-bundle.pem
+export SSL_CERT_FILE="$HOME/.config/kow/ca-bundle.pem"
+export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
+export CURL_CA_BUNDLE="$SSL_CERT_FILE"
 
 # Bypass the proxy for loopback and any internal mesh (Tailscale, VPN, LAN peers).
 # Without this, local-service calls get routed at the proxy pointlessly and the
@@ -25,7 +45,7 @@ export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
 
-Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses; setting all of them is harmless. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
+Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses. They are **not** equivalent: `NODE_EXTRA_CA_CERTS` is additive, while the other three replace the trust store outright — which is why the block above hands them a bundle containing the system roots *and* kow's CA, not kow's CA alone. This bundle is a point-in-time copy: re-run the `cat` after a kow CA rotation **and** whenever the system roots change (a `ca-certificates` package update, or an enterprise/MDM root being added or revoked). A stale bundle fails in a confusing way — some hosts verify, others do not. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
 
 The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/kow/audit.jsonl`.
 

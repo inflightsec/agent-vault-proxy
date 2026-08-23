@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # Manual macOS smoke for `avp setup --no-service`. Provisions THIS Mac for
-# real (creates the _avp service user + /usr/local/... layout + LaunchDaemon
+# real (creates the _kow service user + /usr/local/... layout + LaunchDaemon
 # plist, never loaded), asserts the end state with setup.bats, then tears it
 # all down. The Linux leg (run.sh) uses a throwaway container; the Mac has no
 # container, so this script IS the disposable boundary.
 #
 # avp installs into a throwaway root-owned venv under /tmp — not your public
 # PATH or system Python. `avp setup` bakes sys.executable into its sudo -u
-# _avp steps, so _avp must be able to traverse + execute the interpreter:
+# _kow steps, so _kow must be able to traverse + execute the interpreter:
 # every parent dir needs o+x. That rules out a repo-tree or home venv (macOS
 # home dirs are 0700) and `mktemp -d` (macOS $TMPDIR is a 0700 per-user dir).
 # /tmp (1777, cleared on reboot) is world-traversable and genuinely ephemeral.
@@ -105,8 +105,12 @@ teardown_host() {
         /usr/local/var/lib/kow \
         /usr/local/var/log/kow \
         /Library/LaunchDaemons/io.inflightsec.kow.plist
-    sudo dscl . -delete /Users/_avp 2>/dev/null || true
-    sudo dscl . -delete /Groups/_avp 2>/dev/null || true
+    # setup creates _kow (ADR-0045). _avp is removed too so a host that was
+    # provisioned before the rename still cleans up fully.
+    for u in _kow _avp; do
+        sudo dscl . -delete "/Users/$u" 2>/dev/null || true
+        sudo dscl . -delete "/Groups/$u" 2>/dev/null || true
+    done
 }
 
 teardown() {
@@ -122,8 +126,8 @@ teardown() {
 
 if [ "$ASSUME_YES" -ne 1 ]; then
     yellow "This provisions kow on THIS Mac for real: it creates the"
-    yellow "_avp service user and /usr/local/...kow files, then deletes"
-    yellow "them again at the end. Do not run it on a Mac with a real avp install."
+    yellow "_kow service user and /usr/local/...kow files, then deletes"
+    yellow "them again at the end. Do not run it on a Mac with a real kow install."
     read -r -p "Continue? [y/N] " reply
     case "$reply" in [yY]*) ;; *) echo "aborted."; exit 0 ;; esac
 fi
@@ -145,7 +149,7 @@ else
 fi
 # Force a known TERM so the bats formatter doesn't trip on exotic terminfo
 # (e.g. xterm-ghostty missing from root's database). PATH carries the venv so
-# the suite's bare `avp` resolves to the _avp-reachable interpreter; AVP_BACKEND
+# the suite's bare `avp` resolves to the _kow-reachable interpreter; AVP_BACKEND
 # drives run_setup's --static and the secret-source assertions.
 sudo env TERM=xterm-256color AVP_BACKEND="$BACKEND" PATH="$VENV/bin:$PATH" \
     bats "$SCRIPT_DIR/setup.bats"

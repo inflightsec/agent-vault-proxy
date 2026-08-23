@@ -70,7 +70,7 @@ docker exec "$CONTAINER" bash -eu -o pipefail -c '
     apt-get update -q >/dev/null
     apt-get install -yq --no-install-recommends \
         python3 python3-venv sudo bats e2fsprogs ca-certificates >/dev/null
-    python3 -m venv /opt/avp
+    python3 -m venv /opt/kow
     /opt/kow/bin/pip install --quiet --require-hashes --only-binary :all: \
         -r /wheels/requirements.lock
     /opt/kow/bin/pip install --quiet --no-deps /wheels/*.whl
@@ -83,7 +83,7 @@ if docker exec "$CONTAINER" bats /suite/setup.bats; then
 else
     red "setup.bats failed — provisioned state for diagnosis:"
     docker exec "$CONTAINER" bash -c '
-        id avp || true
+        id kow || id avp || true
         ls -laR /etc/kow /var/lib/kow \
             /var/log/kow /etc/systemd/system 2>/dev/null || true
         lsattr /var/log/kow/audit.jsonl 2>/dev/null || true

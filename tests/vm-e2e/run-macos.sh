@@ -54,7 +54,7 @@ echo "==> prerequisite: python >=3.12 (macOS ships 3.9)"
 echo "==> syncing this tree"
 SSHOPT="ssh -F /dev/null -i $GATE/vmkey -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 rsync -a -e "$SSHOPT" --exclude .venv --exclude .git --exclude __pycache__ --exclude .mypy_cache \
-      --exclude .pytest_cache --exclude demo --exclude dist "$REPO"/ "$GUEST_USER@127.0.0.1:kow-src/" || exit 1
+      --exclude .pytest_cache --exclude .hypothesis --exclude demo --exclude dist "$REPO"/ "$GUEST_USER@127.0.0.1:kow-src/" || exit 1
 # The brew leg tests the REAL tap formula, so ship it from the tap checkout.
 SCP="scp -F /dev/null -i $GATE/vmkey -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 if [ -f "$TAP/Formula/keys-on-the-wire.rb" ]; then

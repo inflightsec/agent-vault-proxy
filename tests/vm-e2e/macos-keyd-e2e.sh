@@ -92,8 +92,21 @@ security unlock-keychain -p "$KCPW" "$SIGNKC" || { bad "could not unlock the sig
 # shellcheck disable=SC2086
 security list-keychains -d user -s $ORIG_LIST "$SIGNKC" || { bad "could not extend the search list"; exit 1; }
 
-if KOW_SIGN_ID="$CN" KOW_SIGN_KEYCHAIN="$SIGNKC" KOW_SIGN_KEYCHAIN_PW="$KCPW" \
-     bash "$SRC/helper/make-signing-identity.sh" >"$BASE/identity.log" 2>&1; then
+# Bounded, and traced. Several `security` calls block forever on a host with no
+# Aqua session (a GUI prompt nobody can answer), and macOS ships no timeout(1),
+# so an unbounded call turns into a 20-minute CI cancellation with no output at
+# all. Cap it, stream the trace, and on a hang print the last commands that ran.
+KOW_SIGN_ID="$CN" KOW_SIGN_KEYCHAIN="$SIGNKC" KOW_SIGN_KEYCHAIN_PW="$KCPW" \
+  bash -x "$SRC/helper/make-signing-identity.sh" >"$BASE/identity.log" 2>&1 &
+_idpid=$!
+_i=0
+while kill -0 "$_idpid" 2>/dev/null && [ "$_i" -lt 240 ]; do sleep 0.5; _i=$((_i + 1)); done
+if kill -0 "$_idpid" 2>/dev/null; then
+  kill -9 "$_idpid" 2>/dev/null; wait "$_idpid" 2>/dev/null
+  bad "signing-identity creation HUNG (>120s) — last commands before the stall:"
+  grep '^+' "$BASE/identity.log" | tail -12
+  exit 1
+elif wait "$_idpid"; then
   ok "created identity '$CN' in a throwaway keychain"
 else
   bad "could not create a signing identity"; tail -20 "$BASE/identity.log"; exit 1

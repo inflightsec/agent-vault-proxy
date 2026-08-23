@@ -80,8 +80,20 @@ security import "$WORK/id.p12" -k "$KEYCHAIN" -P kow \
 echo "==> trusting it for code signing (user trust domain, no sudo)"
 # No -d: this is the USER trust domain. -d would be the admin/system domain and
 # would need sudo, which this has no business asking for.
-security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$WORK/cert.pem" >/dev/null 2>&1 \
-  || echo "note: add-trusted-cert reported a problem; checking whether signing works anyway"
+# Bounded: on a host with no Aqua session this blocks on an authorisation
+# dialog rather than failing, and `||` catches a bad exit code but not a stall.
+# Signing does not need it (see the probe below), so a timeout is not fatal.
+security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$WORK/cert.pem" >/dev/null 2>&1 &
+_tpid=$!
+_t=0
+while kill -0 "$_tpid" 2>/dev/null && [ "$_t" -lt 60 ]; do sleep 0.5; _t=$((_t + 1)); done
+if kill -0 "$_tpid" 2>/dev/null; then
+  kill -9 "$_tpid" 2>/dev/null; wait "$_tpid" 2>/dev/null
+  echo "note: add-trusted-cert stalled (no GUI session to authorise it); continuing —"
+  echo "      trust affects verification, not signing, which is what we need here"
+elif ! wait "$_tpid"; then
+  echo "note: add-trusted-cert reported a problem; checking whether signing works anyway"
+fi
 
 # Stop codesign from prompting for access to the private key on every build.
 # The partition list is the 10.12.5+ mechanism that sits alongside the ACL; get

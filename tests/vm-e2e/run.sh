@@ -52,7 +52,7 @@ mkdir -p "$WORK/seed"
 echo "staging source tree for the guest..."
 rm -rf "$WORK/seed/kow-src"
 rsync -a --exclude .venv --exclude .git --exclude __pycache__ --exclude .mypy_cache \
-      --exclude .pytest_cache --exclude demo --exclude dist "$REPO"/ "$WORK/seed/kow-src"/
+      --exclude .pytest_cache --exclude .hypothesis --exclude demo --exclude dist "$REPO"/ "$WORK/seed/kow-src"/
 
 # The unit file is prose-referenced by install-systemd.md §4 ("copy the hardened
 # unit from systemd-unit.md"), so extract it from that doc — the doc stays the

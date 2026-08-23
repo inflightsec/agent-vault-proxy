@@ -56,7 +56,32 @@ SIGNKC="$BASE/keyd-signing.keychain-db"
 KCPW="e2e-$(head -c12 /dev/urandom | xxd -p)"
 # Saved so the search list can be put back exactly as it was. A leaked entry
 # here outlives the files and confuses every later `security` call.
-ORIG_LIST=$(security list-keychains -d user | tr -d ' "')
+# Bounded like the rest: this one is not expected to prompt, but "not expected
+# to prompt" is exactly the assumption that cost two 20-minute cancellations.
+ORIG_LIST=$( { security list-keychains -d user & _lp=$!
+    _li=0; while kill -0 "$_lp" 2>/dev/null && [ "$_li" -lt 20 ]; do sleep 0.5; _li=$((_li + 1)); done
+    kill -0 "$_lp" 2>/dev/null && { kill -9 "$_lp" 2>/dev/null; echo "LIST_TIMEOUT"; } || wait "$_lp"
+  } | tr -d ' "')
+case "$ORIG_LIST" in *LIST_TIMEOUT*) echo "security list-keychains stalled" >&2; exit 1 ;; esac
+
+# Bounded capture for cleanup. `cleanup` runs on EVERY exit, including success,
+# so an unbounded security(1) call here re-creates the exact 20-minute
+# cancellation this leg has already suffered twice — just on the way out.
+bounded_out() {
+  local secs="$1"; shift
+  local f p i
+  f="$(mktemp "${TMPDIR:-/tmp}/kow-bo.XXXXXX")"
+  "$@" >"$f" 2>/dev/null &
+  p=$!; i=0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt "$((secs * 2))" ]; do sleep 0.5; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then
+    pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null
+    printf 'BOUNDED_TIMEOUT\n'
+  else
+    wait "$p" 2>/dev/null; cat "$f"
+  fi
+  rm -f "$f"
+}
 
 cleanup() {
   if [ "$KEEP" = "1" ]; then printf '\nkept: %s\n' "$BASE"; return; fi
@@ -65,11 +90,15 @@ cleanup() {
   security delete-keychain "$KEYCHAIN" 2>/dev/null
   security delete-keychain "$SIGNKC" 2>/dev/null
   rm -rf "$BASE"
-  local left=""
+  local left="" _ids _kcs
   [ -e "$KEYCHAIN" ] && left="$left keychain"
   [ -e "$SIGNKC" ] && left="$left signing-keychain"
-  security find-identity -v -p codesigning 2>/dev/null | grep -qF "$CN" && left="$left identity"
-  security list-keychains -d user | grep -q keyd-signing && left="$left search-list-entry"
+  _ids="$(bounded_out 15 security find-identity -v -p codesigning)"
+  case "$_ids" in *BOUNDED_TIMEOUT*) left="$left identity-check-stalled" ;;
+                  *"$CN"*)           left="$left identity" ;; esac
+  _kcs="$(bounded_out 15 security list-keychains -d user)"
+  case "$_kcs" in *BOUNDED_TIMEOUT*) left="$left keychain-list-stalled" ;;
+                  *keyd-signing*)    left="$left search-list-entry" ;; esac
   [ -z "$left" ] && printf '  clean: keychains, identity and search list restored\n' || red "  RESIDUE LEFT:$left"
 }
 trap cleanup EXIT
@@ -160,9 +189,46 @@ step "6. enumeration"
 #
 # From here down is the whole reason the helper exists.
 
+# Deny-probes MUST be bounded. An unauthorised keychain read raises an
+# authorisation dialog: with an Aqua session it is denied in milliseconds
+# (rc 36), with no session — every hosted CI runner — it blocks forever. That
+# is what burned two 20-minute cancellations here, first in step 1 and then
+# in step 7.
+#
+# A timeout is INCONCLUSIVE and therefore FAILS. The designed behaviour is
+# categorical refusal — a real Mac returns rc 36 for security(1) and
+# errSecInteractionNotAllowed (-25308) for the ctypes probe, with no prompt at
+# all. A stall means something asked a human instead, i.e. the item may be
+# reachable WITH approval, which is a strictly weaker property than this step
+# asserts. Reporting that as a pass would conceal the very regression the step
+# exists to catch, so it is reported as unproven and red.
+DP_RC=0; DP_OUT=""; DP_TIMEOUT=0
+deny_probe() {
+  local secs=20 p i
+  DP_TIMEOUT=0
+  "$@" >"$BASE/deny.out" 2>&1 &
+  p=$!; i=0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt "$((secs * 2))" ]; do sleep 0.5; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then
+    # Descendants first: `security` can spawn an authorisation agent that would
+    # otherwise outlive the probe and interfere with cleanup or the next step.
+    pkill -9 -P "$p" 2>/dev/null
+    kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null
+    DP_TIMEOUT=1; DP_RC=124
+  else
+    wait "$p"; DP_RC=$?
+  fi
+  DP_OUT="$(cat "$BASE/deny.out" 2>/dev/null)"
+}
+
 step "7. /usr/bin/security must NOT be able to read it"
-SEC_OUT=$(security find-generic-password -s "$SERVICE" -a "$ACCOUNT" -w "$KEYCHAIN" 2>&1); SEC_RC=$?
-if [ "$SEC_RC" = 0 ] && [ "$SEC_OUT" = "$SECRET" ]; then
+deny_probe security find-generic-password -s "$SERVICE" -a "$ACCOUNT" -w "$KEYCHAIN"
+SEC_OUT="$DP_OUT"; SEC_RC="$DP_RC"
+if [ "$DP_TIMEOUT" = 1 ]; then
+  bad "security(1) neither returned nor was refused within 20s — INCONCLUSIVE."
+  bad "  expected a categorical refusal (rc 36). A stall means it asked a human,"
+  bad "  so the ACL may permit user-approved reads. Not treated as a pass."
+elif [ "$SEC_RC" = 0 ] && [ "$SEC_OUT" = "$SECRET" ]; then
   bad "security(1) READ THE SECRET — the ACL is not scoped"
 elif [ "$SEC_RC" = 0 ]; then
   bad "security(1) exited 0 unexpectedly"
@@ -201,8 +267,15 @@ print("DENIED:%d" % st)
 sys.exit(1)
 PY
 PY_BIN="$(command -v python3)"
-PY_OUT=$("$PY_BIN" "$BASE/steal.py" "$SERVICE" "$ACCOUNT" "$KEYCHAIN" 2>&1); PY_RC=$?
+deny_probe "$PY_BIN" "$BASE/steal.py" "$SERVICE" "$ACCOUNT" "$KEYCHAIN"
+PY_OUT="$DP_OUT"; PY_RC="$DP_RC"
+if [ "$DP_TIMEOUT" = 1 ]; then
+  bad "python probe neither returned nor was refused within 20s — INCONCLUSIVE."
+  bad "  expected DENIED:-25308 (errSecInteractionNotAllowed). Not treated as a pass."
+  PY_OUT="TIMEOUT"
+fi
 case "$PY_OUT" in
+  TIMEOUT) ;;
   STOLE:*)
     bad "A PYTHON SCRIPT READ THE SECRET — access is scoped to the interpreter, not to kow" ;;
   DENIED:*)

@@ -83,7 +83,7 @@ echo "==> trusting it for code signing (user trust domain, no sudo)"
 # Bounded: on a host with no Aqua session this blocks on an authorisation
 # dialog rather than failing, and `||` catches a bad exit code but not a stall.
 # Signing does not need it (see the probe below), so a timeout is not fatal.
-security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$WORK/cert.pem" >/dev/null 2>&1 &
+security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$WORK/cert.pem" >"$WORK/trust.log" 2>&1 &
 _tpid=$!
 _t=0
 while kill -0 "$_tpid" 2>/dev/null && [ "$_t" -lt 60 ]; do sleep 0.5; _t=$((_t + 1)); done
@@ -93,6 +93,7 @@ if kill -0 "$_tpid" 2>/dev/null; then
   echo "      trust affects verification, not signing, which is what we need here"
 elif ! wait "$_tpid"; then
   echo "note: add-trusted-cert reported a problem; checking whether signing works anyway"
+  sed 's/^/      /' "$WORK/trust.log" 2>/dev/null | head -5
 fi
 
 # Stop codesign from prompting for access to the private key on every build.

@@ -6,9 +6,16 @@ name: macos-e2e
 # creates a service account and a LaunchDaemon, runs continuously without asking
 # anyone to hand their laptop over.
 #
-# macos-13 is the last Intel runner (/usr/local Homebrew prefix); macos-14 is
-# Apple Silicon (/opt/homebrew). Both matter: the prefix difference is exactly
-# what used to break the documented install.
+# Both labels are Apple Silicon (/opt/homebrew). macos-13 — GitHub's last FREE
+# Intel runner — is retired: it publishes no runner images any more and jobs
+# targeting it queue until the concurrency group cancels them. Twelve runs here
+# never produced a single macos-13 result.
+#
+# So the Intel prefix (/usr/local), which is exactly what the Apple Silicon
+# prefix bug hinged on, is NOT covered by CI. Intel now needs a paid `-large`
+# runner. It is covered instead by `tests/vm-e2e/run-macos.sh` against a local
+# Intel VM, which reports prefix=/usr/local. If Intel regressions start
+# mattering commercially, that is the gap to buy coverage for.
 
 on:
   push:
@@ -31,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     # step-security/harden-runner is Linux-only, so these jobs run with NO egress
@@ -69,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -95,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -117,7 +124,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -143,7 +150,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]
+        os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

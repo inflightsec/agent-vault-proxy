@@ -67,6 +67,19 @@ ALLOWED_TOP_LEVEL_FIELDS: dict[str, frozenset[str]] = {
             "destination",
         }
     ),
+    # ADR-0047 advisory: same minimized shape as inject_decision, minus the
+    # binding/compose bookkeeping an advisory has no opinion about.
+    "policy_advisory": frozenset(
+        {
+            "type",
+            "request_id",
+            "decision",
+            "reason",
+            "secret_name",
+            "method",
+            "destination",
+        }
+    ),
     "deny": frozenset({"type", "request_id", "reason", "destination"}),
     "token_exchange": frozenset(
         {
@@ -195,6 +208,17 @@ def test_representative_records_stay_within_field_allowlist() -> None:
             "dest_host": "api.example.com",
             "underlying_reason": "binding_matched",
         },
+        # ADR-0047: maximal advisory record (binding_methods_unscoped carries
+        # `method`).
+        "policy_advisory": {
+            "type": "policy_advisory",
+            "request_id": "r",
+            "decision": "allowed",
+            "reason": "binding_methods_unscoped",
+            "secret_name": "FOO",
+            "method": "POST",
+            "destination": {"host": "api.example.com", "port": 443},
+        },
         "proxy_restart": {"type": "proxy_restart"},
         "upstream_response": {"type": "upstream_response", "request_id": "r", "status": 200},
         "tls_passthrough": {
@@ -217,3 +241,30 @@ def test_representative_records_stay_within_field_allowlist() -> None:
         if isinstance(dest, dict):
             dest_extra = set(dest) - ALLOWED_DESTINATION_KEYS
             assert not dest_extra, f"{t}.destination: keys outside allowlist: {dest_extra}"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "type": "policy_advisory",
+            "request_id": "r",
+            "decision": "allowed",
+            "reason": "binding_methods_unscoped",
+            "secret_name": "FOO",
+            "method": "POST",
+            "destination": {"host": "api.example.com", "port": 443},
+        },
+    ],
+)
+def test_adr0047_advisory_records_stay_within_field_allowlist(
+    record: dict[str, object],
+) -> None:
+    record_type = str(record["type"])
+    allowed = ALLOWED_TOP_LEVEL_FIELDS[record_type] | _WRITER_STAMPED
+    extra = set(record) - allowed
+    assert not extra, f"{record_type}: fields outside declared allowlist: {extra}"
+    destination = record.get("destination")
+    assert isinstance(destination, dict)
+    dest_extra = set(destination) - ALLOWED_DESTINATION_KEYS
+    assert not dest_extra, f"inject_decision.destination: keys outside allowlist: {dest_extra}"

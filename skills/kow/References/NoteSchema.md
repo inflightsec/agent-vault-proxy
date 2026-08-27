@@ -14,7 +14,7 @@ Exactly these, any others are a typo and fail closed:
 | `placeholder` | exact sentinel the consumer emits (ADR-0029) — minted by `kow binding new`, format `avp-PLACEHOLDER-` + 21–64 lowercase-base32 chars; wins over salt derivation; uniqueness enforced fail-closed at resolve | salt-derived |
 | `header` | HTTP header to inject into | `Authorization` |
 | `format` | header value template; MUST contain `{secret}` | `Bearer {secret}` |
-| `methods` | list of HTTP methods to bind (scope) | all |
+| `methods` | list of HTTP methods to bind (scope) | all — but **always write it explicitly**, see AddSecret §1.4 |
 | `paths` | list of URL path globs to bind (scope) | all |
 
 `{secret}` is the only substitution token — the note has no name key because the secret *is* the value. Bare-host shorthand: after the `# kow-binding` marker line, a note of just `host: api.example.com` uses the header/format defaults.

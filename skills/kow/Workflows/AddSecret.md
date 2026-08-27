@@ -7,7 +7,17 @@ Guide the user to broker ONE new credential through kow via the notes/annotation
 1. **Backend** — Bitwarden Secrets Manager (`notes`), Google Secret Manager (`kow-binding` annotation), or the static file fallback? Default: whatever `binding_source` the install already uses (usually BWS notes).
 2. **Auth shape** — Bearer token / `token` scheme / `X-API-Key` (custom header) / Basic / composite (multi-part). If unsure, ask how the service's docs say to authenticate a `curl`.
 3. **Host(s)** — the exact hostname(s) the credential is sent to. Get them from the API docs or a real request. Flag immediately if there's more than one (see §4).
-4. **Scope (optional, encouraged)** — HTTP `methods` and URL `paths` to bind. Narrower = smaller blast radius. Default: no scope (all methods/paths) only for admin-broad tokens.
+4. **Scope — always write `methods:` explicitly.** Never leave it out and rely on the engine's permissive default (ADR-0047). Propose the narrowest set that still works, state it, and let the user widen:
+
+   | What the credential is for | Propose |
+   |---|---|
+   | Reading data (search, list, fetch, status) | `GET` (add `HEAD`, `OPTIONS` only if the client needs them) |
+   | Creating or sending (messages, events, jobs) | `GET, POST` |
+   | Full CRUD against a resource API | `GET, POST, PUT, PATCH` |
+   | Anything that can delete | name `DELETE` explicitly and say so out loud |
+   | Genuinely admin-broad token | all verbs, but say why in one line before writing it |
+
+   A binding that omits `methods:` still works and gets a one-time `binding_methods_unscoped` advisory in the audit log. Treat that advisory as a bug in the binding, not as noise. `paths:` on top of this is encouraged wherever the API has a stable prefix.
 
 ## 2. Choose the source
 

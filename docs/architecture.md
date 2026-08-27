@@ -283,14 +283,25 @@ A request carrying a placeholder whose secret has **no binding** in its note (in
 
 JSONL, append-only via `chattr +a`. One event per line. Every record carries
 `v` — the audit JSON contract version (`AUDIT_CONTRACT_VERSION` in `audit.py`).
-**Current version: 3** (v2 added `binding_source` to `inject_decision` and the
+**Current version: 4** (v2 added `binding_source` to `inject_decision` and the
 `no_binding_in_notes` reason, per ADR-0011; v3 added the `honeytoken_triggered`
-event, per ADR-0019). Bumping this version is a contract change: see hard
-constraint #3 in [`AGENTS.md`](../AGENTS.md).
+event, per ADR-0019; v4 added the `policy_advisory`
+event type, per ADR-0047). Bumping
+this version is a contract change: see hard constraint #3 in
+[`AGENTS.md`](../AGENTS.md).
+
+**`policy_advisory` (v4).** Advisories get their own event type precisely so
+they never inflate `inject_decision` counts: a consumer counting allowed
+`inject_decision` records as successful injections keeps working unchanged.
+One reason uses it today: `binding_methods_unscoped`, which also carries
+`method`. It is emitted at decision time, before the secret is fetched and
+injected, so an advisory is not the request's final outcome: the request may
+still fail at the execution layer and produce its own terminal
+`inject_decision` with the same `request_id`.
 
 ```json
-{"ts":"2026-05-17T14:32:11.123456+00:00","v":3,"type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","binding_source":"bws_notes","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
-{"ts":"2026-05-17T14:32:11.234567+00:00","v":3,"type":"upstream_response","request_id":"01HXY...","status":200}
+{"ts":"2026-05-17T14:32:11.123456+00:00","v":4,"type":"inject_decision","request_id":"01HXY...","decision":"allowed","reason":"binding_matched","secret_name":"ANTHROPIC_API_KEY","binding_source":"bws_notes","destination":{"host":"api.anthropic.com","port":443,"path_prefix":"/v1/messages"}}
+{"ts":"2026-05-17T14:32:11.234567+00:00","v":4,"type":"upstream_response","request_id":"01HXY...","status":200}
 ```
 
 `binding_source` (`inject_decision` events) records which source supplied the
@@ -314,6 +325,7 @@ Rules:
 |---|---|---|
 | `allowed` | `binding_matched` | Header injector substituted the placeholder; substitution is on the wire |
 | `allowed` | `body_binding_matched` | Body injector substituted a placeholder occurrence in the streaming body. Per-secret event; emitted on first match per request, **before** the substituted bytes return to mitmproxy (same G6 ordering as the header path) |
+| `allowed` | `binding_methods_unscoped` | Binding omitted `methods:` and took a mutating verb. Emitted as `policy_advisory`, once per binding+verb per process (ADR-0047) |
 | `denied` | `unmatched_destination` | Host not in any binding, `unmatched_destination_policy: deny` |
 | `denied` | `sni_host_mismatch` | CONNECT host disagrees with request host (TLS-level deception attempt) |
 | `denied` | `ambiguous_placeholder_match` | Two distinct configured placeholders appeared in the same target header — refusal to guess |
@@ -336,7 +348,7 @@ For multi-injector secrets (`inject.type: multi`), each substituted leaf emits i
 **`honeytoken_triggered` event (ADR-0019 §5).** When an `inject_decision` names a secret the operator flagged `honeytoken: true`, the writer emits a second record immediately after it (same synchronous fsync), so a fleet collector can alert on one unambiguous event type. It fires on ANY decision touching the honeytoken — `allowed` or any `denied` reason above — i.e. on any use of the planted placeholder, before any real value moves. Fields are a strict subset of the triggering event; no secret material, header, body, or query string is added.
 
 ```json
-{"ts":"2026-05-17T14:32:11.345678+00:00","v":3,"type":"honeytoken_triggered","request_id":"01HXY...","binding_name":"DECOY_AWS_PROD","dest_host":"s3.amazonaws.com","underlying_reason":"destination_not_in_binding"}
+{"ts":"2026-05-17T14:32:11.345678+00:00","v":4,"type":"honeytoken_triggered","request_id":"01HXY...","binding_name":"DECOY_AWS_PROD","dest_host":"s3.amazonaws.com","underlying_reason":"destination_not_in_binding"}
 ```
 
 ### 4.5 BWS integration

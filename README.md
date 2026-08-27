@@ -16,7 +16,9 @@ Stops credential stealers (Shai-Hulud and similar) and prompt-injected agents fr
 
 ![How Keys on the Wire substitutes secrets on the wire](docs/how-it-works-animated.svg)
 
-Under the hood it's a loopback HTTPS proxy. It fetches each credential from your vault (Bitwarden Secrets Manager, Google Secret Manager, or AWS Secrets Manager) just in time and injects it into the outbound request, so the calling process (your agent, or anything else you route through it) never holds the real bytes.
+Under the hood it's a loopback HTTPS proxy. It fetches each credential from your vault just in time and injects it into the outbound request, so the calling process (your agent, or anything else you route through it) never holds the real bytes.
+
+Vault backends: **macOS Keychain**, Bitwarden Secrets Manager, Google Secret Manager, AWS Secrets Manager, `static` (no vault, for trying it out) and `env`. On a Mac the Keychain backend needs no cloud vault account and no extra dependency: your secrets stay where they already are. (`kow setup` still defaults to Bitwarden; pass the backend you want.) See [Adapter architecture](docs/adapter-architecture.md).
 
 ## See it in action
 
@@ -50,6 +52,22 @@ kow env && kow run claude
 Done. The agent only ever sends the placeholder; Keys on the Wire swaps in the real key on the wire.
 
 New to this? The [Quickstart guide](docs/quickstart.md) walks the first run in full, and [Prerequisites](docs/prerequisites.md) covers vault setup. Prefer shell env vars over `kow run`? See [Usage](docs/usage.md).
+
+## Before you point it at production keys
+
+Fair questions if the credentials in question move money. Short answers here, detail behind the links.
+
+**Trial it behind one process, not your whole machine.** `kow run -- <command>` sets the proxy and CA variables in the spawned process only; your login shell never inherits them. No global `HTTPS_PROXY`, no system-wide CA trust, nothing to unpick afterwards. See [Scoping to a single process](docs/single-process.md).
+
+**When the proxy is down, calls fail.** Traffic routed through kow cannot reach upstream if kow is not there, and a binding that denies returns 503 rather than passing the request through bare. Fail-closed is the default and the only mode. [Concepts](docs/concepts.md) covers the reasoning.
+
+**It does not stop an agent being talked into using a key.** kow removes the key from the agent's context. It does not read the agent's mind about *why* it is calling an API, so a prompt-injected agent can still make calls the placeholder is bound to. Narrow each binding with `methods:` and `paths:` and you cut most of the accident case; that is enforced, not advisory. The bundled skill now writes `methods:` explicitly on every new binding, so new bindings are scoped by construction ([ADR-0047](docs/adrs/ADR-0047-destination-policy-defaults.md)). The engine default for a binding that omits `methods:` is still permissive, and such a binding logs a one-time advisory rather than being blocked. kow does not rate-limit or inspect payloads: it is a credential proxy, not an API gateway. The honest boundary is in [Architecture](docs/architecture.md).
+
+**Auth that is not a static header is supported.** OAuth2 refresh and client-credentials, JWT bearer, GitHub App, HMAC signing and AWS SigV4 all ship as injectors. Amazon SP-API is buildable from the LWA refresh plus signing pieces, but there is no ready-made Amazon preset yet; presets exist for Google, Microsoft, Auth0, Slack, Atlassian and Okta.
+
+**There is an audit log**, local-only, recording which binding was used for which request. It never records secret values.
+
+**Versions are tagged.** The published version is whatever the [PyPI badge](https://pypi.org/project/keys-on-the-wire/) at the top of this page reports; per-release changes are in the [CHANGELOG](./CHANGELOG.md).
 
 ## Broker an MCP server
 
@@ -87,6 +105,7 @@ The marker line is what makes it a binding. A note whose first line isn't `# kow
 **Install and operate**
 - Install: [Linux](docs/install-systemd.md) · [Docker](docs/docker.md) · [macOS](https://github.com/inflightsec/homebrew-keys-on-the-wire)
 - [Usage](docs/usage.md) points your agent at the proxy.
+- [Scoping to a single process](docs/single-process.md) wraps one command instead of your whole machine. Start here for a low-commitment trial.
 - [Linux isolation](docs/linux-isolation.md) composes Keys on the Wire with `bubblewrap` for filesystem sandboxing.
 - [macOS isolation](docs/macos-isolation.md) explains the deployment that makes the boundary real — the agent in a separate account (SandVault), kow as a LaunchAgent in yours — and exactly what the Keychain does and does not buy when both run as the same user.
 - [Google Secret Manager](docs/gcp-secret-manager.md) covers keyless auth and end-to-end testing.

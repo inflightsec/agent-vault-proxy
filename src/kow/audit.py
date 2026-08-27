@@ -15,7 +15,11 @@ from typing import Any
 #   v3 -> ADR-0019: add the `honeytoken_triggered` event, emitted as a
 #         follow-up to any inject_decision whose secret is flagged
 #         `honeytoken: true`. No new fields on any existing event.
-AUDIT_CONTRACT_VERSION = 3
+#   v4 -> ADR-0047: new event type `policy_advisory` (own type so advisories
+#         never inflate inject_decision counts), carrying the reason
+#         `binding_methods_unscoped` plus a `method` field. No new field on
+#         inject_decision.
+AUDIT_CONTRACT_VERSION = 4
 
 # inject_decision `reason` for a secret whose BWS note carries no binding
 # (empty/missing note, or a mapping with no `host`). Distinct from
@@ -72,6 +76,12 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         # and the bound set CHANGED (secret added/removed). Carries added/removed
         # secret names only, never values. Silent when nothing changed.
         "notes_refreshed",
+        # ADR-0047: a policy ADVISORY, deliberately NOT an inject_decision.
+        # Consumers count allowed inject_decision records as successful
+        # injections; an advisory is not one, and folding it into that type
+        # would silently inflate every operator's injection count. Carries the
+        # same minimized fields (names, host, verb) and never a secret value.
+        "policy_advisory",
     }
 )
 

@@ -66,6 +66,15 @@ pre-commit autoupdate
 
 ## The loop
 
+**Always invoke the venv binaries by path.** A bare `pytest` picks up whatever is first on `PATH`, which on a machine that also runs kow as a service is often the installed copy under `/opt/kow/.venv` or a pipx install. Pytest then collects *this* repo's tests and runs them against *that* `kow`, so new tests fail against old code with errors that make no sense (an `AttributeError` for a field the source plainly has), and a green run certifies code you are not looking at.
+
+`tests/conftest.py` refuses to start when `kow` resolves outside this repo's `src/`, and prints the fix. If you hit it:
+
+```bash
+python -c "import kow; print(kow.__file__)"   # should be <repo>/src/kow/__init__.py
+bash scripts/bootstrap-venv.sh                # rebuilds .venv with an editable install
+```
+
 ```bash
 # Tests
 .venv/bin/pytest -q

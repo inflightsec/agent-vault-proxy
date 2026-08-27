@@ -166,9 +166,15 @@ def test_header_injection_emits_exactly_one_allowed_audit(tmp_path: Path) -> Non
     _run(addon, flow)
 
     assert H_REAL in flow.request.headers["Authorization"], "precondition: injection happened"
-    allowed = [e for e in _audit_events(audit) if e.get("decision") == "allowed"]
+    # Filtered on the injection reason: ADR-0047's binding_methods_unscoped
+    # event also carries decision=allowed on a mutating verb (_flow is a POST
+    # and _HEADER_ONLY's binding omits methods:).
+    allowed = [
+        e
+        for e in _audit_events(audit)
+        if e.get("decision") == "allowed" and e.get("reason") == "binding_matched"
+    ]
     assert len(allowed) == 1
-    assert allowed[0]["reason"] == "binding_matched"
     assert allowed[0]["secret_name"] == "HKEY"
 
 

@@ -7,6 +7,7 @@ import types
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 
 from mitmproxy import http, tls
 from mitmproxy.addonmanager import Loader
@@ -45,6 +46,7 @@ from kow.injectors.oauth2_refresh import OauthResolver
 from kow.injectors.sigv4 import Sigv4Resolver
 from kow.matching import git_smart_http_effective_path
 from kow.policy import (
+    Decision,
     HeaderIndex,
     build_header_index,
     decide,
@@ -52,6 +54,25 @@ from kow.policy import (
 )
 
 _log = logging.getLogger("kow.addon")
+
+
+def _emit_advisory(audit: AuditWriter, event: dict[str, object]) -> bool:
+    """Emit a non-terminal policy advisory. True if it was written.
+
+    Swallows write failures on purpose: an advisory carries no verdict, so a
+    full disk or an unwritable audit must not convert an otherwise-allowed
+    request into a failure. Terminal verdicts keep the strict G6 path in
+    _fail_closed and are unaffected.
+    """
+    try:
+        audit.emit(event)
+    except Exception:  # noqa: BLE001 - advisory is best-effort by contract
+        _log.warning("advisory audit write failed; request unaffected", exc_info=True)
+        return False
+    return True
+
+
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # mitmproxy loads this addon via SourceFileLoader.exec_module() without registering
 # the module in sys.modules. On Python 3.13 that makes @dataclass's KW_ONLY detection
@@ -142,6 +163,10 @@ class AgentVaultProxyAddon:
         self._sigv4_resolver = Sigv4Resolver()
         self._hmac_resolver = HmacResolver()
         self._jwt_resolver = JwtResolver()
+        # (secret, host, verb) triples already advised about an unscoped
+        # binding — keeps the ADR-0047 advisory to one line per config smell.
+        self._unscoped_advised: set[tuple[str, str, str]] = set()
+        self._unscoped_advised_lock = Lock()
         self._notes_activator = NotesActivator()
         # ADR-0032: config path (so the background notes-refresh can re-read it)
         # and the background refresh task handle.
@@ -575,6 +600,15 @@ class AgentVaultProxyAddon:
             target_host=target_host,
         )
 
+        self._audit_methods_default_deprecation(
+            flow=flow,
+            audit=audit,
+            request_id=request_id,
+            target_host=target_host,
+            method=method,
+            decision=decision,
+        )
+
         # Execute the header verdict — may set flow.response on deny.
         self._header_handler.execute(
             flow=flow,
@@ -659,6 +693,59 @@ class AgentVaultProxyAddon:
                         "destination": {"host": target_host, "port": flow.request.port},
                     }
                 )
+
+    def _audit_methods_default_deprecation(
+        self,
+        *,
+        flow: http.HTTPFlow,
+        audit: AuditWriter,
+        request_id: str,
+        target_host: str,
+        method: str,
+        decision: Decision,
+    ) -> None:
+        """Advise once per (secret, host, verb) that a binding took a mutating
+        verb without naming ``methods:``.
+
+        Deduped per process: the advisory is a config smell, not a per-request
+        event, and emitting it on every call would bury the injection records
+        an operator actually reads (ADR-0047).
+        """
+        if decision.decision != "allowed":
+            return
+        binding = decision.matched_binding
+        if binding is None or binding.methods is not None:
+            return
+        if method not in _MUTATING_METHODS:
+            return
+        secret_name = decision.secret_name
+        assert secret_name is not None
+        # Keyed on the CONFIGURED host pattern, never the request host: a
+        # wildcard binding would otherwise let attacker-chosen subdomains grow
+        # this set without bound for the process lifetime (Oracle C3).
+        advisory_key = (secret_name, binding.host, method)
+        with self._unscoped_advised_lock:
+            if advisory_key in self._unscoped_advised:
+                return
+        written = _emit_advisory(
+            audit,
+            {
+                "type": "policy_advisory",
+                "request_id": request_id,
+                "decision": "allowed",
+                "reason": "binding_methods_unscoped",
+                "secret_name": secret_name,
+                "method": method,
+                "destination": {"host": target_host, "port": flow.request.port},
+            },
+        )
+        # Mark advised only on a SUCCESSFUL write. Marking first would let one
+        # transient audit failure silence this config smell for the whole
+        # process lifetime (Oracle final C2). A rare duplicate under
+        # concurrency is the cheaper failure than a permanently lost signal.
+        if written:
+            with self._unscoped_advised_lock:
+                self._unscoped_advised.add(advisory_key)
 
     def request(self, flow: http.HTTPFlow) -> None:
         """Sign a body-hashing request once the full body has buffered.

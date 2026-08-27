@@ -122,8 +122,15 @@ def test_no_allowlist_key_behavior_unchanged(tmp_path: Path) -> None:
     assert flow.request.headers["Authorization"] == f"Bearer {real}"
     assert addon._allowlist_rejected_names == set()
     assert addon._header_handler.allowlist_rejected_hosts == {}
-    allowed = [e for e in _read_audit(audit_path) if e.get("decision") == "allowed"]
-    assert len(allowed) == 1
+    # Filtered on the injection reason: ADR-0047's binding_methods_unscoped
+    # event also carries decision=allowed on a mutating verb (this request is a
+    # POST against a methods-less binding).
+    injected = [
+        e
+        for e in _read_audit(audit_path)
+        if e.get("decision") == "allowed" and e.get("reason") == "binding_matched"
+    ]
+    assert len(injected) == 1
 
 
 # ---------------------------------------------------------------------------

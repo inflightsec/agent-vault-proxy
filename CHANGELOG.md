@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [1.1.0], 2026-08-28
+## [1.1.1], 2026-08-28
+
+Re-release of 1.1.0 under a new number. The 1.1.0 files were deleted from PyPI
+after upload, and PyPI permanently forbids reusing a filename from a deleted
+release, so 1.1.0 can never be published there. It is withdrawn; use 1.1.1.
+Contents are identical apart from the version and this note.
 
 ### Added
 
@@ -328,8 +333,8 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.0.0...v1.1.0
+[Unreleased]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.0.0...v1.1.1
 [1.0.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.7.0...v0.8.0

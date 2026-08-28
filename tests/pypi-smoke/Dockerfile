@@ -39,14 +39,14 @@ ARG PACKAGE_VERSION
 ARG PACKAGE_INDEX_URL
 ARG INSTALL_SOURCE
 
-# Match the avp UID:GID used by the production Dockerfile so volumes
+# Match the kow UID:GID used by the production Dockerfile so volumes
 # mounted from docker-compose use the same ownership semantics. If these
 # diverge the static-backend's world-readable check or audit-log perms
 # will flag differently between this smoke and prod — defeating the point.
-RUN groupadd --system --gid 65532 avp && \
-    useradd  --system --uid 65532 --gid avp \
+RUN groupadd --system --gid 65532 kow && \
+    useradd  --system --uid 65532 --gid kow \
         --home-dir /var/lib/kow \
-        --shell /usr/sbin/nologin avp
+        --shell /usr/sbin/nologin kow
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
@@ -91,14 +91,14 @@ LABEL org.opencontainers.image.description="Post-publish smoke test image for ko
 # named volumes on top of /etc/kow and /var/lib & /var/log
 # — these mkdirs just ensure the mount points exist with the right
 # ownership before the volumes land on top.
-RUN install -d -o avp -g avp -m 0750 /etc/kow && \
-    install -d -o avp -g avp -m 0750 /var/lib/kow && \
-    install -d -o avp -g avp -m 0750 /var/log/kow && \
+RUN install -d -o kow -g kow -m 0750 /etc/kow && \
+    install -d -o kow -g kow -m 0750 /var/lib/kow && \
+    install -d -o kow -g kow -m 0750 /var/log/kow && \
     touch /var/log/kow/audit.jsonl && \
-    chown avp:avp /var/log/kow/audit.jsonl && \
+    chown kow:kow /var/log/kow/audit.jsonl && \
     chmod 0640 /var/log/kow/audit.jsonl
 
-USER avp:avp
+USER kow:kow
 WORKDIR /var/lib/kow
 ENV HOME=/var/lib/kow \
     PYTHONDONTWRITEBYTECODE=1 \

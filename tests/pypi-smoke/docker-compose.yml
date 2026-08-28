@@ -1,7 +1,7 @@
 # Post-publish PyPI smoke test stack.
 #
 # Same shape as tests/docker-e2e/docker-compose.yml — proxy + upstream
-# echo + init container — but the `avp` service is built from
+# echo + init container — but the `kow` service is built from
 # tests/pypi-smoke/Dockerfile which pip-installs the published wheel
 # from PyPI rather than building from local source.
 #
@@ -10,22 +10,22 @@
 # interpolation; the same value is baked into the image at
 # /etc/kow-version for post-mortem diagnostics.
 
-name: avp-pypi-smoke
+name: kow-pypi-smoke
 
 services:
 
-  # One-shot init: stages avp's /etc/kow directory into a
-  # named volume with avp-owned (UID 65532) files. Same approach as the
+  # One-shot init: stages kow's /etc/kow directory into a
+  # named volume with kow-owned (UID 65532) files. Same approach as the
   # docker-e2e stack — generating secrets.yml in-container side-steps
   # Docker userns-remap UID-mapping issues that would otherwise prevent
   # the proxy from reading a host-mounted 0600 file.
-  avp-init:
+  kow-init:
     image: busybox:1.36
-    container_name: avp-pypi-smoke-init
+    container_name: kow-pypi-smoke-init
     user: "0:0"
     volumes:
       - ./bindings.yaml:/src/bindings.yaml:ro
-      - avp-pypi-smoke-config:/dst
+      - kow-pypi-smoke-config:/dst
     environment:
       # Empty-default rather than strict-require: compose interpolates
       # all referenced vars at parse time (including for `down`), so the
@@ -51,7 +51,7 @@ services:
         chmod 0600 /dst/secrets.yml
         ls -la /dst/
 
-  avp:
+  kow:
     build:
       context: .
       dockerfile: Dockerfile
@@ -66,14 +66,14 @@ services:
         PACKAGE_INDEX_URL: ${PACKAGE_INDEX_URL:-https://pypi.org/simple/}
         INSTALL_SOURCE: ${INSTALL_SOURCE:-pypi}
     image: kow:pypi-smoke
-    container_name: avp-pypi-smoke
+    container_name: kow-pypi-smoke
     user: "65532:65532"
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     networks:
-      - avp-pypi-smoke-net
+      - kow-pypi-smoke-net
     ports:
       # Loopback-only on the host side. Test client reaches the proxy
       # via 127.0.0.1:14323 without joining the bridge network.
@@ -81,12 +81,12 @@ services:
       # run side-by-side without colliding.
       - "127.0.0.1:14323:14322"
     depends_on:
-      avp-init:
+      kow-init:
         condition: service_completed_successfully
     volumes:
-      - avp-pypi-smoke-config:/etc/kow:ro
-      - avp-pypi-smoke-state:/var/lib/kow
-      - avp-pypi-smoke-logs:/var/log/kow
+      - kow-pypi-smoke-config:/etc/kow:ro
+      - kow-pypi-smoke-state:/var/lib/kow
+      - kow-pypi-smoke-logs:/var/log/kow
     tmpfs:
       - /tmp:size=16m
     healthcheck:
@@ -101,13 +101,13 @@ services:
     # docker-e2e/docker-compose.yml about resolving to a digest applies
     # here verbatim.
     image: mendhak/http-https-echo:36
-    container_name: avp-pypi-smoke-upstream
+    container_name: kow-pypi-smoke-upstream
     environment:
       - HTTP_PORT=8080
       - LOG_WITHOUT_NEWLINE=true
       - DISABLE_REQUEST_LOGS=true
     networks:
-      avp-pypi-smoke-net:
+      kow-pypi-smoke-net:
         aliases:
           - upstream.test
     healthcheck:
@@ -118,14 +118,14 @@ services:
       retries: 5
 
 networks:
-  avp-pypi-smoke-net:
-    name: avp-pypi-smoke-net
+  kow-pypi-smoke-net:
+    name: kow-pypi-smoke-net
     driver: bridge
 
 volumes:
-  avp-pypi-smoke-state:
-    name: avp-pypi-smoke-state
-  avp-pypi-smoke-logs:
-    name: avp-pypi-smoke-logs
-  avp-pypi-smoke-config:
-    name: avp-pypi-smoke-config
+  kow-pypi-smoke-state:
+    name: kow-pypi-smoke-state
+  kow-pypi-smoke-logs:
+    name: kow-pypi-smoke-logs
+  kow-pypi-smoke-config:
+    name: kow-pypi-smoke-config

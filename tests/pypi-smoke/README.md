@@ -21,7 +21,7 @@ PACKAGE_INDEX_URL=https://test.pypi.org/simple/ bash tests/pypi-smoke/run.sh 0.9
 
 # Leave the stack up for debugging:
 bash tests/pypi-smoke/run.sh 0.9.0 --keep
-# Then: docker compose -f tests/pypi-smoke/docker-compose.yml logs avp
+# Then: docker compose -f tests/pypi-smoke/docker-compose.yml logs kow
 # Tear down: cd tests/pypi-smoke && docker compose down -v
 ```
 
@@ -53,7 +53,7 @@ Two workflows consume this harness:
 
 ## Port + name collision avoidance
 
-This stack uses host port `127.0.0.1:14323` and the `avp-pypi-smoke-*` container/network/volume names so it can run side-by-side with `docker-e2e/` (which uses `14322` and `avp-e2e-*`).
+This stack uses host port `127.0.0.1:14323` and the `kow-pypi-smoke-*` container/network/volume names so it can run side-by-side with `docker-e2e/` (which uses `14322` and `kow-e2e-*`).
 
 ## What it doesn't test
 

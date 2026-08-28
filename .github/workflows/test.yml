@@ -147,8 +147,8 @@ jobs:
       - name: Dump container logs on failure
         if: failure()
         run: |
-          docker compose -f tests/docker-e2e/docker-compose.yml logs avp-init || true
-          docker compose -f tests/docker-e2e/docker-compose.yml logs avp || true
+          docker compose -f tests/docker-e2e/docker-compose.yml logs kow-init || true
+          docker compose -f tests/docker-e2e/docker-compose.yml logs kow || true
           docker compose -f tests/docker-e2e/docker-compose.yml logs upstream || true
 
   e2e-setup:

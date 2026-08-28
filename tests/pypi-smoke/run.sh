@@ -131,7 +131,7 @@ if ! printf '%s' "$PACKAGE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+
     exit 2
 fi
 
-# REAL_SECRET goes into the avp-init container's heredoc which writes
+# REAL_SECRET goes into the kow-init container's heredoc which writes
 # secrets.yml. Restrict to a safe charset so a future value couldn't
 # corrupt the YAML or inject extra keys. The hardcoded value above
 # satisfies this; the guard exists to keep future edits honest.
@@ -179,7 +179,7 @@ docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 green "[3/5] Building image from PyPI artifact + bringing up stack..."
 if ! docker compose up -d --build --quiet-pull >/dev/null; then
     red "compose up failed — dumping logs from each service:"
-    for svc in avp-init avp upstream; do
+    for svc in kow-init kow upstream; do
         red "----- $svc logs -----"
         docker compose logs --no-color "$svc" >&2 || true
     done
@@ -190,7 +190,7 @@ fi
 if ! docker compose up -d --wait --wait-timeout 120 >/dev/null 2>&1; then
     red "Services did not all reach healthy within 120s."
     docker compose ps >&2 || true
-    for svc in avp-init avp upstream; do
+    for svc in kow-init kow upstream; do
         red "----- $svc logs -----"
         docker compose logs --no-color --tail=40 "$svc" >&2 || true
     done
@@ -200,19 +200,19 @@ fi
 # ── Diagnostics dump (reused by every failure path) ──────────────────
 dump_diagnostics() {
     red "----- BEGIN DIAGNOSTICS -----"
-    red "[installed version inside avp-pypi-smoke]"
-    docker exec avp-pypi-smoke sh -c 'cat /etc/kow-version 2>/dev/null; pip show keys-on-the-wire 2>/dev/null | head -3' >&2 || true
-    red "[avp container logs (last 80 lines)]"
-    docker compose logs --no-color --tail=80 avp >&2 || true
-    red "[audit log inside avp-pypi-smoke (last 40 lines)]"
-    docker exec avp-pypi-smoke sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
+    red "[installed version inside kow-pypi-smoke]"
+    docker exec kow-pypi-smoke sh -c 'cat /etc/kow-version 2>/dev/null; pip show keys-on-the-wire 2>/dev/null | head -3' >&2 || true
+    red "[kow container logs (last 80 lines)]"
+    docker compose logs --no-color --tail=80 kow >&2 || true
+    red "[audit log inside kow-pypi-smoke (last 40 lines)]"
+    docker exec kow-pypi-smoke sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
     red "[bindings.yaml as mounted]"
-    docker exec avp-pypi-smoke sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
+    docker exec kow-pypi-smoke sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
     # NEVER cat secrets.yml. Stat-only diagnostic — confirms presence,
     # ownership, mode without ever logging the value. Same discipline
     # as docker-e2e/run.sh.
     red "[secrets.yml stat (value never logged)]"
-    docker exec avp-pypi-smoke sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
+    docker exec kow-pypi-smoke sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
     red "----- END DIAGNOSTICS -----"
 }
 
@@ -221,12 +221,12 @@ green "[4/5] POSITIVE test: substitution happens on the wire"
 ECHO_RESPONSE_FILE="$(mktemp)"
 trap 'rm -f "$ECHO_RESPONSE_FILE"; teardown' EXIT
 
-# Exec curl-equivalent from inside the avp container so we share its
+# Exec curl-equivalent from inside the kow container so we share its
 # docker network and resolve `upstream.test` via the bridge's DNS.
 # Plain HTTP — same justification as docker-e2e: the substitution path
 # is identical for HTTP and HTTPS once mitmproxy hands the flow to the
 # addon, and HTTPS would require a CA-signed echo upstream.
-docker exec avp-pypi-smoke python -c "
+docker exec kow-pypi-smoke python -c "
 import http.client, json
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -270,7 +270,7 @@ fi
 green "  ✓ upstream received the real secret; placeholder did not leak"
 
 # Audit-log assertion: inject_decision allowed for TEST_API_KEY.
-AUDIT_ALLOWED=$(docker exec avp-pypi-smoke sh -c '
+AUDIT_ALLOWED=$(docker exec kow-pypi-smoke sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_API_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_ALLOWED=""
@@ -287,7 +287,7 @@ green "[5/5] NEGATIVE test: unbound destination denied"
 # inject — the placeholder is forwarded verbatim, but the proxy
 # either denies the CONNECT outright (mode-dependent) or never
 # substitutes. We assert the audit log records a deny.
-NEG_STATUS=$(docker exec avp-pypi-smoke python -c "
+NEG_STATUS=$(docker exec kow-pypi-smoke python -c "
 import http.client
 try:
     conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
@@ -322,7 +322,7 @@ fi
 # at all), so path 1 fires. Earlier versions of this grep only knew
 # path 2 and went red despite the proxy correctly returning 403 — see
 # v0.4.2 changelog. tests/docker-e2e/run.sh already greps both shapes.
-AUDIT_DENIED=$(docker exec avp-pypi-smoke sh -c '
+AUDIT_DENIED=$(docker exec kow-pypi-smoke sh -c '
   grep -E "\"decision\":\"denied\"|\"decision\":\"forwarded_unmodified\"|\"type\":\"deny\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_DENIED=""

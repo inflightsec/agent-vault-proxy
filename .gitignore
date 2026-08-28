@@ -79,3 +79,8 @@ local.yaml
 
 # Quality-gate scratch (Phase 1 advisory artifacts)
 .pai/
+
+# Scratch: the GTM demo experiment + ad-hoc review rubrics. Not shipped;
+# promote a rendered asset deliberately rather than committing the workshop.
+demo/
+oracle-rubric.md

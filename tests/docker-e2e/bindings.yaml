@@ -101,7 +101,7 @@ secrets:
   # injects it as a Bearer. token_url points at the hermetic mock container,
   # which resolves (docker DNS) to a PUBLIC-range IP so it passes the SSRF guard
   # — a private/bridge IP is rejected at config-load by design. The mock serves
-  # HTTPS with a cert the avp container trusts via SSL_CERT_FILE (compose).
+  # HTTPS with a cert the kow container trusts via SSL_CERT_FILE (compose).
   OAUTH_TEST:
     placeholder: "oauth-PLACEHOLDER-01HXY1234567890OATH"
     inject:

@@ -6,9 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0], 2026-08-28
+
+### Added
+
+- **`kow-keyd` — a signed helper that scopes macOS Keychain access to kow, not to the interpreter.** A Python-API keychain read makes the ACL identity the *whole interpreter*, so any script running under that Python could read the item silently. The helper moves the ACL identity to a dedicated signed binary, which is what makes "only kow can read this item" enforceable rather than aspirational. This closes the gap documented in the earlier Keychain research: without a signed helper the boundary degrades to "anything running as that user".
+- **Policy advisory for unscoped binding methods ([ADR-0047](docs/adrs/ADR-0047-destination-policy-defaults.md)).** A binding that omits `methods:` is permissive, and now says so once: a new `policy_advisory` audit event carries reason `binding_methods_unscoped` plus the request `method`. It is advisory, never blocking, and lives in its **own event type** so advisories can never inflate `inject_decision` counts in an operator's dashboards. The bundled skill writes `methods:` explicitly on every new binding, so newly-created bindings are scoped by construction; existing bindings are untouched.
+- **CI-gated adversarial attack gallery ([ADR-0043](docs/adrs/ADR-0043-adversarial-attack-gallery.md)).** Exfiltration attempts are pinned as regression tests, so a defeated attack cannot quietly come back.
+- **Eight-leg VM end-to-end suite (`tests/vm-e2e/`).** Builds one disposable Debian VM and drives the documented install paths through it: systemd, real TLS interception, Docker, rootless, a mock-PyPI install, the README's own steps, and setup. A companion macOS runner covers launchd and Homebrew on both architectures. This is the gate that catches undocumented prerequisites four documentation sweeps had missed.
+
 ### Changed
 
-- **Bundled Claude Code plugin/skill renamed `avp` → `kow`** — plugin `kow@keys-on-the-wire`, invoke `/kow:kow`, skill dir `skills/kow/`. Completes the marketplace-migration piece [ADR-0045](docs/adrs/ADR-0045-rename-keys-on-the-wire.md) deferred (safe now: no existing installs). The `avp-binding` note marker, the `avp-PLACEHOLDER-` prefix, and the on-disk paths still keep their names until 2.0.0.
+- **Audit contract v3 → v4.** Operators parsing the audit stream should read the upgrade note below.
+- **In-repo rename completed: the Python package is now `src/kow/`.** Canonical paths become `/etc/kow`, `/var/lib/kow`, `/var/log/kow`, `kow.service`, `healthz.kow.invalid`, `~/.config/kow/env`, service users `kow` / `_kow`. **Every one has a legacy fallback** via `src/kow/_paths.py`, which prefers the kow path and falls back only when the legacy path is the one that exists, so an existing deployment upgrades with no required changes. `kow setup` adopts a pre-rename layout and its service account rather than laying a second tree beside it. Both healthz hostnames answer.
+- **`Secret` newtype for credential values.** An opaque wrapper with redacted `__repr__`/`__str__`/`__format__`, unpicklable and uncopyable, with `.reveal()` as the only way out. Threading it through the backends and injectors made the type checker enumerate every plaintext boundary in the codebase, which is the point. It also surfaced a live leak on the way: a dataclass in the derived-token cache was printing a refresh token in its auto-generated `__repr__`.
+- **Denial taxonomy (`src/kow/denials.py`).** Twenty distinct hardcoded wire messages across nine files collapse into one `DenialError` hierarchy with a wire-stable `client_message` and a local-only `operator_detail`. Every message is now pinned byte-for-byte by tests; there were none before.
+- **Header-index fast path on the hot request path.** Placeholder matching previously walked every secret on every request. An index built at the binding-publish point, plus a marker fast-reject, takes a 1000-secret config from 1326 µs to 101 µs per request, a 13× improvement; the miss path improves similarly.
+- **Bundled Claude Code plugin/skill renamed `avp` → `kow`** — plugin `kow@keys-on-the-wire`, invoke `/kow:kow`, skill dir `skills/kow/`. Completes the marketplace-migration piece [ADR-0045](docs/adrs/ADR-0045-rename-keys-on-the-wire.md) deferred. The `avp-binding` note marker, the `avp-PLACEHOLDER-` prefix, and the on-disk paths still keep their names until 2.0.0.
+- **Docs.** README restructured and trimmed by roughly a third, with detail pushed into the guides it duplicated; `NOTICE` now names keys-on-the-wire and records the agent-vault-proxy/MIT provenance through 0.9.0. macOS CI moved from `macos-13` to `macos-15`.
+
+### Fixed
+
+- **macOS install and test reliability.** Identity creation no longer hangs in headless environments; `security` invocations carry timeouts so CI cannot hang on a locked keychain; timeout errors now name the unlock fix rather than only reporting "locked"; Intel-only paths in the macOS install doc are corrected, and the macOS e2e suite runs on any Mac with tiered unprivileged and system legs plus full teardown.
+
+### Upgrade notes
+
+- **The audit contract is now `"v":4`.** Three event types join the closed set since 1.0.0: `policy_advisory` (ADR-0047), `tls_passthrough` ([ADR-0026](docs/adrs/ADR-0026-tls-termination-scoping.md), emitted when an unbound destination is tunnelled without being decrypted) and `notes_refreshed` ([ADR-0032](docs/adrs/ADR-0032-periodic-notes-refresh.md), carrying secret names added or removed, never values). A consumer that rejects unknown `type` values should be updated before upgrading. No field on an existing event changed.
+- **No action required for existing deployments.** The old paths, unit name, `avp` and `agent-vault-proxy` commands, `AVP_CONFDIR` and the `avp-PLACEHOLDER-` mint prefix all continue to work; they move to `kow` in 2.0.0.
 
 ## [1.0.0], 2026-08-08
 
@@ -304,14 +328,15 @@ Initial single-operator deployment. Not published publicly.
 - Per-host CA installed at `/etc/agent-vault-proxy/ca.pem`.
 - Pilot bindings: `ANTHROPIC_API_KEY` + `mcp-proxy.anthropic.com` + `*.claude.com`, plus `OPENAI_API_KEY` and per-identity GitHub PATs.
 
-[Unreleased]: https://github.com/inflightsec/agent-vault-proxy/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.9.0...v1.0.0
-[0.9.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/inflightsec/agent-vault-proxy/compare/v0.4.3...v0.7.0
-[0.4.3]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.3
-[0.4.2]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.2
-[0.4.1]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.1
-[0.4.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.4.0
-[0.2.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.2.0
-[0.1.0]: https://github.com/inflightsec/agent-vault-proxy/releases/tag/v0.1.0
+[Unreleased]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.9.0...v1.0.0
+[0.9.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/inflightsec/keys-on-the-wire/compare/v0.4.3...v0.7.0
+[0.4.3]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.4.3
+[0.4.2]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.4.2
+[0.4.1]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.4.1
+[0.4.0]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.4.0
+[0.2.0]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.2.0
+[0.1.0]: https://github.com/inflightsec/keys-on-the-wire/releases/tag/v0.1.0

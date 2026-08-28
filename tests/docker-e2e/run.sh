@@ -2,7 +2,7 @@
 #
 # Docker end-to-end harness for kow.
 #
-# Builds the image, stands up the avp container plus an HTTP echo
+# Builds the image, stands up the kow container plus an HTTP echo
 # upstream on an isolated bridge network, then exercises three positive
 # substitution paths (v0.5 header / body / multi injectors) and a
 # negative "deny unbound destination" path through the proxy. Asserts:
@@ -54,14 +54,14 @@ green()  { printf '\033[1;32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 red()    { printf '\033[1;31m%s\033[0m\n' "$*" >&2; }
 
-# Passed through compose's parse-time interpolation into the avp-init
+# Passed through compose's parse-time interpolation into the kow-init
 # container's heredoc, which generates /etc/kow/secrets.yml
 # in-container. Generation (rather than a host bind mount) sidesteps the
 # Docker userns-remap case where container "root" maps to a non-root
 # host UID that can't read the operator's 0600 secrets.yml.
 #
 # Input-validate each real secret against a narrow charset before
-# exporting: the avp-init heredoc embeds each value into a YAML string
+# exporting: the kow-init heredoc embeds each value into a YAML string
 # literal, and a value containing `"`, `\n`, or `\\` could break the
 # YAML or inject extra keys. The harness's hardcoded values satisfy the
 # constraint; this guard exists to keep future edits honest.
@@ -84,7 +84,7 @@ export TEST_MULTI_SECRET="$REAL_MULTI_SECRET"
 
 # Self-signed TLS cert for the mock OAuth token endpoint (CN/SAN token.mock).
 # Generated fresh per run into a tmpdir; mounted into token-mock (server cert)
-# and into avp as SSL_CERT_FILE (CA) so the token-exchange trusts it without
+# and into kow as SSL_CERT_FILE (CA) so the token-exchange trusts it without
 # editing the image or src. World-readable (throwaway) to dodge userns-remap
 # read issues. OAUTH_CERT_DIR is consumed by docker-compose.yml.
 OAUTH_CERT_DIR="$(mktemp -d)"
@@ -113,10 +113,10 @@ trap teardown EXIT
 green "[1/17] Tearing down any previous run..."
 docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 
-green "[2/17] Building avp image and starting stack..."
+green "[2/17] Building kow image and starting stack..."
 if ! docker compose up -d --build --quiet-pull >/dev/null; then
     red "compose up failed — dumping logs from each service before teardown:"
-    for svc in avp-init avp upstream; do
+    for svc in kow-init kow upstream; do
         red "----- $svc logs -----"
         docker compose logs --no-color "$svc" >&2 || true
     done
@@ -127,9 +127,9 @@ green "[3/17] Waiting for both services to report healthy..."
 # Compose 2.20+ supports `--wait`; fall back to a polling loop otherwise.
 if ! docker compose up -d --wait --wait-timeout 90 >/dev/null 2>&1; then
     for _ in $(seq 1 45); do
-        avp_status=$(docker inspect -f '{{.State.Health.Status}}' avp-e2e 2>/dev/null || echo "starting")
-        ups_status=$(docker inspect -f '{{.State.Health.Status}}' avp-e2e-upstream 2>/dev/null || echo "starting")
-        if [ "$avp_status" = "healthy" ] && [ "$ups_status" = "healthy" ]; then
+        kow_status=$(docker inspect -f '{{.State.Health.Status}}' kow-e2e 2>/dev/null || echo "starting")
+        ups_status=$(docker inspect -f '{{.State.Health.Status}}' kow-e2e-upstream 2>/dev/null || echo "starting")
+        if [ "$kow_status" = "healthy" ] && [ "$ups_status" = "healthy" ]; then
             break
         fi
         sleep 2
@@ -137,11 +137,11 @@ if ! docker compose up -d --wait --wait-timeout 90 >/dev/null 2>&1; then
 fi
 
 # Final readiness check — fail fast if either side never came up.
-for svc in avp-e2e avp-e2e-upstream; do
+for svc in kow-e2e kow-e2e-upstream; do
     status=$(docker inspect -f '{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "missing")
     if [ "$status" != "healthy" ]; then
         red "$svc is not healthy (status: $status)"
-        docker compose logs "$(echo "$svc" | sed 's/avp-e2e-//; s/^/_/; s/_$/avp/')" || true
+        docker compose logs "$(echo "$svc" | sed 's/kow-e2e-//; s/^/_/; s/_$/kow/')" || true
         exit 1
     fi
 done
@@ -163,12 +163,12 @@ green "[4/17] POS-HDR: header-injector substitutes Authorization on the wire"
 ECHO_RESPONSE_FILE="$(mktemp)"
 trap 'rm -f "$ECHO_RESPONSE_FILE"; teardown' EXIT
 
-# Exec curl from inside the avp container so we share its docker network
+# Exec curl from inside the kow container so we share its docker network
 # and resolve `upstream.test` via the bridge's embedded DNS. The proxy
 # listens on the same loopback inside the container, so a per-process
 # HTTPS_PROXY=http://127.0.0.1:14322 routes the curl through it without
 # the host-network published port mattering.
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json, os, sys
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -189,21 +189,21 @@ dump_diagnostics() {
     red "[client response]"
     cat "$ECHO_RESPONSE_FILE" >&2 || true
     echo >&2
-    red "[avp container logs (mitmdump stderr — last 80 lines)]"
-    docker compose logs --no-color --tail=80 avp >&2 || true
-    red "[audit log inside avp-e2e (last 40 lines)]"
-    docker exec avp-e2e sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
-    red "[bindings.yaml as mounted in avp-e2e]"
-    docker exec avp-e2e sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
+    red "[kow container logs (mitmdump stderr — last 80 lines)]"
+    docker compose logs --no-color --tail=80 kow >&2 || true
+    red "[audit log inside kow-e2e (last 40 lines)]"
+    docker exec kow-e2e sh -c 'tail -40 /var/log/kow/audit.jsonl 2>/dev/null || echo "(audit log empty or unreadable)"' >&2 || true
+    red "[bindings.yaml as mounted in kow-e2e]"
+    docker exec kow-e2e sh -c 'cat /etc/kow/bindings.yaml 2>&1 | head -40' >&2 || true
     # NEVER cat secrets.yml. Even when its value is a fake test fixture,
     # `cat secrets.yml` models a pattern that would leak real credentials
     # if copied into a production-like diagnostic path. Print stat-only
     # so the operator can confirm the file is present, owned, and at the
     # expected mode — that's the load-bearing diagnostic signal here.
-    red "[secrets.yml as mounted in avp-e2e (stat only — value never logged)]"
-    docker exec avp-e2e sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
-    red "[avp config + listener state]"
-    docker exec avp-e2e sh -c 'ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo "(no ss/netstat)"' >&2 || true
+    red "[secrets.yml as mounted in kow-e2e (stat only — value never logged)]"
+    docker exec kow-e2e sh -c 'stat -c "%a %u:%g %s bytes %n" /etc/kow/secrets.yml 2>&1' >&2 || true
+    red "[kow config + listener state]"
+    docker exec kow-e2e sh -c 'ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo "(no ss/netstat)"' >&2 || true
     red "----- END DIAGNOSTICS -----"
 }
 
@@ -240,13 +240,13 @@ fi
 green "  ✓ upstream received the real secret; placeholder did not leak"
 
 # Audit log assertion: inject_decision allowed for TEST_API_KEY
-AUDIT_LINE=$(docker exec avp-e2e sh -c '
+AUDIT_LINE=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_API_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_LINE=""
 if [ -z "$AUDIT_LINE" ]; then
     red "POS: no inject_decision: allowed entry for TEST_API_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed"
@@ -257,7 +257,7 @@ green "[5/17] POS-BODY: body-injector substitutes JSON payload on the wire"
 # echo returns the received request body verbatim in its JSON response,
 # so a grep for the real value (present) + placeholder (absent) proves
 # the substitution fired on the wire.
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 placeholder = '$BODY_PLACEHOLDER'
 payload = json.dumps({'api_token': placeholder, 'note': 'body-injector-e2e'})
@@ -296,13 +296,13 @@ if printf '%s' "$BODY_ECHO" | grep -qF "$BODY_PLACEHOLDER"; then
 fi
 green "  ✓ body-injector substituted JSON payload; placeholder did not leak"
 
-BODY_AUDIT=$(docker exec avp-e2e sh -c '
+BODY_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_BODY_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || BODY_AUDIT=""
 if [ -z "$BODY_AUDIT" ]; then
     red "POS-BODY: no inject_decision: allowed entry for TEST_BODY_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for TEST_BODY_KEY"
@@ -313,7 +313,7 @@ green "[6/17] POS-MULTI: multi-injector substitutes header AND body on one reque
 # the JSON payload. The multi injector runs the header and body leaf
 # substitutions on the same flow — both places must land as the real
 # value, and the placeholder must appear NOWHERE in the echo.
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 placeholder = '$MULTI_PLACEHOLDER'
 payload = json.dumps({'signed_payload': placeholder, 'note': 'multi-injector-e2e'})
@@ -360,13 +360,13 @@ if printf '%s' "$MULTI_ECHO" | grep -qF "$MULTI_PLACEHOLDER"; then
 fi
 green "  ✓ multi-injector substituted BOTH header and body; placeholder did not leak"
 
-MULTI_AUDIT=$(docker exec avp-e2e sh -c '
+MULTI_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"TEST_MULTI_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || MULTI_AUDIT=""
 if [ -z "$MULTI_AUDIT" ]; then
     red "POS-MULTI: no inject_decision: allowed entry for TEST_MULTI_KEY in audit log"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for TEST_MULTI_KEY"
@@ -378,7 +378,7 @@ green "[7/17] POS-COMPOSITE-HEADER: inject.template+compose renders Basic on the
 # base64("e2e-user:e2e-pass-value") — computed here so the assertion is exact.
 EXPECTED_COMPOSITE=$(python3 -c "import base64; print(base64.b64encode(b'e2e-user:e2e-pass-value').decode())")
 
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -414,20 +414,20 @@ if printf '%s' "$CH_AUTH" | grep -qF "cphdr-PLACEHOLDER"; then
 fi
 green "  ✓ composite header rendered the Basic credential; placeholder did not leak"
 
-CH_AUDIT=$(docker exec avp-e2e sh -c '
+CH_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"COMPOSITE_HEADER\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || CH_AUDIT=""
 if [ -z "$CH_AUDIT" ]; then
     red "POS-COMPOSITE-HEADER: no inject_decision: allowed entry for COMPOSITE_HEADER"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for COMPOSITE_HEADER"
 
 green "[8/17] POS-COMPOSITE-BODY: inject.template+compose renders into the JSON body"
 
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 payload = json.dumps({'cred': 'cpbody-PLACEHOLDER-01HXY1234567890CB', 'note': 'composite-body-e2e'})
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
@@ -463,13 +463,13 @@ if printf '%s' "$CB_BODY" | grep -qF "cpbody-PLACEHOLDER"; then
 fi
 green "  ✓ composite body rendered the credential into JSON; placeholder did not leak"
 
-CB_AUDIT=$(docker exec avp-e2e sh -c '
+CB_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"allowed\".*\"secret_name\":\"COMPOSITE_BODY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || CB_AUDIT=""
 if [ -z "$CB_AUDIT" ]; then
     red "POS-COMPOSITE-BODY: no inject_decision: allowed entry for COMPOSITE_BODY"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains inject_decision: allowed for COMPOSITE_BODY"
@@ -480,7 +480,7 @@ green "[9/17] SCOPE-VIOLATION: out-of-scope path -> placeholder verbatim, denied
 # per G5, the placeholder is forwarded UN-injected (fail-closed by omission)
 # and audited denied. The REAL secret must NOT appear; the placeholder is
 # expected to pass through verbatim (documented forward-verbatim behaviour).
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -510,13 +510,13 @@ if ! printf '%s' "$SV_AUTH" | grep -qF "$PLACEHOLDER"; then
 fi
 green "  ✓ out-of-scope request forwarded the placeholder verbatim; real secret NOT injected"
 
-SV_AUDIT=$(docker exec avp-e2e sh -c '
+SV_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"denied\".*\"reason\":\"binding_scope_violation\".*\"secret_name\":\"TEST_API_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || SV_AUDIT=""
 if [ -z "$SV_AUDIT" ]; then
     red "SCOPE-VIOLATION: no denied/binding_scope_violation audit entry for TEST_API_KEY"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains denied: binding_scope_violation for TEST_API_KEY"
@@ -528,7 +528,7 @@ green "[10/17] FAIL-CLOSED: bound secret unavailable -> 503, no leak, audited"
 # 503 without ever reaching the upstream. Assert the 503 and the audited
 # secret_unavailable denial. No real secret exists to leak, and the placeholder
 # never reaches the upstream (503 short-circuits before forwarding).
-FC_STATUS=$(docker exec avp-e2e python -c "
+FC_STATUS=$(docker exec kow-e2e python -c "
 import http.client
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -545,13 +545,13 @@ if [ "$FC_STATUS" != "503" ]; then
 fi
 green "  ✓ unavailable secret returned 503 (fail-closed; request never forwarded)"
 
-FC_AUDIT=$(docker exec avp-e2e sh -c '
+FC_AUDIT=$(docker exec kow-e2e sh -c '
   grep -E "\"decision\":\"denied\".*\"reason\":\"secret_unavailable.*\"secret_name\":\"FAILCLOSED_KEY\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || FC_AUDIT=""
 if [ -z "$FC_AUDIT" ]; then
     red "FAIL-CLOSED: no denied/secret_unavailable audit entry for FAILCLOSED_KEY"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains denied: secret_unavailable for FAILCLOSED_KEY"
@@ -562,7 +562,7 @@ green "[11/17] HOST-VALIDATION: installed image rejects junk/TLD-wildcard hosts,
 # runs the real installed code inside the container). Rejects empty /
 # whitespace / bare-* / public-suffix wildcards always; registrable-domain
 # wildcards are rejected by default and accepted only with the opt-in flag.
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import sys
 from kow.config import Config
 from pydantic import ValidationError
@@ -597,7 +597,7 @@ green "  ✓ image rejects empty/whitespace/bare-*/public-suffix; wildcards gate
 # YAML-in-shell quoting. Each was verified against the same installed modules.
 
 green "[12/17] FORWARD-UNMODIFIED: installed policy forwards an unbound destination un-injected"
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import sys
 from kow.config import Config
 from kow.policy import decide
@@ -614,7 +614,7 @@ print('forward/deny policy OK')
 green "  ✓ forward_unmodified forwards unbound; deny returns 403 (installed policy)"
 
 green "[13/17] SNI-MISMATCH: installed policy denies CONNECT-host vs request-host disagreement"
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import sys
 from kow.config import Config
 from kow.policy import decide
@@ -627,7 +627,7 @@ print('sni_host_mismatch OK')
 green "  ✓ CONNECT/request host mismatch denied as sni_host_mismatch (installed policy)"
 
 green "[14/17] BINDING-SOURCE-BOTH: file-only binding survives in both mode (2026-07-02 regression)"
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import sys
 from kow.config import Config
 from kow.runtime_bindings import resolve_runtime_bindings
@@ -655,7 +655,7 @@ green "[15/17] OAUTH2-CONFIG: installed image loads oauth2_refresh + SSRF-guards
 # in tests/test_oauth2_refresh_e2e.py. Here we assert the installed image
 # recognises the injector, applies a provider preset, and rejects a private
 # token_url at config-load.
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import sys
 from kow.config import Config
 from pydantic import ValidationError
@@ -682,7 +682,7 @@ green "[16/17] OAUTH2-WIRE: refresh-token exchange -> minted Bearer on the wire 
 # The mock returns a ROTATED refresh_token, so refresh_token_rotated must fire
 # too (write-back to the read-only static backend is a no-op -> the event's
 # outcome is write_back_unavailable; the rotation *detection* is what we assert).
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client, json
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=15)
 conn.request(
@@ -719,31 +719,31 @@ if printf '%s' "$OA_AUTH" | grep -qF "oauth-PLACEHOLDER"; then
 fi
 green "  ✓ refresh-token exchanged; minted Bearer reached the upstream; placeholder gone"
 
-OA_TX=$(docker exec avp-e2e sh -c '
+OA_TX=$(docker exec kow-e2e sh -c '
   grep -E "\"type\":\"token_exchange\".*\"outcome\":\"success\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || OA_TX=""
 if [ -z "$OA_TX" ]; then
     red "OAUTH2-WIRE: no token_exchange: success audit event"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains token_exchange: success"
 
-OA_ROT=$(docker exec avp-e2e sh -c '
+OA_ROT=$(docker exec kow-e2e sh -c '
   grep -E "\"type\":\"refresh_token_rotated\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || OA_ROT=""
 if [ -z "$OA_ROT" ]; then
     red "OAUTH2-WIRE: no refresh_token_rotated audit event"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains refresh_token_rotated (write-back attempted; static backend => write_back_unavailable)"
 
 green "[17/17] NEGATIVE test: unbound destination denied"
 
-docker exec avp-e2e python -c "
+docker exec kow-e2e python -c "
 import http.client
 conn = http.client.HTTPConnection('127.0.0.1', 14322, timeout=10)
 conn.request(
@@ -762,13 +762,13 @@ if [ "$NEG_STATUS" != "403" ]; then
 fi
 green "  ✓ unbound destination got 403"
 
-AUDIT_DENY=$(docker exec avp-e2e sh -c '
+AUDIT_DENY=$(docker exec kow-e2e sh -c '
   grep -E "\"type\":\"deny\".*\"reason\":\"unmatched_destination\".*\"host\":\"evil.test\"" \
     /var/log/kow/audit.jsonl | tail -1
 ') || AUDIT_DENY=""
 if [ -z "$AUDIT_DENY" ]; then
     red "NEG: no deny:unmatched_destination entry for evil.test in audit log"
-    docker exec avp-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
+    docker exec kow-e2e tail -5 /var/log/kow/audit.jsonl >&2 || true
     exit 1
 fi
 green "  ✓ audit log contains the deny event"

@@ -36,7 +36,7 @@ Run the wire harness with `bash tests/docker-e2e/run.sh` (or `pytest -m docker`)
 
 The harness uses the `static` backend, not real BWS. The static backend is for **dev / integration testing / this harness only**: it reads plaintext from a file and emits a clear startup warning when active. Do not point it at real credentials.
 
-`secrets.yml` is **not committed**. It's generated inside a one-shot `avp-init` busybox container from the `TEST_SECRET` env var that `run.sh` exports, written into a named volume with avp-owned (UID 65532) modes (0600). This avoids the host-UID mismatch class — on a Docker daemon with userns-remap enabled, the container's "root" maps to a non-root host UID and can't read a host-side 0600 file owned by whichever operator (or CI runner) checked out the tree.
+`secrets.yml` is **not committed**. It's generated inside a one-shot `kow-init` busybox container from the `TEST_SECRET` env var that `run.sh` exports, written into a named volume with kow-owned (UID 65532) modes (0600). This avoids the host-UID mismatch class — on a Docker daemon with userns-remap enabled, the container's "root" maps to a non-root host UID and can't read a host-side 0600 file owned by whichever operator (or CI runner) checked out the tree.
 
 ## How to run locally
 
@@ -55,8 +55,8 @@ If something fails and you want to poke at the running stack:
 
 ```bash
 bash run.sh --keep              # leaves containers + volumes alive
-docker compose logs avp         # mitmproxy + addon logs
-docker exec -it avp-e2e bash    # not really — distroless-ish, no shell
+docker compose logs kow         # mitmproxy + addon logs
+docker exec -it kow-e2e bash    # not really — distroless-ish, no shell
 docker compose down -v          # tear down when done
 ```
 
@@ -68,7 +68,7 @@ docker compose down -v          # tear down when done
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | Three-service stack: `avp-init` (one-shot config staging), `avp`, `upstream` echo. |
+| `docker-compose.yml` | Three-service stack: `kow-init` (one-shot config staging), `kow`, `upstream` echo. |
 | `bindings.yaml` | Test config: one binding for `upstream.test`, `unmatched_destination_policy: deny`, `static` backend. |
 | `run.sh` | Exports `TEST_SECRET`, builds, starts, exercises, asserts, tears down. Exit 0 = pass. |
 | `test_docker_e2e.py` | pytest entry point, marked `@pytest.mark.docker` — skipped by default. |

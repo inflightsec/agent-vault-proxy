@@ -241,10 +241,10 @@ def test_resolve_install_salt_path_prefers_explicit_then_confdir_then_home(
     confdir = tmp_path / "confdir"
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("AVP_CONFDIR", str(confdir))
+    monkeypatch.setenv("KOW_CONFDIR", str(confdir))
     assert resolve_install_salt_path(explicit) == str(explicit)
     assert resolve_install_salt_path(None) == str(confdir / "install-salt")
-    monkeypatch.delenv("AVP_CONFDIR")
+    monkeypatch.delenv("KOW_CONFDIR")
     assert resolve_install_salt_path(None) == str(home / "install-salt")
 
 

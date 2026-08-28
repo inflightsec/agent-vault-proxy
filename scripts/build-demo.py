@@ -220,7 +220,7 @@ pause(ENDING_HOLD)
 
 # ── Write cast ────────────────────────────────────────────────────────────────
 HEADER = {
-    "version": 1,
+    "version": 2,
     "width": WIDTH,
     "height": HEIGHT,
     "timestamp": 1779878404,

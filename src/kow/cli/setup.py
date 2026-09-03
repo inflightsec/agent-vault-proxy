@@ -603,7 +603,7 @@ def _render_next_steps() -> str:
         "\n"
         "  Fast path: paste this to any AI agent (Claude Code, Codex, Cursor, ...):\n"
         "\n"
-        "    Read https://keysonthewire.com/install and set up kow for me.\n"
+        "    Read https://github.com/inflightsec/keys-on-the-wire#install and set up kow for me.\n"
         "\n"
         "  The agent reads the guide and drives kow for you. Same tool in every agent.\n"
         "\n"

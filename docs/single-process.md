@@ -14,7 +14,7 @@ Two reasons, and the second is the interesting one.
 
 **Onboarding cost.** Setting a global `HTTPS_PROXY` and getting CA trust working across Bun, Python, `launchd` jobs and MCP servers is a weekend of work. Wrapping one command is an afternoon, and it tells you whether the tool earns its place before you pay the larger cost.
 
-**A smaller blast radius, honestly described.** Be clear about what wrapping does and does not buy. It does **not** make the proxy inescapable: the child inherits `HTTPS_PROXY` as an ordinary environment variable, and anything that can run code can unset it, or open a socket directly, and bypass kow entirely. No proxy-based design survives an agent that is actively trying to leave.
+**Less exposure, honestly described.** Be clear about what wrapping does and does not buy. It does **not** make the proxy inescapable: the child inherits `HTTPS_PROXY` as an ordinary environment variable, and anything that can run code can unset it, or open a socket directly, and bypass kow entirely. No proxy-based design survives an agent that is actively trying to leave.
 
 What it does buy is containment of *scope*. Only the wrapped process is routed, so the rest of your machine is untouched, no system-wide CA trust is installed, and nothing persists in your shell profile after the trial. If the untrusted input reaches only one component, routing only that component keeps the credential surface as small as the problem.
 

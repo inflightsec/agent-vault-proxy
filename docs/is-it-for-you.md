@@ -20,11 +20,11 @@ Naming the boundaries matters, because this layer is easy to over-trust:
 - **It stops theft, not misuse.** If you bind a key to a host with no method or path limits, a prompt-injected agent can still spend that key's authority within scope. Tightening the binding's scope (`methods:` and `paths:`) is the lever that turns a read key into a read-only key.
 - **It injects on the request, not the response.** An upstream that echoes your `Authorization` header back in its response body breaks the isolation for that one exchange.
 - **It is not a vault, key manager, or rotation system.** It is the wire-substitution layer *between* your existing vault and your agent, nothing more.
-- **Same-UID and host-root attackers are out of scope.** Code running as the proxy's own user can use the proxy as an authenticated channel. kow shrinks the blast radius; it is one layer, not a complete sandbox.
+- **Same-UID and host-root attackers are out of scope.** Code running as the proxy's own user can use the proxy as an authenticated channel, and kow does not stop it. Narrow each binding's `methods:` and `paths:` to limit what that channel is good for. kow is one layer, not a complete sandbox.
 
 ## Why route through it
 
-The payoff is a smaller blast radius. When, not if, an agent reads a malicious web page, runs a poisoned dependency, or leaks a log, the thing that escapes is a placeholder, not your Stripe key. kow answers two specific and common threats head-on: **prompt injection** (untrusted text steering the agent into leaking secrets) and **software supply-chain compromise** (a malicious dependency reading the process environment, as in Shai-Hulud). In both, the real secret bytes were never in the agent's memory to take.
+The payoff is that less is exposed. When, not if, an agent reads a malicious web page, runs a poisoned dependency, or leaks a log, the thing that escapes is a placeholder, not your Stripe key. kow answers two specific and common threats head-on: **prompt injection** (untrusted text steering the agent into leaking secrets) and **software supply-chain compromise** (a malicious dependency reading the process environment, as in Shai-Hulud). In both, the real secret bytes were never in the agent's memory to take.
 
 ## When to reach for it, and when not
 

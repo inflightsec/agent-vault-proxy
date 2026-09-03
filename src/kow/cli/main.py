@@ -187,6 +187,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Backend: Google Secret Manager — keyless; hands off to `kow gcp-setup`.",
     )
     backend_group.add_argument(
+        "--aws",
+        action="store_true",
+        help=(
+            "Backend: AWS Secrets Manager — keyless (ambient IAM); no token needed. "
+            "Grant the identity secretsmanager:GetSecretValue on your prefix ARN."
+        ),
+    )
+    backend_group.add_argument(
+        "--keychain",
+        action="store_true",
+        help=(
+            "Backend: macOS Keychain — keyless (login keychain); no token needed. "
+            "macOS only; setup refuses this flag on any other host."
+        ),
+    )
+    backend_group.add_argument(
         "--static",
         action="store_true",
         help=(
@@ -292,6 +308,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             static=args.static,
             gsm=args.gsm,
             bws=args.bws,
+            keychain=args.keychain,
+            aws=args.aws,
         )
     if args.command == "gcp-setup":
         return run_gcp_setup(

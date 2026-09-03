@@ -7,12 +7,12 @@ The proxy needs a Bitwarden Secrets Manager project and a machine-account access
 2. **Create a project** for this host (e.g. `claude-laptop`, `ci-runner-prod`), then add the secrets you want to broker as project-scoped entries - one per API (`OPENAI_API_KEY`, `GITHUB_PAT`, `ANTHROPIC_API_KEY`, …). Use the same name in BWS as you'll declare in `bindings.yaml`.
 
 3. **Create a machine account**, grant it **read** access to the project from step 2, and generate an access token. The token lives in:
-   - `/etc/kow/bws-token` (mode `0440 root:avp`) for the bare-metal install, or
+   - `/etc/kow/bws-token` (mode `0440 root:kow`) for the bare-metal install, or
    - `./secrets/bws-token` (mode `0600`) for the Docker install.
 
    The project's organization UUID goes into `bindings.yaml` under `backend.config.organization_id`. See `bindings.example.yaml` for the shape.
 
-**Project and machine-account scoping (please read this).** The blast radius of a compromised BWS token is exactly the secrets in the projects that machine account can read. Two rules:
+**Project and machine-account scoping (please read this).** What a compromised BWS token exposes is exactly the secrets in the projects that machine account can read. Two rules:
 
 - **One BWS project per kow instance.** Don't pool unrelated services into one shared project so they can all reach each other's secrets - that turns one bad binding into a multi-service leak.
 - **Separate machine accounts per environment.** Staging laptop's kow, CI runner's kow, and prod host's kow each get their own machine account with read access to a single project scoped to that environment. Don't reuse one token across hosts; if one leaks, you only burn one environment.

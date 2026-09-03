@@ -45,17 +45,17 @@ export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
 
-Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses. They are **not** equivalent: `NODE_EXTRA_CA_CERTS` is additive, while the other three replace the trust store outright — which is why the block above hands them a bundle containing the system roots *and* kow's CA, not kow's CA alone. This bundle is a point-in-time copy: re-run the `cat` after a kow CA rotation **and** whenever the system roots change (a `ca-certificates` package update, or an enterprise/MDM root being added or revoked). A stale bundle fails in a confusing way — some hosts verify, others do not. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
+Why several CA variables: the proxy presents its own TLS certificate (signed by its CA) so it can read and rewrite the request, so every client has to trust that CA. Different HTTPS stacks read it from different env vars: Node from `NODE_EXTRA_CA_CERTS`, OpenSSL-based tools from `SSL_CERT_FILE`, Python `requests` from `REQUESTS_CA_BUNDLE`, curl from `CURL_CA_BUNDLE`. Set the ones your agent's stack uses. They are **not** equivalent: `NODE_EXTRA_CA_CERTS` is additive, while the other three replace the trust store outright - which is why the block above hands them a bundle containing the system roots *and* kow's CA, not kow's CA alone. This bundle is a point-in-time copy: re-run the `cat` after a kow CA rotation **and** whenever the system roots change (a `ca-certificates` package update, or an enterprise/MDM root being added or revoked). A stale bundle fails in a confusing way - some hosts verify, others do not. This is the canonical env-var block (including `NO_PROXY`): other docs point here for the full set.
 
 The proxy records every substitution decision in an append-only JSONL audit log at `/var/log/kow/audit.jsonl`.
 
 ### Excluding a host from the proxy (and why)
 
-`NO_PROXY` is **host-scoped**: only the hosts you list bypass the proxy — every other host still goes through it and still gets its credential injected. This is important for a common case: **your agent's own model/control-plane endpoint.** An LLM API the agent talks to (e.g. its own provider) authenticates itself and usually has *no* brokered secret here, so routing it through the proxy buys nothing — and it makes the agent depend on the proxy being up. Add that host to `NO_PROXY` and the agent reaches it directly, so a proxy restart or outage can never take the agent down, and you aren't terminating TLS on a stream you have no secret to inject into.
+`NO_PROXY` is **host-scoped**: only the hosts you list bypass the proxy: every other host still goes through it and still gets its credential injected. This is important for a common case: **your agent's own model/control-plane endpoint.** An LLM API the agent talks to (e.g. its own provider) authenticates itself and usually has *no* brokered secret here, so routing it through the proxy buys nothing: and it makes the agent depend on the proxy being up. Add that host to `NO_PROXY` and the agent reaches it directly, so a proxy restart or outage can never take the agent down, and you aren't terminating TLS on a stream you have no secret to inject into.
 
-Crucially, this does **not** turn the proxy off for the agent's children. A script the agent spawns inherits `HTTPS_PROXY`/`NO_PROXY`, so any call it makes to a *brokered* host (your GitHub, cloud, or SaaS credentials) still routes through the proxy and is injected on the wire — only the excluded hosts go direct. Exclude the narrowest set that works; list the exact host, and add a leading-dot form (`.example.com`) if the client must also bypass subdomains. `NO_PROXY` matching differs by client (curl supports CIDR; Node/undici and Python `requests` match by host/suffix), so verify with the stack your agent actually uses.
+Crucially, this does **not** turn the proxy off for the agent's children. A script the agent spawns inherits `HTTPS_PROXY`/`NO_PROXY`, so any call it makes to a *brokered* host (your GitHub, cloud, or SaaS credentials) still routes through the proxy and is injected on the wire - only the excluded hosts go direct. Exclude the narrowest set that works; list the exact host, and add a leading-dot form (`.example.com`) if the client must also bypass subdomains. `NO_PROXY` matching differs by client (curl supports CIDR; Node/undici and Python `requests` match by host/suffix), so verify with the stack your agent actually uses.
 
-> Caveat: if you launch the agent via `kow run`, it **strips** `NO_PROXY` (and `no_proxy`) from the child environment on purpose — otherwise an injected agent could set `NO_PROXY=*` to escape the proxy. To exclude a host under `kow run`, set the exclusion in the agent's own launch environment (the wrapper/service that starts it), not inside the `kow run` child.
+> Caveat: if you launch the agent via `kow run`, it **strips** `NO_PROXY` (and `no_proxy`) from the child environment on purpose: otherwise an injected agent could set `NO_PROXY=*` to escape the proxy. To exclude a host under `kow run`, set the exclusion in the agent's own launch environment (the wrapper/service that starts it), not inside the `kow run` child.
 
 ## Configuration
 
@@ -82,7 +82,7 @@ Path globs: `*` matches one URL segment, `**` matches any number. Empty `methods
 
 ### Honeytokens (tripwire bindings)
 
-Mark any binding `honeytoken: true` to turn it into a canary. Plant its placeholder somewhere tempting — a decoy `.env`, a fake `~/.aws/credentials` — and bind it to a trap host you control:
+Mark any binding `honeytoken: true` to turn it into a canary. Plant its placeholder somewhere tempting, a decoy `.env`, a fake `~/.aws/credentials`, and bind it to a trap host you control:
 
 ```yaml
 secrets:
@@ -96,58 +96,58 @@ secrets:
       - host: "canary.your-domain.example"
 ```
 
-The agent only ever holds the *placeholder*, never the real secret (that is the whole point of the proxy), so the honeytoken's real value is never in the agent's address space. But the moment anything steers that placeholder anywhere, the proxy emits a `honeytoken_triggered` audit event alongside the normal decision — on *any* use (injected, denied, scope-violated, or aimed at the wrong host), before any real value moves. Shipped off-box (below), a single `honeytoken_triggered` anywhere in the fleet means that machine is being walked for credentials. The event carries no secret material (see [architecture §4.4](architecture.md)).
+The agent only ever holds the *placeholder*, never the real secret (that is the whole point of the proxy), so the honeytoken's real value is never in the agent's address space. But the moment anything steers that placeholder anywhere, the proxy emits a `honeytoken_triggered` audit event alongside the normal decision - on *any* use (injected, denied, scope-violated, or aimed at the wrong host), before any real value moves. Shipped off-box (below), a single `honeytoken_triggered` anywhere in the fleet means that machine is being walked for credentials. The event carries no secret material (see [architecture §4.4](architecture.md)).
 
 ### Off-box audit shipping
 
-The audit log is a local, fail-closed source of truth. To forward it to a central collector for fleet-wide alerting (honeytoken triggers, bursts of denied / exfil-attempt decisions), the Ansible role stands up a **separate** shipper sidecar — a distinct systemd unit and user with read-only access to the log. The proxy's own process, sandbox, and egress surface are untouched.
+The audit log is a local, fail-closed source of truth. To forward it to a central collector for fleet-wide alerting (honeytoken triggers, bursts of denied / exfil-attempt decisions), the Ansible role stands up a **separate** shipper sidecar: a distinct systemd unit and user with read-only access to the log. The proxy's own process, sandbox, and egress surface are untouched.
 
 Enable it per host in inventory:
 
 ```yaml
-kow_shipping_enabled: true
-kow_shipper_collector_host: "collector.your-tailnet.ts.net"
+agent_vault_proxy_shipping_enabled: true
+agent_vault_proxy_shipper_collector_host: "collector.your-tailnet.ts.net"
 # Pinned + checksum-verified at provision time (never a runtime fetch):
-kow_shipper_fluentbit_url: "https://.../fluent-bit"
-kow_shipper_fluentbit_sha256: "<sha256>"
+agent_vault_proxy_shipper_fluentbit_url: "https://.../fluent-bit"
+agent_vault_proxy_shipper_fluentbit_sha256: "<sha256>"
 ```
 
-The default shipper is **Fluent Bit** (~15 MB, ~10% of the deployed footprint). Switching to Vector later is a per-host swap — set `kow_shipper: vector` once that path lands; `vector` / `native` currently fail fast with a "not yet implemented" message so the seam is explicit. The design, transport (Tailscale node identity, no mTLS), and threat model are in [ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md).
+The default shipper is **Fluent Bit** (~15 MB, ~10% of the deployed footprint). Switching to Vector later is a per-host swap - set `agent_vault_proxy_shipper: vector` once that path lands; `vector` / `native` currently fail fast with a "not yet implemented" message so the seam is explicit. The design, transport (Tailscale node identity, no mTLS), and threat model are in [ADR-0019](adrs/ADR-0019-off-box-audit-shipping.md).
 
 #### Shipping to a hosted log service
 
-Fluent Bit can fan out to the major log platforms at the same time as (or instead of) the collector. **GCP Cloud Logging** is first-class — just set the role vars:
+Fluent Bit can fan out to the major log platforms at the same time as (or instead of) the collector. **GCP Cloud Logging** is first-class - just set the role vars:
 
 ```yaml
-kow_shipper_gcl_enabled: true
-kow_shipper_gcl_project_id: "your-gcp-project"
-kow_shipper_gcl_credentials_path: "/etc/avp-audit-shipper/gcl.json"
+agent_vault_proxy_shipper_gcl_enabled: true
+agent_vault_proxy_shipper_gcl_project_id: "your-gcp-project"
+agent_vault_proxy_shipper_gcl_credentials_path: "/etc/kow-audit-shipper/gcl.json"
 ```
 
-For any other service, paste the vendor's `[OUTPUT]` block into `kow_shipper_extra_outputs` — one variable, any number of sinks, no per-vendor role code. Source tokens from vault (the rendered config is root-owned `0640`). **Datadog** and **Splunk**:
+For any other service, paste the vendor's `[OUTPUT]` block into `agent_vault_proxy_shipper_extra_outputs`, one variable, any number of sinks, no per-vendor role code. Source tokens from vault (the rendered config is root-owned `0640`). **Datadog** and **Splunk**:
 
 ```yaml
-kow_shipper_extra_outputs: |
+agent_vault_proxy_shipper_extra_outputs: |
   [OUTPUT]
       Name        datadog
-      Match       avp.audit
+      Match       kow.audit
       Host        http-intake.logs.datadoghq.com
       TLS         on
       compress    gzip
       apikey      YOUR_DATADOG_API_KEY        # from vault
-      dd_source   avp-audit
+      dd_source   kow-audit
       dd_service  keys-on-the-wire
 
   [OUTPUT]
       Name          splunk
-      Match         avp.audit
+      Match         kow.audit
       Host          your-hec.splunkcloud.com
       Port          8088
       TLS           on
       Splunk_Token  YOUR_SPLUNK_HEC_TOKEN      # from vault
 ```
 
-Elasticsearch (`Name es`), AWS CloudWatch (`Name cloudwatch_logs`), and the rest follow the same one-block pattern — see the [Fluent Bit outputs](https://docs.fluentbit.io/manual/pipeline/outputs) catalog.
+Elasticsearch (`Name es`), AWS CloudWatch (`Name cloudwatch_logs`), and the rest follow the same one-block pattern, see the [Fluent Bit outputs](https://docs.fluentbit.io/manual/pipeline/outputs) catalog.
 
 ## Recommended layout for ongoing changes
 

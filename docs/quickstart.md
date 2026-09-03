@@ -1,6 +1,6 @@
 # Quickstart
 
-kow is a local proxy that swaps a placeholder for the real secret in-flight, so your agent never holds the credential. Five steps — no config file to hand-write.
+kow is a local proxy that swaps a placeholder for the real secret in-flight, so your agent never holds the credential. Five steps: no config file to hand-write.
 
 ## 1. Install
 
@@ -39,16 +39,16 @@ Just ask, in plain English:
 
 > Add my `GROQ_API_KEY` to kow
 
-The skill hands you the exact `# kow-binding` note — which host, which header — for that secret. No YAML, no redeploy.
+The skill hands you the exact `# kow-binding` note - which host, which header, for that secret. No YAML, no redeploy.
 
 ## 5. Add the secret
 
 In Bitwarden Secrets Manager, create the secret (`GROQ_API_KEY` = your key) and paste the skill's `# kow-binding` note into its **Notes** field.
 
-That's it. kow re-reads the vault on a timer (default every 60s) and starts brokering the new key automatically — no restart, no redeploy. (Tune or disable with `notes_refresh_seconds`.)
+That's it. kow re-reads the vault on a timer (default every 60s) and starts brokering the new key automatically - no restart, no redeploy. (Tune or disable with `notes_refresh_seconds`.)
 
 ---
 
 Point your agent at the proxy (`HTTPS_PROXY=http://127.0.0.1:14322`) and export the **placeholder** instead of the real key: the real secret goes on the wire, your process never holds it. `kow doctor` confirms the setup.
 
-Going deeper — hardening, how it works, and the full binding grammar: [install-systemd.md](install-systemd.md) · [concepts.md](concepts.md) · [bindings.example.yaml](../bindings.example.yaml).
+Going deeper, hardening, how it works, and the full binding grammar: [install-systemd.md](install-systemd.md) · [concepts.md](concepts.md) · [bindings.example.yaml](../bindings.example.yaml).

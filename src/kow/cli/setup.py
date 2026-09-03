@@ -176,12 +176,24 @@ def plan_setup(
     no_service: bool = False,
     static: bool = False,
     gsm: bool = False,
+    keychain: bool = False,
+    aws: bool = False,
 ) -> list[Step]:
     """Render the ``kow setup`` install plan without touching the host."""
     if os_name not in {"linux", "macos"}:
         raise ValueError(f"unsupported os_name {os_name!r}")
     # Single internal backend selector derived from the mutually-exclusive flags.
-    backend = "gsm" if gsm else ("static" if static else "bws")
+    backend = (
+        "gsm"
+        if gsm
+        else "aws"
+        if aws
+        else "keychain"
+        if keychain
+        else "static"
+        if static
+        else "bws"
+    )
 
     # gid-0 group differs per platform; macOS has no "root" group.
     gid0_group = "root" if os_name == "linux" else "wheel"
@@ -305,8 +317,9 @@ def plan_setup(
                 skip_if_exists=True,
             ),
         )
-    # backend == "gsm": keyless — no local secret material to provision. Access
-    # is granted out-of-band via `kow gcp-setup` (hand-off printed after setup).
+    # backend in {"gsm", "aws", "keychain"}: keyless — no local secret material to
+    # provision. GSM/AWS grant access out-of-band via IAM (hand-off printed after
+    # setup); the keychain holds values the operator adds with `kow secret add`.
 
     if os_name == "linux":
         steps.append(
@@ -377,12 +390,16 @@ def run_setup(
     static: bool = False,
     gsm: bool = False,
     bws: bool = False,
+    keychain: bool = False,
+    aws: bool = False,
 ) -> int:
     """CLI entry point for ``kow setup``.
 
-    Backend selection: exactly one of ``--bws`` / ``--gsm`` / ``--static`` may be
-    passed. When none is (all three False), an interactive picker runs on a TTY;
-    off a TTY it defaults to BWS so Ansible / container runs stay non-interactive.
+    Backend selection: exactly one of ``--bws`` / ``--gsm`` / ``--aws`` /
+    ``--keychain`` / ``--static`` may be passed. When none is (all False), an
+    interactive picker runs on a TTY; off a TTY it defaults to BWS so Ansible /
+    container runs stay non-interactive. ``--keychain`` is macOS-only and refused
+    on any other host.
     """
     system_name = platform.system()
     if system_name == "Linux":
@@ -398,11 +415,19 @@ def run_setup(
         return 1
 
     # No backend flag → let the user choose on a TTY; default BWS off a TTY so
-    # non-interactive (Ansible / container) runs are unchanged.
-    if not (static or gsm or bws) and sys.stdin.isatty():
-        choice = _prompt_backend()
-        static = choice == "static"
-        gsm = choice == "gsm"
+    # non-interactive (Ansible / container) runs are unchanged. The resolver also
+    # enforces the macOS-only keychain guard.
+    static, gsm, aws, keychain, backend_error = _resolve_backend(
+        system_name=system_name,
+        static=static,
+        gsm=gsm,
+        bws=bws,
+        aws=aws,
+        keychain=keychain,
+    )
+    if backend_error is not None:
+        print(backend_error, file=sys.stderr)
+        return 1
 
     legacy = _adopt_legacy_layout(os_name, prefix)
     resolved_user = user or default_service_user(os_name, legacy=legacy)
@@ -423,6 +448,8 @@ def run_setup(
         no_service=no_service,
         static=static,
         gsm=gsm,
+        keychain=keychain,
+        aws=aws,
     )
     execute_plan(plan, dry_run=dry_run)
     if no_service:
@@ -450,25 +477,73 @@ def run_setup(
             "ProtectSystem, RestrictAddressFamilies, or syscall filter. If this host "
             "is a credible target, run keys-on-the-wire inside Docker or a Linux VM."
         )
-    if gsm:
-        print(_render_gsm_handoff(paths))
+    _print_backend_handoff(paths, gsm=gsm, aws=aws)
     print(_render_next_steps())
     return doctor_rc
 
 
+def _resolve_backend(
+    *,
+    system_name: str,
+    static: bool,
+    gsm: bool,
+    bws: bool,
+    aws: bool,
+    keychain: bool,
+) -> tuple[bool, bool, bool, bool, str | None]:
+    """Resolve which backend to install.
+
+    Runs the interactive picker when no flag was passed and stdin is a TTY, then
+    enforces the macOS-only keychain guard (which also catches a keychain pick
+    from the picker on a non-Mac host). Returns
+    ``(static, gsm, aws, keychain, error)`` — ``error`` is a message to print and
+    refuse on, or ``None`` to proceed. ``bws`` is the implicit default, so it is
+    consumed here but not returned.
+    """
+    if not (static or gsm or bws or aws or keychain) and sys.stdin.isatty():
+        choice = _prompt_backend()
+        static = choice == "static"
+        gsm = choice == "gsm"
+        aws = choice == "aws"
+        keychain = choice == "keychain"
+    if keychain and system_name != "Darwin":
+        return (
+            static,
+            gsm,
+            aws,
+            keychain,
+            f"kow setup: the keychain backend requires macOS; this host is "
+            f"{system_name!r}. Choose --bws / --gsm / --aws / --static instead.",
+        )
+    return static, gsm, aws, keychain, None
+
+
+def _print_backend_handoff(paths: SetupPaths, *, gsm: bool, aws: bool) -> None:
+    """Print the post-setup hand-off for the keyless networked backends. GSM and
+    AWS are mutually exclusive, so at most one note prints; BWS/static/keychain
+    have no networked IAM step to hand off."""
+    if gsm:
+        print(_render_gsm_handoff(paths))
+    elif aws:
+        print(_render_aws_handoff(paths))
+
+
 def _prompt_backend() -> str:
-    """Interactive backend picker (TTY only). Returns 'bws' | 'gsm' | 'static'.
-    Loops until a valid 1/2/3 choice is entered — never guesses a default."""
+    """Interactive backend picker (TTY only). Returns
+    'bws' | 'gsm' | 'static' | 'aws' | 'keychain'. Loops until a valid 1-5 choice
+    is entered — never guesses a default."""
     print("Which secret backend should keys-on-the-wire use?")
     print("  [1] Bitwarden Secrets Manager (BWS) — paste a machine-account token")
     print("  [2] Google Secret Manager (GSM)     — keyless (gcloud ADC), nothing to paste")
     print("  [3] Local static file               — no vault, 0600 file (dev/testing)")
-    choices = {"1": "bws", "2": "gsm", "3": "static"}
+    print("  [4] AWS Secrets Manager             — keyless (ambient IAM), nothing to paste")
+    print("  [5] macOS Keychain                  — keyless (login keychain), macOS only")
+    choices = {"1": "bws", "2": "gsm", "3": "static", "4": "aws", "5": "keychain"}
     while True:
-        answer = input("Enter 1, 2, or 3: ").strip()
+        answer = input("Enter 1, 2, 3, 4, or 5: ").strip()
         if answer in choices:
             return choices[answer]
-        print(f"'{answer}' is not 1, 2, or 3 — please try again.")
+        print(f"'{answer}' is not 1, 2, 3, 4, or 5 — please try again.")
 
 
 def _render_gsm_handoff(paths: SetupPaths) -> str:
@@ -492,28 +567,50 @@ def _render_gsm_handoff(paths: SetupPaths) -> str:
     )
 
 
-def _render_next_steps() -> str:
-    """Post-setup guidance: how to add the first binding. Points at the
-    deterministic `kow binding new` tool first, then the optional skill for a
-    conversational flow — never auto-installs anything."""
+def _render_aws_handoff(paths: SetupPaths) -> str:
+    """Hand-off for the aws-secrets-manager backend — keyless via ambient IAM
+    (Roles Anywhere / SSO / instance profile), so nothing was pasted. Mirrors
+    :func:`_render_gsm_handoff`: setup selects the backend; the operator grants
+    least-privilege read on their own prefix ARN out-of-band."""
     return (
         "\n"
-        "Next — put an API key behind the proxy. Your real key never enters the agent.\n"
+        "AWS Secrets Manager backend selected — keyless (ambient IAM), so nothing "
+        "was pasted. Two steps to finish:\n"
         "\n"
-        "  Works in ANY agent (or none): run the generator, paste what it prints into\n"
-        "  your vault. It validates the binding, so it can't be silently wrong:\n"
+        f"  1. Set your region and secret_prefix in {paths.bindings_path}\n"
+        "     (fields `region` and `secret_prefix`).\n"
+        "\n"
+        "  2. Grant kow's IAM identity read access, scoped to your prefix ARN\n"
+        "     (least privilege — never account-wide):\n"
+        "       secretsmanager:GetSecretValue\n"
+        "     e.g. on arn:aws:secretsmanager:<region>:<account>:secret:kow/*\n"
+        "\n"
+        "  kow resolves credentials from the ambient chain and refuses permanent\n"
+        "  IAM-user keys (require_temporary_credentials: true); self_check: deny\n"
+        "  refuses to start if the identity can read or enumerate secrets outside\n"
+        "  secret_prefix.\n"
+    )
+
+
+def _render_next_steps() -> str:
+    """Post-setup guidance: how to add the first binding. Leads with the universal
+    paste-into-any-agent one-liner (the agent fetches the guide and drives kow),
+    then the deterministic `kow binding new` tool as the by-hand fallback. Never
+    auto-installs anything."""
+    return (
+        "\n"
+        "Next: put an API key behind the proxy. Your real key never enters the agent.\n"
+        "\n"
+        "  Fast path: paste this to any AI agent (Claude Code, Codex, Cursor, ...):\n"
+        "\n"
+        "    Read https://keysonthewire.com/install and set up kow for me.\n"
+        "\n"
+        "  The agent reads the guide and drives kow for you. Same tool in every agent.\n"
+        "\n"
+        "  Prefer to do it by hand? Run the generator and paste what it prints into\n"
+        "  your vault (it validates the binding, so it can't be silently wrong):\n"
         "\n"
         "    kow binding new --host api.stripe.com --name STRIPE_API_KEY\n"
-        "\n"
-        '  In Claude Code, skip the flags and just say: "route my Stripe key through kow".\n'
-        "  Install the skill ONCE by typing these as slash-commands in the Claude Code\n"
-        "  chat (they are NOT terminal commands):\n"
-        "\n"
-        "    /plugin marketplace add inflightsec/keys-on-the-wire\n"
-        "    /plugin install kow@keys-on-the-wire\n"
-        "\n"
-        "  Codex or another agent? There's no plugin store — just run the command above,\n"
-        "  or tell the agent to. Same tool everywhere.\n"
     )
 
 
@@ -713,6 +810,68 @@ def _render_bindings(paths: SetupPaths, *, backend: str = "bws") -> str:
               path: {paths.audit_path}
             """
         )
+
+    if backend == "aws":
+        # AWS Secrets Manager (ADR-0038): notes-aware like GSM — each secret
+        # carries its host in an `avp-binding` tag or a `# avp-binding` marker in
+        # its Description (binding_source: notes), so no `secrets:` block here.
+        # Keyless via ambient IAM; nothing to paste. region + secret_prefix are
+        # placeholders you MUST set, and self_check: deny bounds the namespace.
+        return textwrap.dedent(
+            f"""\
+            # keys-on-the-wire starter config written by `kow setup --aws`.
+            # Host bindings live in each secret's `avp-binding` tag (bare host) or a
+            # `# avp-binding` marker block in its Description (binding_source: notes);
+            # no `secrets:` block is needed here.
+            version: 1
+            binding_source: notes
+            # Pinned so daemon + tooling derive identical placeholders.
+            install_salt_path: {paths.salt_path}
+            backend:
+              type: aws-secrets-manager
+              config:
+                type: aws-secrets-manager
+                region: "REPLACE-WITH-YOUR-AWS-REGION"   # <- you MUST set this (e.g. us-east-1)
+                secret_prefix: "kow/"                 # scopes list + the self_check guard
+                self_check: deny                      # refuse to start under a broad identity
+                require_temporary_credentials: true   # refuse permanent IAM-user keys
+            audit:
+              path: {paths.audit_path}
+            """
+        )
+
+    if backend == "keychain":
+        # macOS Keychain (ADR-0046): a value-only backend with no notes metadata,
+        # so — exactly like `static` — the bindings live in THIS file
+        # (binding_source: file). The VALUE for each name comes from the login
+        # keychain (service: kow), added out-of-band with `kow secret add`.
+        # Keyless: nothing to paste. macOS only (guarded in run_setup).
+        content = textwrap.dedent(
+            f"""\
+            # keys-on-the-wire starter config written by `kow setup --keychain`.
+            # macOS only. Secret VALUES live in the login keychain (service: kow);
+            # add them with `kow secret add`. This file carries the bindings.
+            version: 1
+            binding_source: file
+            secrets:
+              EXAMPLE_API_KEY:
+                placeholder: "example_PLACEHOLDER_0001"
+                inject:
+                  header: "Authorization"
+                  format: "Bearer {{EXAMPLE_API_KEY}}"
+                bindings:
+                  - host: "example.com"
+            backend:
+              type: keychain
+              config:
+                type: keychain
+                service: kow
+            audit:
+              path: {paths.audit_path}
+            """
+        )
+        Config.model_validate(yaml.safe_load(content))
+        return content
 
     content = textwrap.dedent(
         f"""\

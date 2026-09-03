@@ -11,7 +11,7 @@ macOS has [SandVault](https://github.com/webcoyote/sandvault) — one well-maint
 ### Starter recipe
 
 ```bash
-mkdir -p ~/.cache/avp-sandbox-home ~/.claude
+mkdir -p ~/.cache/kow-sandbox-home ~/.claude
 
 bwrap \
   --ro-bind /usr /usr \
@@ -22,7 +22,7 @@ bwrap \
   --symlink usr/sbin  /sbin  \
   --proc /proc --dev /dev --tmpfs /tmp \
   --tmpfs /home \
-  --bind ~/.cache/avp-sandbox-home "$HOME" \
+  --bind ~/.cache/kow-sandbox-home "$HOME" \
   --bind ~/.claude                 "$HOME/.claude" \
   --bind "$PWD" "$PWD" --chdir "$PWD" \
   --die-with-parent \

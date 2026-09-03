@@ -2,12 +2,15 @@
 
 ## Supported versions
 
-The current minor version receives security fixes. Older versions do not, upgrading is the supported path. Once we cut `v1.0.0`, this policy will be revised to support the most recent major version + the immediately previous one.
+The current minor version receives security fixes. Older versions do not, upgrading is the supported path.
 
 | Version | Supported |
 |---|---|
-| `0.4.x` | ✓ |
-| `< 0.4` | ✗ |
+| `1.1.x` | ✓ |
+| `1.0.x` | ✗ |
+| `< 1.0` | ✗ |
+
+Releases up to and including `0.9.0` were published as `agent-vault-proxy` under MIT; `1.0.0` onward are `keys-on-the-wire` under Apache-2.0. Neither pre-1.0 line receives fixes.
 
 ## Reporting a vulnerability
 
@@ -27,7 +30,7 @@ If GitHub's reporting flow is unavailable to you, open a *minimal* public issue 
 
 A useful report has:
 
-- **Affected version** (`pip show kow` or commit SHA)
+- **Affected version** (`kow --version`, or `pip show keys-on-the-wire`, or a commit SHA)
 - **Type of issue** (e.g., placeholder substitution bypass, audit log integrity, secret leak to logs, sandbox escape, supply-chain concern)
 - **Reproduction steps** - minimal, deterministic, ideally with a config snippet and a curl/python command
 - **Impact**, what an attacker gains, under what trust assumptions
@@ -69,14 +72,14 @@ The 90-day clock starts at receipt, not at fix. We will not silently extend it.
 - Placeholder substitution bypass (e.g., substring/encoding tricks that get the real secret out without a matching binding)
 - Audit log integrity (events missed, fsync skipped, ordering wrong relative to upstream write)
 - Secret leakage into the daemon's own logs, stack traces, or error messages
-- Sandbox escape from the `avp` system user
+- Sandbox escape from the `kow` system user
 - Hardening regression in the shipped systemd unit example
 - `bindings.example.yaml` or documentation that could lead an operator into a materially insecure default
 - Supply-chain concerns about how we build/ship the package (lockfile, install-time controls, action pinning)
 
 **Out of scope**: please report upstream:
 
-- CVEs in `mitmproxy`, `bitwarden-sdk`, `pydantic`, `pyyaml`, or other transitive dependencies, **where the impact is limited to that dependency's own behavior**, report to those projects. We will track and bump the lockfile after the cooldown window. **However**: if a dependency CVE is exploitable *through AVP's deployment* in a way that affects the G1–G9 guarantees or any of our public claims (e.g., a `mitmproxy` parser bug that lets an upstream response inject headers back into the agent, or a `bitwarden-sdk` bug that leaks the access token into our logs under specific request shapes), that is **in-scope**. Root-cause disclosure still goes to the upstream maintainer; the AVP-specific exposure analysis and any mitigation (patch, scope tightening, pin update with cooldown override) is ours.
+- CVEs in `mitmproxy`, `bitwarden-sdk`, `pydantic`, `pyyaml`, or other transitive dependencies, **where the impact is limited to that dependency's own behavior**, report to those projects. We will track and bump the lockfile after the cooldown window. **However**: if a dependency CVE is exploitable *through kow's deployment* in a way that affects the G1–G9 guarantees or any of our public claims (e.g., a `mitmproxy` parser bug that lets an upstream response inject headers back into the agent, or a `bitwarden-sdk` bug that leaks the access token into our logs under specific request shapes), that is **in-scope**. Root-cause disclosure still goes to the upstream maintainer; the kow-specific exposure analysis and any mitigation (patch, scope tightening, pin update with cooldown override) is ours.
 - The operator's own bindings configuration (e.g., declaring an overly broad host wildcard, omitting `methods: [GET]` on a binding that should have it)
 - The operator's host firewall, OS, BWS organization configuration, or shell history hygiene
 - Anything in [`docs/architecture.md`](./docs/architecture.md) §11 (Out of scope): those are documented non-defenses, not vulnerabilities

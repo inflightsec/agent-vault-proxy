@@ -25,11 +25,11 @@ you just add the secret to GSM and tag it with the host it's allowed to reach.
 ## 1. Add a secret — tagged with the host it's for
 
 The whole trick is the `kow-binding` annotation. Prefix the secret name with a
-namespace (here `avp-<you>-`) so the proxy's identity can be scoped to just your
+namespace (here `kow_<you>_`) so the proxy's identity can be scoped to just your
 secrets later.
 
 ```bash
-printf '%s' 'sk-your-real-openai-key' | gcloud secrets create avp-OPENAI_API_KEY \
+printf '%s' 'sk-your-real-openai-key' | gcloud secrets create kow_OPENAI_API_KEY \
   --project=YOUR_PROJECT \
   --annotations=$'kow-binding=# kow-binding\napi.openai.com' \
   --data-file=-
@@ -44,7 +44,7 @@ case. Need more control? Use a small YAML block instead (block style, no inline
 commas — gcloud treats commas as the annotation separator):
 
 ```bash
-gcloud secrets update avp-OPENAI_API_KEY --update-annotations=$'kow-binding=# kow-binding\nhost: api.openai.com\nmethods:\n- POST\npaths:\n- /v1/**'
+gcloud secrets update kow_OPENAI_API_KEY --update-annotations=$'kow-binding=# kow-binding\nhost: api.openai.com\nmethods:\n- POST\npaths:\n- /v1/**'
 ```
 
 A secret **with no `kow-binding` annotation — or an unmarked one — is never
@@ -64,15 +64,15 @@ gcloud auth application-default login
 access to *only* your secrets with `kow gcp-setup` (which **refuses** any
 project-level grant), then impersonate it:
 ```bash
-gcloud iam service-accounts create avp-ro --project=YOUR_PROJECT
+gcloud iam service-accounts create kow-ro --project=YOUR_PROJECT
 
 kow gcp-setup --project=YOUR_PROJECT \
-  --member=serviceAccount:avp-ro@YOUR_PROJECT.iam.gserviceaccount.com \
-  --secret=avp-OPENAI_API_KEY          # repeat --secret per secret
+  --member=serviceAccount:kow-ro@YOUR_PROJECT.iam.gserviceaccount.com \
+  --secret=kow_OPENAI_API_KEY          # repeat --secret per secret
 
 # let your login impersonate it (needs roles/iam.serviceAccountTokenCreator on the SA)
 gcloud auth application-default login \
-  --impersonate-service-account=avp-ro@YOUR_PROJECT.iam.gserviceaccount.com
+  --impersonate-service-account=kow-ro@YOUR_PROJECT.iam.gserviceaccount.com
 ```
 
 > **Heads-up (the security feature working):** if you authenticate as a broad
@@ -98,9 +98,9 @@ backend:
   config:
     type: gsm
     project_id: "123456789012"   # project NUMBER (gcloud projects describe YOUR_PROJECT --format='value(projectNumber)')
-    secret_prefix: "avp-"  # only secrets under this prefix are in scope
+    secret_prefix: "kow_"  # only secrets under this prefix are in scope
     self_check: warn             # use `deny` once you're on a scoped SA
-    # impersonate_service_account: avp-ro@YOUR_PROJECT.iam.gserviceaccount.com
+    # impersonate_service_account: kow-ro@YOUR_PROJECT.iam.gserviceaccount.com
 ```
 
 ## 4. Verify the connection (read-only)
@@ -149,7 +149,7 @@ In another terminal, get the **placeholder** the agent should use (kow never let
 the agent hold the real key):
 ```bash
 kow env --config ./bindings.yaml --print
-# -> export avp-OPENAI_API_KEY='sk-PLACEHOLDER-…'
+# -> export kow_OPENAI_API_KEY='avp-PLACEHOLDER-…'
 ```
 
 Now send a request **through the proxy** with the placeholder. kow matches the
@@ -159,7 +159,7 @@ swaps in the real key, and forwards it. The proxy MITMs TLS, so trust its CA:
 curl -x http://127.0.0.1:14322 \
   --cacert ~/.mitmproxy/mitmproxy-ca-cert.pem \
   https://api.openai.com/v1/models \
-  -H "Authorization: Bearer sk-PLACEHOLDER-…"
+  -H "Authorization: Bearer avp-PLACEHOLDER-…"
 ```
 
 **Success looks like:** OpenAI returns `200` (the real key was injected), and the

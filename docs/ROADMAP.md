@@ -49,7 +49,7 @@ here means "intended, not yet shipped." No dates — priorities, not promises.
 
 ### Injector types — COMPLETE
 
-All eight injector types ship. Static substitution: `header`, `body`, `multi`, composite
+All nine injector types ship. Static substitution: `header`, `body`, `multi`, composite
 `template + compose`. Network exchange (requestheaders seam): `oauth2_refresh`
 ([ADR-0017](adrs/ADR-0017-oauth2-refresh-injector.md)), `oauth2_client_credentials`, `github_app`
 ([ADR-0030](adrs/ADR-0030-oauth2-cc-github-app-injectors.md)). Request signing (request-hook seam):

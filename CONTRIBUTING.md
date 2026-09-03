@@ -95,12 +95,14 @@ bash scripts/bootstrap-venv.sh                # rebuilds .venv with an editable 
 If your change adds, removes, or version-bumps a dependency (production OR dev), regenerate BOTH lockfiles with the 7-day supply-chain cooldown applied:
 
 ```bash
-CUTOFF=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
-uv pip compile --generate-hashes --exclude-newer "$CUTOFF" \
-  pyproject.toml -o requirements.lock
-uv pip compile --generate-hashes --exclude-newer "$CUTOFF" --extra dev \
-  pyproject.toml -o requirements-dev.lock
+bash scripts/regen-lockfiles.sh
 ```
+
+Use the script, not a hand-written `uv pip compile`. It applies `--universal` (CI's
+`verify-lockfile` job compares against a universal resolution, so omitting it produces
+lockfiles that fail the gate), pins the cutoff to midnight UTC rather than the current
+time, and compiles to tempfiles before an atomic move — writing in place makes uv reuse
+existing pins and silently carry stale versions forward.
 
 `requirements.lock` is production-only. `requirements-dev.lock` is a superset that also includes the `[project.optional-dependencies.dev]` tools (pytest, ruff). Both are hash-pinned. CI runs in install via `pip install --require-hashes -r requirements-dev.lock` plus `pip install --no-deps -e .` to add the package itself.
 
@@ -118,12 +120,12 @@ The release loop is three commands + one editor session. Do not bump version lit
 #    docker-compose.yml image tag, smoke-test usage examples).
 #    Reads the current version from pyproject.toml and rewrites
 #    every known location to the target.
-bash scripts/bump-version.sh 0.5.0
+bash scripts/bump-version.sh 1.2.0
 
-# 2. Edit CHANGELOG.md — add the new ## [0.5.0], YYYY-MM-DD entry
-#    with release notes, advance [Unreleased] compare base to v0.5.0,
-#    add a [0.5.0] footer link. Edit README.md "Status" prose to lead
-#    with the v0.5.0 framing. These are content changes, not mechanical
+# 2. Edit CHANGELOG.md — add the new ## [1.2.0], YYYY-MM-DD entry
+#    with release notes, advance [Unreleased] compare base to v1.2.0,
+#    add a [1.2.0] footer link. Edit README.md "Status" prose to lead
+#    with the v1.2.0 framing. These are content changes, not mechanical
 #    bumps — the script deliberately does not touch them.
 $EDITOR CHANGELOG.md README.md
 
@@ -139,10 +141,10 @@ bash scripts/pre-release.sh
 #    which builds + publishes to PyPI + runs the post-publish smoke
 #    + creates the GitHub Release page. Approve the `pypi` environment
 #    when GitHub prompts.
-git commit -m "release: v0.5.0"
-git tag -a v0.5.0 -m "AVP v0.5.0"
+git commit -m "release: v1.2.0"
+git tag -a v1.2.0 -m "keys-on-the-wire v1.2.0"
 git push origin main
-git push origin v0.5.0
+git push origin v1.2.0
 ```
 
 **Rules of the road:**
@@ -195,11 +197,11 @@ The sign-off certifies that you wrote the change (or otherwise have the right to
 
 ## Scope
 
-This project is intentionally narrow. The injector taxonomy is complete and shipped (static `header`/`body`/`multi`, `oauth2_refresh`, `oauth2_client_credentials`, `github_app`, `sigv4`, `hmac`, `jwt_bearer`) and backends are BWS + GSM + static. We're unlikely to merge:
+This project is intentionally narrow. The injector taxonomy is complete and shipped (static `header`/`body`/`multi`, `oauth2_refresh`, `oauth2_client_credentials`, `github_app`, `sigv4`, `hmac`, `jwt_bearer`) and backends are Bitwarden, Google Secret Manager, AWS Secrets Manager, macOS Keychain and `static`. We're unlikely to merge:
 
 - Egress firewall features (out of scope - that's the operator's host firewall)
 - Multi-tenant routing (single-host design)
-- New storage backends beyond BWS / GSM / static (open an issue with a concrete need first)
+- New storage backends beyond the five that ship (open an issue with a concrete need first)
 - AWS SigV4 streaming/chunked payloads, presigned URLs, or SigV4a (core SigV4 signing already ships; these modes are held back to keep the agent from ever holding an AWS credential — see ADR-0036)
 
 We're happy to merge:

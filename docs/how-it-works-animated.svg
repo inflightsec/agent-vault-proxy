@@ -53,7 +53,7 @@
   <g filter="url(#card-shadow)">
     <rect x="380" y="180" width="200" height="120" rx="14" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
   </g>
-  <text x="480" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#6366f1" letter-spacing="1.2">LOCAL PROXY · UID avp</text>
+  <text x="480" y="214" text-anchor="middle" font-size="10.5" font-weight="600" fill="#6366f1" letter-spacing="1.2">LOCAL PROXY · UID kow</text>
   <text x="480" y="246" text-anchor="middle" font-size="20" font-weight="600" fill="#0f172a">keys-on-the-wire</text>
   <text x="480" y="270" text-anchor="middle" font-size="12" fill="#64748b">substitutes on the wire</text>
 

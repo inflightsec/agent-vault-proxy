@@ -1,6 +1,6 @@
 # Bare-metal install (Linux + systemd)
 
-Requires Linux, systemd, and `sudo`. Allow ~10 minutes for first-time setup. The proxy runs as a dedicated UNIX user (`avp`), never as root, and never as the same user as your AI agent.
+Requires Linux, systemd, and `sudo`. Allow ~10 minutes for first-time setup. The proxy runs as a dedicated UNIX user (`kow`), never as root, and never as the same user as your AI agent.
 
 **The separation matters.** If the proxy and the agent share a UID, the agent can `ptrace` the proxy, read its memory, and read its BWS token - and the whole isolation model collapses. The steps below set this up correctly.
 
@@ -69,7 +69,7 @@ sudo /opt/kow/.venv/bin/pip install --only-binary :all: keys-on-the-wire
 ## 3. Drop your BWS token and binding config into place
 
 ```bash
-# Token from Prerequisites step 3 — root-owned, avp-readable, no world access
+# Token from Prerequisites step 3 — root-owned, kow-readable, no world access
 sudo install -o root -g kow -m 0440 your-bws-token /etc/kow/bws-token
 
 # Fetch the example config and edit for your secrets

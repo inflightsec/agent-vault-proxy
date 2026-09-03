@@ -176,7 +176,7 @@ The other backends use the name as-is (BWS looks it up by secret name; Doppler u
 
 # src/kow/backends/__init__.py imports each module at package-import
 # time so those register_backend() calls run (order doesn't matter — unique names):
-from kow.backends import aws, bws, gsm, static  # noqa: F401
+from kow.backends import aws, bws, gsm, keychain, static  # noqa: F401
 # future: add doppler.py / hashicorp_vault.py, each self-registering, + one import line here
 ```
 

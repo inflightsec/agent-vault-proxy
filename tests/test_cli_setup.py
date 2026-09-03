@@ -422,6 +422,20 @@ def test_main_setup_static_dispatch(monkeypatch) -> None:
     assert seen["args"] == (None, True, None, False, False, True)
 
 
+def test_main_setup_aws_keychain_dispatch(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_setup(*, keychain, aws, **_):
+        seen["flags"] = (keychain, aws)
+        return 31
+
+    monkeypatch.setattr("kow.cli.main.run_setup", _fake_run_setup)
+    assert main(["setup", "--dry-run", "--aws"]) == 31
+    assert seen["flags"] == (False, True)
+    assert main(["setup", "--dry-run", "--keychain"]) == 31
+    assert seen["flags"] == (True, False)
+
+
 def test_main_setup_allow_mutable_audit_flag(monkeypatch) -> None:
     seen: dict[str, object] = {}
 

@@ -230,7 +230,7 @@ In `notes`/`both` mode, placeholders are not hand-authored — they are derived 
 avp-PLACEHOLDER-<base32(HMAC-SHA256(install_salt, secret_name))[:21]>
 ```
 
-The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-owner) is generated once at `kow setup` and stored at `install_salt_path` (default: `$AVP_CONFDIR/install-salt`, else `install-salt` under the daemon's `$HOME` — the `avp`-writable confdir, e.g. `/var/lib/kow/`). It makes placeholders non-precomputable from the secret name alone. The same derivation runs in `kow env` (which writes the agent's `export NAME='<placeholder>'` file) and in the daemon, so both sides agree without a second config. A derived-placeholder **collision** across the secret set is a hard startup failure listing the conflicting names.
+The salt (32 random bytes, `0600`, rejected if group/other-readable or wrong-owner) is generated once at `kow setup` and stored at `install_salt_path` (default: `$KOW_CONFDIR/install-salt`, else `install-salt` under the daemon's `$HOME` — the `kow`-writable confdir, e.g. `/var/lib/kow/`). It makes placeholders non-precomputable from the secret name alone. The same derivation runs in `kow env` (which writes the agent's `export NAME='<placeholder>'` file) and in the daemon, so both sides agree without a second config. A derived-placeholder **collision** across the secret set is a hard startup failure listing the conflicting names.
 
 **Notes-binding marker (`# kow-binding`, ADR-0025):** a note/annotation is parsed as a binding **only when its first non-blank line is exactly `# kow-binding`**. The marker line is stripped and the remainder parses under the normal grammar (bare hostname, or the flat mapping). An unmarked note is a human description — `NoBinding`: it cannot bind, cannot be malformed, and cannot exclude the same secret's file bindings. An unmarked note that *looks* host-shaped (bare FQDN, or a `host:`/`hosts:` line) logs a load-time warning naming the secret and the missing marker. A **marked** note with an empty or unparsable body is `InvalidBinding` — the marker is explicit intent, so errors are loud, fail-closed, and audited. The contract is uniform across sources: BWS notes and the GSM `kow-binding` annotation alike.
 
@@ -238,7 +238,7 @@ A request carrying a placeholder whose secret has **no binding** in its note (in
 
 **Notes host allowlist (`notes_host_allowlist`, ADR-0024).** Opt-in top-level key that bounds where notes/annotation bindings may route: **annotations may only narrow scope, never add a host.** When absent (default), nothing changes. When set, a notes/annotation host outside the list has its binding dropped fail-closed and a request toward it audits the distinct reason `host_not_in_allowlist`. Motive: on GCP, `secretmanager.secrets.update` (edit the `kow-binding` annotation) and `versions.access` (read the value) are independently grantable, so without this an annotation-only writer could route a secret to a host they control (confused deputy). Multi-host notes (ADR-0021) are judged per host — a disallowed host drops only its own fan-out entry. `*.suffix` allowlist entries ride the `allow_wildcard_hosts` opt-in. File `secrets:` bindings are the trusted tier and exempt. IAM hygiene (restricting annotation-write) remains the primary GCP control; this is the structural backstop.
 
-> Listing secrets requires a listable backend (`bws`, `gsm`, `static`, `aws-secrets-manager`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file) AND re-resolved in the background every `notes_refresh_seconds` (ADR-0032, default 60s) for vault backends, so a newly-added secret is brokered without a restart; the refresh keeps the warm value/token caches and fails safe (keeps live bindings) if the vault can't be listed. Per-request credential VALUE fetches still honour `cache.ttl_seconds`.
+> Listing secrets requires a listable backend (`bws`, `gsm`, `static`, `aws-secrets-manager`, `keychain`). Notes are fetched at configure() time (the binding-policy refresh boundary, analogous to re-reading the file) AND re-resolved in the background every `notes_refresh_seconds` (ADR-0032, default 60s) for vault backends, so a newly-added secret is brokered without a restart; the refresh keeps the warm value/token caches and fails safe (keeps live bindings) if the vault can't be listed. Per-request credential VALUE fetches still honour `cache.ttl_seconds`.
 
 ### 4.3 Request lifecycle
 
@@ -316,7 +316,7 @@ Rules:
 - `fail_on_unwritable: true` - disk full / attribute removed / permission flip = proxy returns 503 (G4 + G6)
 - Synchronous `fsync()` after every event, no exceptions. Throughput is bounded by the audit disk's fsync latency, but at the volume a credential broker sees (a few hundred decisions per minute at most) this is well below any threshold worth optimizing.
 - **Never log** header values, request bodies, response bodies, or query strings (Vault-style audit minimization)
-- **Closed event-type set (ADR-0023):** `AUDIT_EVENT_TYPES` in `audit.py` enumerates every `type` the stream may carry; `AuditWriter.emit()` raises on any unlisted type. A new event type cannot ship without a conscious edit there plus no-leak test coverage. The current set is `inject_decision`, `deny`, `token_exchange`, `refresh_token_rotated`, `honeytoken_triggered`, `proxy_restart`, `upstream_response`, `tls_passthrough` (ADR-0026 — a TLS connection tunnelled un-terminated because its destination is unbound; dest host + reason only, never decrypted), and `notes_refreshed` (ADR-0032 — the background refresh changed the bound set; added/removed names only).
+- **Closed event-type set (ADR-0023):** `AUDIT_EVENT_TYPES` in `audit.py` enumerates every `type` the stream may carry; `AuditWriter.emit()` raises on any unlisted type. A new event type cannot ship without a conscious edit there plus no-leak test coverage. The current set is `inject_decision`, `deny`, `token_exchange`, `refresh_token_rotated`, `honeytoken_triggered`, `proxy_restart`, `upstream_response`, `tls_passthrough` (ADR-0026 — a TLS connection tunnelled un-terminated because its destination is unbound; dest host + reason only, never decrypted), `notes_refreshed` (ADR-0032 — the background refresh changed the bound set; added/removed names only), and `policy_advisory` (ADR-0047 — a one-time advisory that a binding omits `methods:`; its own type so advisories never inflate `inject_decision` counts).
 - Off-host shipping: a separate tailer forwards this stream to a central collector (ADR-0019); the local log stays the fail-closed source of truth and is never in the shipper's failure path
 
 **Reason taxonomy on `inject_decision` events** (use these to filter and alert from the audit stream):
@@ -354,7 +354,7 @@ For multi-injector secrets (`inject.type: multi`), each substituted leaf emits i
 ### 4.5 BWS integration
 
 - Dedicated BWS machine account, scoped to one Project containing only the secrets in `bindings.yaml`.
-- Token at `/etc/kow/bws-token`, mode `0440 root:avp` - root owns, `avp` group reads.
+- Token at `/etc/kow/bws-token`, mode `0440 root:kow` - root owns, `kow` group reads.
 - `bitwarden-sdk` Python bindings (in-process), not a shell-out.
 - EU and US regions supported via explicit `api_url` / `identity_url`.
 - Cache: in-memory `OrderedDict` with LRU eviction, TTL 300 s ± 30 s jitter per entry (jitter clamped to `ttl/2`). Capacity bounded by `cache.max_entries` (default 100). A backend failure is not cached (`BackendUnavailableError`): the fetch raises and the request fails closed — the placeholder forwards verbatim, no stale value is served.
@@ -390,7 +390,7 @@ export OPENAI_API_KEY="sk-PLACEHOLDER-01HXY1234567890ABCDEFGHIJ"
 
 | Item | Why |
 |---|---|
-| `User=kow Group=kow`; bws-token `0440 root:avp` | Containment if proxy is exploited |
+| `User=kow Group=kow`; bws-token `0440 root:kow` | Containment if proxy is exploited |
 | `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, `ProtectKernelLogs`, `ProtectHostname`, `ProtectClock` | Standard systemd sandboxing |
 | `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `NoNewPrivileges=yes` | Reduce attack surface |
 | `SystemCallFilter=@system-service ~@privileged ~@resources ~@mount` | Reduce syscalls available |

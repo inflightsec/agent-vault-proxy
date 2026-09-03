@@ -7,7 +7,7 @@ Cross-platform install path that runs on Linux, macOS (Docker Desktop), and Wind
 > The proxy provides **zero isolation** if either of these is true on your host. Each takes 30 seconds to verify:
 >
 > 1. **Your AI agent's UID has docker daemon access** (member of `docker` group, or can reach `/var/run/docker.sock`). The agent can then extract the BWS token + CA private key directly via `docker exec` / `docker cp` - full detail in [§ Hard prerequisite: docker access boundary](#hard-prerequisite-docker-access-boundary).
-> 2. **Another container is on the `avp-net` network.** It can reach the proxy directly via container DNS, bypassing the host's loopback constraint: full detail in [§ Hard prerequisite: do NOT add other containers to avp-net](#hard-prerequisite-do-not-add-other-containers-to-avp-net).
+> 2. **Another container is on the `kow-net` network.** It can reach the proxy directly via container DNS, bypassing the host's loopback constraint: full detail in [§ Hard prerequisite: do NOT add other containers to kow-net](#hard-prerequisite-do-not-add-other-containers-to-kow-net).
 >
 > If either applies, stop and use the [bare-metal systemd install](install-systemd.md) instead. The setup below assumes neither does.
 
@@ -63,7 +63,7 @@ If the digest in the Dockerfile is stale, edit the `ARG PYTHON_IMAGE` line. Don'
 ```bash
 docker compose up -d
 docker compose ps
-docker compose logs --tail 50 avp
+docker compose logs --tail 50 kow
 ```
 
 First start takes a few seconds for mitmproxy to initialize. The named volume `kow-state` is initialized empty; mitmproxy will write its CA there on the first proxied request.
@@ -125,7 +125,7 @@ Three quick checks to confirm everything's wired up.
 **Watch for the startup preflight banner** (silent on the documented happy path; loud if anything's off):
 
 ```bash
-docker compose logs avp | grep -E "(preflight|insecure-configuration|proxy_restart)"
+docker compose logs kow | grep -E "(preflight|insecure-configuration|proxy_restart)"
 ```
 
 You should see `proxy_restart` in the audit lifecycle and either NO preflight banner (good: your config is on the happy path) or a clearly-marked `INSECURE:` block telling you exactly what to fix.
@@ -133,7 +133,7 @@ You should see `proxy_restart` in the audit lifecycle and either NO preflight ba
 **Trigger a preflight warning intentionally** (sanity-checks the preflight pipeline without changing your real config):
 
 ```bash
-docker compose run --rm -e BWS_ACCESS_TOKEN=dummy-trigger-the-warning avp \
+docker compose run --rm -e BWS_ACCESS_TOKEN=dummy-trigger-the-warning kow \
     python -c "from kow._preflight import emit_preflight; \
                from kow.config import load_config; \
                emit_preflight(load_config('/etc/kow/bindings.yaml'))"
@@ -158,7 +158,7 @@ If substitution worked, you get the upstream's normal response (likely a `400 in
 Cross-check by tailing the audit log:
 
 ```bash
-docker compose exec avp tail -3 /var/log/kow/audit.jsonl
+docker compose exec kow tail -3 /var/log/kow/audit.jsonl
 ```
 
 You should see an `inject_decision: allowed` event matching your request.
@@ -197,11 +197,11 @@ Continue with this Docker install only if the docker daemon is reachable **only*
 
 ---
 
-## Hard prerequisite: do NOT add other containers to `avp-net`
+## Hard prerequisite: do NOT add other containers to `kow-net`
 
-The proxy binds `0.0.0.0:14322` *inside* its container so Docker can port-publish it to the host. Any other container on the same docker network can reach the proxy directly via container DNS (`http://avp:14322`), bypassing the host's `127.0.0.1` loopback constraint and the binding-scope checks the operator may believe are protecting them.
+The proxy binds `0.0.0.0:14322` *inside* its container so Docker can port-publish it to the host. Any other container on the same docker network can reach the proxy directly via container DNS (`http://kow:14322`), bypassing the host's `127.0.0.1` loopback constraint and the binding-scope checks the operator may believe are protecting them.
 
-The compose file declares a dedicated `avp-net` bridge specifically so no other service joins it by default. **Do not** add `networks: [avp-net]` to any other service in your own compose files. If another service needs the proxy, expose it on the host loopback and have that service reach it via `host.docker.internal:14322` (or the host gateway IP on Linux).
+The compose file declares a dedicated `kow-net` bridge specifically so no other service joins it by default. **Do not** add `networks: [kow-net]` to any other service in your own compose files. If another service needs the proxy, expose it on the host loopback and have that service reach it via `host.docker.internal:14322` (or the host gateway IP on Linux).
 
 ---
 
@@ -259,7 +259,7 @@ These are residual risks the Docker hardening does NOT eliminate. Decide per hos
 
 6. **Bind-mount permissions are host-side.** `chmod 0600 secrets/bws-token` matters even though the container runs as UID 65532, the host-side mode is what's enforced when the file is mounted in.
 
-   **Operator-UID compromise leaks the BWS token.** The token at `./secrets/bws-token` is owned by the operator's UID and readable by anything else running at that UID - malware in a browser, an unrelated package's postinstall, a misconfigured backup tool. The architecture defends against agent-UID compromise (the agent doesn't share the operator's UID), not operator-UID compromise. For stronger separation, use the systemd install where the token is `0440 root:avp` and the operator's interactive shell cannot read it.
+   **Operator-UID compromise leaks the BWS token.** The token at `./secrets/bws-token` is owned by the operator's UID and readable by anything else running at that UID - malware in a browser, an unrelated package's postinstall, a misconfigured backup tool. The architecture defends against agent-UID compromise (the agent doesn't share the operator's UID), not operator-UID compromise. For stronger separation, use the systemd install where the token is `0440 root:kow` and the operator's interactive shell cannot read it.
 
 7. **Audit log tamper window.** Between first `docker compose up` and step 4's chattr-init, the audit log is rewritable from inside the container. Window closes after step 4 runs.
 
@@ -295,7 +295,7 @@ You haven't created `./secrets/bws-token`. Re-run step 1's `read -rs` block.
 Either the BWS token is wrong, or `bindings.yaml`'s `backend.config.access_token_path` doesn't point at `/etc/kow/bws-token` (the in-container path matching the bind-mount). `bindings.example.yaml` already has the correct path.
 
 **Healthcheck fails with no useful error:**
-`docker compose logs avp` shows mitmproxy's startup output. Most common: YAML syntax error in `bindings.yaml`, or a binding that references a secret name BWS doesn't have.
+`docker compose logs kow` shows mitmproxy's startup output. Most common: YAML syntax error in `bindings.yaml`, or a binding that references a secret name BWS doesn't have.
 
 **Host can't reach `127.0.0.1:14322`:**
 Check the compose `ports:` line says `"127.0.0.1:14322:14322"` (with the IP prefix). If it says `"14322:14322"`, it publishes to every interface - wrong, AND it shadows the loopback you actually want.
@@ -304,4 +304,4 @@ Check the compose `ports:` line says `"127.0.0.1:14322:14322"` (with the IP pref
 You skipped step 4 (chattr init). Run it. If you're on a filesystem without extended attributes (rare), the proxy still opens the file `O_APPEND`-only - just without filesystem-level enforcement.
 
 **`docker exec` complains about /bin/sh:**
-Future Dockerfile revisions may strip the shell for additional hardening. If/when that happens, use `docker compose exec avp python -c "..."` or `docker cp` instead.
+Future Dockerfile revisions may strip the shell for additional hardening. If/when that happens, use `docker compose exec kow python -c "..."` or `docker cp` instead.
